@@ -1,6 +1,31 @@
-import { IconProveedores } from '@/components/ui/icons'
+import { redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
+import ProveedoresClient from './ProveedoresClient'
+import type { Proveedor, UserRole } from '@/types'
 
-export default function ProveedoresPage() {
+export default async function ProveedoresPage() {
+  const supabase = createClient()
+
+  const authResult = await supabase.auth.getUser()
+  const user = authResult.data?.user
+  if (!user) redirect('/login')
+
+  const [profileResult, proveedoresResult] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single(),
+    supabase
+      .from('proveedores')
+      .select('id, nombre, cuit, email, telefono, direccion, activo, created_by, created_at, updated_at, deleted_at')
+      .is('deleted_at', null)
+      .order('nombre', { ascending: true }),
+  ])
+
+  const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
+  const proveedores: Proveedor[] = (proveedoresResult.data ?? []) as Proveedor[]
+
   return (
     <div className="space-y-6">
       <div>
@@ -10,15 +35,7 @@ export default function ProveedoresPage() {
         </p>
       </div>
 
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white p-12 text-center">
-        <div className="mb-3 text-gray-300">
-          <IconProveedores className="w-10 h-10" />
-        </div>
-        <h3 className="text-base font-medium text-gray-700">Módulo en desarrollo</h3>
-        <p className="mt-1 text-sm text-gray-400">
-          Este módulo se implementará en la próxima etapa.
-        </p>
-      </div>
+      <ProveedoresClient proveedores={proveedores} role={role} />
     </div>
   )
 }

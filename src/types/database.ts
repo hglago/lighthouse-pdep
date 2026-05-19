@@ -35,6 +35,7 @@ export interface Proveedor {
   email: string | null
   telefono: string | null
   direccion: string | null
+  observaciones: string | null
   activo: boolean
   created_by: string
   created_at: string
