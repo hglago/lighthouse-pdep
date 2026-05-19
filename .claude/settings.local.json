@@ -2,7 +2,16 @@
   "permissions": {
     "allow": [
       "PowerShell(npm run *)",
-      "PowerShell(git add *)"
+      "PowerShell(git add *)",
+      "PowerShell(git config *)",
+      "PowerShell(git commit *)",
+      "PowerShell(git branch *)",
+      "PowerShell(git remote *)",
+      "PowerShell(git push *)",
+      "Bash(npx supabase *)",
+      "PowerShell(npx supabase init)",
+      "Bash(npm run *)",
+      "PowerShell(Get-Process *)"
     ]
   }
 }

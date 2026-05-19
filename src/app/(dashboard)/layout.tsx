@@ -6,7 +6,8 @@ import type { SessionUser } from '@/types'
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const authResult = await supabase.auth.getUser()
+  const user = authResult.data?.user
   if (!user) redirect('/login')
 
   const { data: profile } = await supabase
