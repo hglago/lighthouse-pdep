@@ -1,17 +1,10 @@
-export type UserRole = 'admin' | 'contador' | 'revisor' | 'visualizador'
+export type { UserRole, FondoEstado, GastoEstado, Profile, Fondo, Proveedor, Gasto, SessionUser } from './database'
 
-export const ROLE_LABELS: Record<UserRole, string> = {
+export const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
   contador: 'Contador',
   revisor: 'Revisor',
   visualizador: 'Visualizador',
-}
-
-export interface MockUser {
-  id: string
-  email: string
-  name: string
-  role: UserRole
 }
 
 export interface NavItem {

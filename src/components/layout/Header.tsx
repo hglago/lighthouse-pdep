@@ -1,16 +1,23 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { IconMenu, IconLogout } from '@/components/ui/icons'
+import { createClient } from '@/lib/supabase/client'
+import type { SessionUser } from '@/types'
 
 interface HeaderProps {
   onMenuClick: () => void
+  user: SessionUser
 }
 
-export default function Header({ onMenuClick }: HeaderProps) {
-  function handleLogout() {
-    // Elimina la cookie de sesión mock y redirige al login
-    document.cookie = 'mock-session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/'
-    window.location.href = '/login'
+export default function Header({ onMenuClick, user }: HeaderProps) {
+  const router = useRouter()
+
+  async function handleLogout() {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.refresh()
+    router.push('/login')
   }
 
   return (
@@ -25,7 +32,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
       <div className="flex items-center gap-3 ml-auto">
         <span className="hidden text-sm text-gray-500 sm:block">
-          admin@lighthouse.com
+          {user.email}
         </span>
         <button
           onClick={handleLogout}

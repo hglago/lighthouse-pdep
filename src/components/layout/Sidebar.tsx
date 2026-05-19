@@ -13,10 +13,13 @@ import {
   IconRendiciones,
   IconClose,
 } from '@/components/ui/icons'
+import { ROLE_LABELS } from '@/types'
+import type { SessionUser } from '@/types'
 
 interface SidebarProps {
   open: boolean
   onClose: () => void
+  user: SessionUser
 }
 
 const navigation = [
@@ -30,8 +33,19 @@ const navigation = [
   { label: 'Rendiciones', href: '/rendiciones', Icon: IconRendiciones },
 ]
 
-export default function Sidebar({ open, onClose }: SidebarProps) {
+function getInitials(name: string | null, email: string): string {
+  if (name) {
+    const parts = name.trim().split(/\s+/)
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
+    return parts[0].slice(0, 2).toUpperCase()
+  }
+  return email.slice(0, 2).toUpperCase()
+}
+
+export default function Sidebar({ open, onClose, user }: SidebarProps) {
   const pathname = usePathname()
+  const initials = getInitials(user.full_name, user.email)
+  const displayName = user.full_name ?? user.email
 
   return (
     <>
@@ -98,15 +112,15 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           </ul>
         </nav>
 
-        {/* User section — placeholder; en etapa 2 vendrá de la sesión real */}
+        {/* User section */}
         <div className="border-t border-slate-800 p-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700">
-              <span className="text-xs font-medium text-slate-300">AD</span>
+            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-700">
+              <span className="text-xs font-medium text-slate-300">{initials}</span>
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-white">Administrador</p>
-              <p className="truncate text-xs text-slate-400">admin@lighthouse.com</p>
+              <p className="truncate text-sm font-medium text-white">{displayName}</p>
+              <p className="truncate text-xs text-slate-400">{ROLE_LABELS[user.role] ?? user.role}</p>
             </div>
           </div>
         </div>
