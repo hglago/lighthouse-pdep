@@ -1,4 +1,4 @@
-export type { UserRole, FondoEstado, GastoEstado, Profile, Fondo, Proveedor, Gasto, SessionUser } from './database'
+export type { UserRole, FondoEstado, GastoEstado, AnticipoEstado, PagoEstado, PagoTipo, MovimientoTipo, Profile, Fondo, Proveedor, Gasto, Anticipo, Pago, MovimientoFondo, SessionUser } from './database'
 
 export const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
