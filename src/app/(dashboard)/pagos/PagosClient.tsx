@@ -62,7 +62,7 @@ interface FormState {
 }
 
 const EMPTY_FORM: FormState = {
-  ui_tipo: 'directo',
+  ui_tipo: 'gasto',
   obligacion_id: '',
   fondo_id: '',
   proveedor_id: '',
@@ -202,6 +202,7 @@ export default function PagosClient({
       proveedor_id: ob.proveedor_id ?? prev.proveedor_id,
       concepto: ob.concepto,
       monto: String(ob.monto_pendiente),
+      fecha_pago: new Date().toISOString().slice(0, 10),
     }))
   }
 
@@ -358,6 +359,11 @@ export default function PagosClient({
           </button>
         )}
       </div>
+
+      {/* Diagnostic: obligaciones count — remove after confirming data flows correctly */}
+      <p className="text-xs text-gray-400">
+        Obligaciones disponibles: {obligaciones.length}
+      </p>
 
       {actionError && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

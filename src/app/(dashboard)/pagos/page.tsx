@@ -47,6 +47,12 @@ export default async function PagosPage() {
       .order('prioridad_pago', { ascending: true }),
   ])
 
+  console.log('[pagos] obligaciones', {
+    count: obligacionesResult.data?.length ?? 0,
+    error: obligacionesResult.error?.message,
+    sample: obligacionesResult.data?.slice(0, 2),
+  })
+
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const pagos = (pagosResult.data ?? []) as unknown as PagoRow[]
   const fondos = (fondosResult.data ?? []) as { id: string; nombre: string; moneda: string }[]
