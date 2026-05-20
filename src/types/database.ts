@@ -159,6 +159,31 @@ export interface ObligacionPendiente {
   proveedor_nombre: string | null
 }
 
+export type TipoAporte =
+  | 'aporte_socios'
+  | 'transferencia'
+  | 'ajuste'
+  | 'reintegro'
+  | 'otro'
+
+export interface AporteFondo {
+  id: string
+  fondo_id: string
+  movimiento_id: string | null
+  fecha_aporte: string
+  monto: number
+  moneda: string
+  tipo_aporte: TipoAporte
+  aportante: string | null
+  concepto: string
+  comprobante_url: string | null
+  observaciones: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+}
+
 export type MovimientoTipo = 'debito' | 'credito'
 
 export interface MovimientoFondo {

@@ -1,186 +1,381 @@
 'use client'
 
-import { useState, useTransition } from 'react'
-import type { Fondo, UserRole } from '@/types'
-import { createFondo, updateFondo, deleteFondo } from './actions'
+import { useState, useTransition, useRef } from 'react'
+import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo } from '@/types'
+import type { AportePayload } from './actions'
 
-interface Props {
-  fondos: Fondo[]
-  role: UserRole
+export interface AporteFondoRow extends AporteFondo {
+  fondos: { nombre: string } | null
 }
 
-interface FormState {
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const MONEDAS = ['ARS', 'USD', 'EUR']
+const TIPOS_APORTE: TipoAporte[] = ['aporte_socios', 'transferencia', 'ajuste', 'reintegro', 'otro']
+const ESTADOS_FONDO: FondoEstado[] = ['activo', 'cerrado', 'suspendido']
+
+const TIPO_APORTE_LABELS: Record<TipoAporte, string> = {
+  aporte_socios: 'Aporte socios',
+  transferencia: 'Transferencia',
+  ajuste: 'Ajuste',
+  reintegro: 'Reintegro',
+  otro: 'Otro',
+}
+
+const TIPO_APORTE_COLORS: Record<TipoAporte, string> = {
+  aporte_socios: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200',
+  transferencia: 'bg-purple-50 text-purple-700 ring-1 ring-purple-200',
+  ajuste: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
+  reintegro: 'bg-green-50 text-green-700 ring-1 ring-green-200',
+  otro: 'bg-gray-50 text-gray-600 ring-1 ring-gray-200',
+}
+
+const FONDO_ESTADO_LABELS: Record<FondoEstado, string> = {
+  activo: 'Activo',
+  cerrado: 'Cerrado',
+  suspendido: 'Suspendido',
+}
+
+const FONDO_ESTADO_COLORS: Record<FondoEstado, string> = {
+  activo: 'bg-green-50 text-green-700 ring-1 ring-green-200',
+  cerrado: 'bg-gray-50 text-gray-500 ring-1 ring-gray-200',
+  suspendido: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function fmt(n: number) {
+  return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function todayIso() {
+  return new Date().toISOString().split('T')[0]
+}
+
+function friendlyError(msg: string): string {
+  if (
+    msg.includes('23505') ||
+    msg.includes('fondos_nombre_moneda_activo_unico') ||
+    /duplicate key/i.test(msg)
+  ) {
+    return 'Ya existe un fondo activo con ese nombre y moneda.'
+  }
+  return msg
+}
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type ModalType = 'none' | 'newFondo' | 'editFondo' | 'newAporte'
+
+interface FondoForm {
   nombre: string
   moneda: string
   monto_inicial: string
   descripcion: string
+  estado: FondoEstado
 }
 
-const EMPTY_FORM: FormState = { nombre: '', moneda: 'ARS', monto_inicial: '', descripcion: '' }
-const MONEDAS = ['ARS', 'USD', 'EUR']
+const EMPTY_FONDO_FORM: FondoForm = {
+  nombre: '',
+  moneda: 'ARS',
+  monto_inicial: '',
+  descripcion: '',
+  estado: 'activo',
+}
 
-export default function FondosClient({ fondos, role }: Props) {
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editing, setEditing] = useState<Fondo | null>(null)
-  const [form, setForm] = useState<FormState>(EMPTY_FORM)
-  const [formError, setFormError] = useState('')
+interface AporteForm {
+  fondo_id: string
+  fecha_aporte: string
+  monto: string
+  tipo_aporte: TipoAporte
+  aportante: string
+  concepto: string
+  comprobante_url: string
+  observaciones: string
+}
+
+function emptyAporteForm(defaultFondoId = ''): AporteForm {
+  return {
+    fondo_id: defaultFondoId,
+    fecha_aporte: todayIso(),
+    monto: '',
+    tipo_aporte: 'aporte_socios',
+    aportante: '',
+    concepto: '',
+    comprobante_url: '',
+    observaciones: '',
+  }
+}
+
+interface Props {
+  fondos: Fondo[]
+  aportes: AporteFondoRow[]
+  role: UserRole
+  onCreateFondo: (data: { nombre: string; moneda: string; monto_inicial: number; descripcion: string | null }) => Promise<void>
+  onUpdateFondo: (id: string, data: { nombre: string; descripcion: string | null; estado: FondoEstado }) => Promise<void>
+  onDeleteFondo: (id: string) => Promise<void>
+  onRegistrarAporte: (data: AportePayload) => Promise<void>
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
+
+export default function FondosClient({
+  fondos,
+  aportes,
+  role,
+  onCreateFondo,
+  onUpdateFondo,
+  onDeleteFondo,
+  onRegistrarAporte,
+}: Props) {
+  const [modal, setModal] = useState<ModalType>('none')
+  const [editingFondo, setEditingFondo] = useState<Fondo | null>(null)
+  const [fondoForm, setFondoForm] = useState<FondoForm>(EMPTY_FONDO_FORM)
+  const [aporteForm, setAporteForm] = useState<AporteForm>(emptyAporteForm())
+  const [fondoFormError, setFondoFormError] = useState('')
+  const [aporteFormError, setAporteFormError] = useState('')
   const [isPending, startTransition] = useTransition()
+
+  const [filterFondoId, setFilterFondoId] = useState('')
+  const [filterTipo, setFilterTipo] = useState<TipoAporte | ''>('')
+  const [filterFechaDesde, setFilterFechaDesde] = useState('')
+  const [filterFechaHasta, setFilterFechaHasta] = useState('')
+  const [filterAportante, setFilterAportante] = useState('')
+
+  const aportesSectionRef = useRef<HTMLDivElement>(null)
 
   const canWrite = role === 'admin' || role === 'contador'
   const canDelete = role === 'admin'
 
-  function openNew() {
-    setEditing(null)
-    setForm(EMPTY_FORM)
-    setFormError('')
-    setModalOpen(true)
+  const fondoMap = new Map(fondos.map((f) => [f.id, f]))
+  const activeFondos = fondos.filter((f) => f.estado === 'activo')
+
+  const filteredAportes = aportes.filter((a) => {
+    if (filterFondoId && a.fondo_id !== filterFondoId) return false
+    if (filterTipo && a.tipo_aporte !== filterTipo) return false
+    if (filterFechaDesde && a.fecha_aporte < filterFechaDesde) return false
+    if (filterFechaHasta && a.fecha_aporte > filterFechaHasta) return false
+    if (filterAportante && !a.aportante?.toLowerCase().includes(filterAportante.toLowerCase())) return false
+    return true
+  })
+
+  const hasFilters = !!(filterFondoId || filterTipo || filterFechaDesde || filterFechaHasta || filterAportante)
+
+  // ─── Modal openers ────────────────────────────────────────────────────────
+
+  function openNewFondo() {
+    setFondoForm(EMPTY_FONDO_FORM)
+    setFondoFormError('')
+    setModal('newFondo')
   }
 
-  function openEdit(fondo: Fondo) {
-    setEditing(fondo)
-    setForm({
+  function openEditFondo(fondo: Fondo) {
+    setEditingFondo(fondo)
+    setFondoForm({
       nombre: fondo.nombre,
       moneda: fondo.moneda,
-      monto_inicial: '',
+      monto_inicial: String(fondo.monto_inicial),
       descripcion: fondo.descripcion ?? '',
+      estado: fondo.estado,
     })
-    setFormError('')
-    setModalOpen(true)
+    setFondoFormError('')
+    setModal('editFondo')
+  }
+
+  function openNewAporte(fondoId?: string) {
+    setAporteForm(emptyAporteForm(fondoId ?? ''))
+    setAporteFormError('')
+    setModal('newAporte')
   }
 
   function closeModal() {
-    setModalOpen(false)
-    setEditing(null)
-    setForm(EMPTY_FORM)
-    setFormError('')
+    setModal('none')
+    setEditingFondo(null)
+    setFondoFormError('')
+    setAporteFormError('')
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setFormError('')
+  function scrollToAportes(fondoId?: string) {
+    if (fondoId) setFilterFondoId(fondoId)
+    aportesSectionRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
 
-    const nombre = form.nombre.trim()
+  // ─── Submit handlers ──────────────────────────────────────────────────────
+
+  function handleFondoSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setFondoFormError('')
+
+    const nombre = fondoForm.nombre.trim()
     if (!nombre) {
-      setFormError('El nombre es requerido.')
+      setFondoFormError('El nombre es requerido.')
       return
     }
 
-    if (!editing) {
-      const monto = parseFloat(form.monto_inicial)
-      if (form.monto_inicial === '' || isNaN(monto) || monto < 0) {
-        setFormError('El saldo inicial debe ser un número no negativo.')
+    if (modal === 'newFondo') {
+      const monto = parseFloat(fondoForm.monto_inicial)
+      if (fondoForm.monto_inicial === '' || isNaN(monto) || monto < 0) {
+        setFondoFormError('El monto inicial debe ser un número no negativo.')
         return
       }
     }
 
     startTransition(async () => {
       try {
-        if (editing) {
-          await updateFondo(editing.id, {
+        if (modal === 'editFondo' && editingFondo) {
+          await onUpdateFondo(editingFondo.id, {
             nombre,
-            moneda: form.moneda,
-            descripcion: form.descripcion.trim() || null,
+            descripcion: fondoForm.descripcion.trim() || null,
+            estado: fondoForm.estado,
           })
         } else {
-          await createFondo({
+          await onCreateFondo({
             nombre,
-            moneda: form.moneda,
-            monto_inicial: parseFloat(form.monto_inicial),
-            descripcion: form.descripcion.trim() || null,
+            moneda: fondoForm.moneda,
+            monto_inicial: parseFloat(fondoForm.monto_inicial),
+            descripcion: fondoForm.descripcion.trim() || null,
           })
         }
         closeModal()
       } catch (err: unknown) {
-        setFormError(err instanceof Error ? err.message : 'Error al guardar.')
+        const msg = err instanceof Error ? err.message : 'Error al guardar.'
+        setFondoFormError(friendlyError(msg))
       }
     })
   }
 
-  function handleDelete(id: string, nombre: string) {
-    if (!confirm(`¿Eliminar el fondo "${nombre}"?`)) return
+  function handleAporteSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setAporteFormError('')
+
+    if (!aporteForm.fondo_id) {
+      setAporteFormError('Seleccioná un fondo.')
+      return
+    }
+    const monto = parseFloat(aporteForm.monto)
+    if (aporteForm.monto === '' || isNaN(monto) || monto <= 0) {
+      setAporteFormError('El monto debe ser mayor a 0.')
+      return
+    }
+    if (!aporteForm.concepto.trim()) {
+      setAporteFormError('El concepto es requerido.')
+      return
+    }
+
     startTransition(async () => {
       try {
-        await deleteFondo(id)
+        await onRegistrarAporte({
+          fondo_id: aporteForm.fondo_id,
+          fecha_aporte: aporteForm.fecha_aporte,
+          monto,
+          tipo_aporte: aporteForm.tipo_aporte,
+          aportante: aporteForm.aportante.trim() || null,
+          concepto: aporteForm.concepto.trim(),
+          comprobante_url: aporteForm.comprobante_url.trim() || null,
+          observaciones: aporteForm.observaciones.trim() || null,
+        })
+        closeModal()
       } catch (err: unknown) {
-        alert(err instanceof Error ? err.message : 'Error al eliminar.')
+        const msg = err instanceof Error ? err.message : 'Error al registrar aporte.'
+        setAporteFormError(msg)
       }
     })
   }
 
-  return (
-    <div className="space-y-4">
-      {canWrite && (
-        <div className="flex justify-end">
-          <button
-            onClick={openNew}
-            disabled={isPending}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
-          >
-            + Nuevo fondo
-          </button>
-        </div>
-      )}
+  function handleDeleteFondo(id: string, nombre: string) {
+    if (!confirm(`¿Eliminar el fondo "${nombre}"? Esta acción no se puede deshacer.`)) return
+    startTransition(async () => {
+      try {
+        await onDeleteFondo(id)
+      } catch (err: unknown) {
+        alert(err instanceof Error ? err.message : 'Error al eliminar el fondo.')
+      }
+    })
+  }
 
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-        {fondos.length === 0 ? (
-          <div className="p-12 text-center text-sm text-gray-400">
-            No hay fondos registrados.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">
-                    Nombre
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">
-                    Moneda
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">
-                    Saldo actual
-                  </th>
-                  <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">
-                    Descripción
-                  </th>
-                  {canWrite && (
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">
-                      Acciones
-                    </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {fondos.map((fondo) => (
-                  <tr key={fondo.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                      {fondo.nombre}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">
-                      {fondo.moneda}
-                    </td>
-                    <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-900">
-                      {fondo.saldo_actual.toLocaleString('es-AR', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </td>
-                    <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">
-                      {fondo.descripcion ?? <span className="text-gray-300">—</span>}
-                    </td>
-                    {canWrite && (
+  const selectedFondoForAporte = fondoMap.get(aporteForm.fondo_id)
+
+  const inputCls =
+    'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20'
+  const readonlyCls =
+    'w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 outline-none cursor-default'
+
+  return (
+    <div className="space-y-8">
+
+      {/* ─── Section A: Fondos ─────────────────────────────────────────────── */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-900">Fondos</h2>
+          {canWrite && (
+            <button
+              onClick={openNewFondo}
+              disabled={isPending}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
+            >
+              + Nuevo fondo
+            </button>
+          )}
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          {fondos.length === 0 ? (
+            <div className="p-12 text-center text-sm text-gray-400">No hay fondos registrados.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Nombre</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Moneda</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Monto inicial</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Saldo actual</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Estado</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {fondos.map((fondo) => (
+                    <tr key={fondo.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-sm font-medium text-gray-900">{fondo.nombre}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500">{fondo.moneda}</td>
+                      <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-500">{fmt(fondo.monto_inicial)}</td>
+                      <td className="px-4 py-3 text-right text-sm tabular-nums font-semibold text-gray-900">{fmt(fondo.saldo_actual)}</td>
                       <td className="px-4 py-3">
-                        <div className="flex justify-end gap-2">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${FONDO_ESTADO_COLORS[fondo.estado]}`}>
+                          {FONDO_ESTADO_LABELS[fondo.estado]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-1.5">
+                          {canWrite && (
+                            <button
+                              onClick={() => openEditFondo(fondo)}
+                              disabled={isPending}
+                              className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                            >
+                              Editar
+                            </button>
+                          )}
+                          {canWrite && fondo.estado === 'activo' && (
+                            <button
+                              onClick={() => openNewAporte(fondo.id)}
+                              disabled={isPending}
+                              className="rounded px-2.5 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                            >
+                              + Aporte
+                            </button>
+                          )}
                           <button
-                            onClick={() => openEdit(fondo)}
+                            onClick={() => scrollToAportes(fondo.id)}
                             disabled={isPending}
-                            className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                            className="rounded px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 transition-colors disabled:opacity-50"
                           >
-                            Editar
+                            Ver aportes
                           </button>
                           {canDelete && (
                             <button
-                              onClick={() => handleDelete(fondo.id, fondo.nombre)}
+                              onClick={() => handleDeleteFondo(fondo.id, fondo.nombre)}
                               disabled={isPending}
                               className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
                             >
@@ -189,102 +384,258 @@ export default function FondosClient({ fondos, role }: Props) {
                           )}
                         </div>
                       </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Modal */}
-      {modalOpen && (
+      {/* ─── Section B: Aportes ────────────────────────────────────────────── */}
+      <div ref={aportesSectionRef} className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-900">Aportes registrados</h2>
+          {canWrite && (
+            <button
+              onClick={() => openNewAporte()}
+              disabled={isPending}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 transition-colors disabled:opacity-50"
+            >
+              + Registrar aporte
+            </button>
+          )}
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-wrap gap-3">
+          <select
+            value={filterFondoId}
+            onChange={(e) => setFilterFondoId(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+          >
+            <option value="">Todos los fondos</option>
+            {fondos.map((f) => (
+              <option key={f.id} value={f.id}>{f.nombre}</option>
+            ))}
+          </select>
+
+          <select
+            value={filterTipo}
+            onChange={(e) => setFilterTipo(e.target.value as TipoAporte | '')}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+          >
+            <option value="">Todos los tipos</option>
+            {TIPOS_APORTE.map((t) => (
+              <option key={t} value={t}>{TIPO_APORTE_LABELS[t]}</option>
+            ))}
+          </select>
+
+          <input
+            type="date"
+            value={filterFechaDesde}
+            onChange={(e) => setFilterFechaDesde(e.target.value)}
+            title="Fecha desde"
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+          />
+
+          <input
+            type="date"
+            value={filterFechaHasta}
+            onChange={(e) => setFilterFechaHasta(e.target.value)}
+            title="Fecha hasta"
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+          />
+
+          <input
+            type="text"
+            value={filterAportante}
+            onChange={(e) => setFilterAportante(e.target.value)}
+            placeholder="Aportante..."
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+          />
+
+          {hasFilters && (
+            <button
+              onClick={() => {
+                setFilterFondoId('')
+                setFilterTipo('')
+                setFilterFechaDesde('')
+                setFilterFechaHasta('')
+                setFilterAportante('')
+              }}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
+            >
+              Limpiar filtros
+            </button>
+          )}
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          {filteredAportes.length === 0 ? (
+            <div className="p-12 text-center text-sm text-gray-400">
+              {aportes.length === 0
+                ? 'No hay aportes registrados.'
+                : 'No hay aportes que coincidan con los filtros.'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fondo</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Tipo</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Concepto</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Aportante</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Monto</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredAportes.map((a) => (
+                    <tr key={a.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-sm tabular-nums text-gray-500">{a.fecha_aporte}</td>
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {a.fondos?.nombre ?? fondoMap.get(a.fondo_id)?.nombre ?? '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${TIPO_APORTE_COLORS[a.tipo_aporte as TipoAporte] ?? 'bg-gray-50 text-gray-600 ring-1 ring-gray-200'}`}>
+                          {TIPO_APORTE_LABELS[a.tipo_aporte as TipoAporte] ?? a.tipo_aporte}
+                        </span>
+                      </td>
+                      <td className="max-w-xs truncate px-4 py-3 text-sm text-gray-700">{a.concepto}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500">
+                        {a.aportante ?? <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm tabular-nums font-medium text-gray-900">
+                        {a.moneda} {fmt(a.monto)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ─── Modal: Nuevo / Editar fondo ───────────────────────────────────── */}
+      {(modal === 'newFondo' || modal === 'editFondo') && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h2 className="mb-5 text-lg font-semibold text-gray-900">
-              {editing ? 'Editar fondo' : 'Nuevo fondo'}
+              {modal === 'editFondo' ? 'Editar fondo' : 'Nuevo fondo'}
             </h2>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleFondoSubmit} className="space-y-4">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Nombre <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
-                  value={form.nombre}
-                  onChange={(e) => setForm({ ...form, nombre: e.target.value })}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                  value={fondoForm.nombre}
+                  onChange={(e) => setFondoForm({ ...fondoForm, nombre: e.target.value })}
+                  className={inputCls}
                   placeholder="Nombre del fondo"
                   autoFocus
                 />
               </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Moneda</label>
-                <select
-                  value={form.moneda}
-                  onChange={(e) => setForm({ ...form, moneda: e.target.value })}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                >
-                  {MONEDAS.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
+              {modal === 'newFondo' ? (
+                <>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Moneda</label>
+                    <select
+                      value={fondoForm.moneda}
+                      onChange={(e) => setFondoForm({ ...fondoForm, moneda: e.target.value })}
+                      className={inputCls}
+                    >
+                      {MONEDAS.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
 
-              {!editing && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Saldo inicial <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.monto_inicial}
-                    onChange={(e) => setForm({ ...form, monto_inicial: e.target.value })}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                    placeholder="0.00"
-                  />
-                </div>
-              )}
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Monto inicial <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={fondoForm.monto_inicial}
+                      onChange={(e) => setFondoForm({ ...fondoForm, monto_inicial: e.target.value })}
+                      className={inputCls}
+                      placeholder="0.00"
+                    />
+                    <p className="mt-1 text-xs text-gray-400">
+                      Representa el capital inicial. No genera movimiento contable.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Moneda</label>
+                    <input type="text" readOnly value={editingFondo?.moneda ?? ''} className={readonlyCls} />
+                    <p className="mt-1 text-xs text-gray-400">
+                      No puede modificarse si el fondo tiene movimientos.
+                    </p>
+                  </div>
 
-              {editing && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Saldo actual
-                  </label>
-                  <input
-                    type="text"
-                    readOnly
-                    value={editing.saldo_actual.toLocaleString('es-AR', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                    className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 outline-none cursor-default"
-                  />
-                  <p className="mt-1 text-xs text-gray-400">
-                    El saldo se actualiza con los movimientos del fondo.
-                  </p>
-                </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Monto inicial</label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={editingFondo ? fmt(editingFondo.monto_inicial) : ''}
+                      className={readonlyCls}
+                    />
+                    <p className="mt-1 text-xs text-gray-400">
+                      Inmutable. Para ajustar el saldo, registrá un aporte de tipo &ldquo;ajuste&rdquo;.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Saldo actual</label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={editingFondo ? `${editingFondo.moneda} ${fmt(editingFondo.saldo_actual)}` : ''}
+                      className={readonlyCls}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Estado</label>
+                    <select
+                      value={fondoForm.estado}
+                      onChange={(e) => setFondoForm({ ...fondoForm, estado: e.target.value as FondoEstado })}
+                      className={inputCls}
+                    >
+                      {ESTADOS_FONDO.map((s) => (
+                        <option key={s} value={s}>{FONDO_ESTADO_LABELS[s]}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
               )}
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Descripción</label>
                 <textarea
-                  value={form.descripcion}
-                  onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+                  value={fondoForm.descripcion}
+                  onChange={(e) => setFondoForm({ ...fondoForm, descripcion: e.target.value })}
                   rows={2}
                   className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
                   placeholder="Descripción opcional"
                 />
               </div>
 
-              {formError && (
+              {fondoFormError && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {formError}
+                  {fondoFormError}
                 </div>
               )}
 
@@ -302,11 +653,161 @@ export default function FondosClient({ fondos, role }: Props) {
                   disabled={isPending}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
                 >
-                  {isPending
-                    ? 'Guardando...'
-                    : editing
-                    ? 'Guardar cambios'
-                    : 'Crear fondo'}
+                  {isPending ? 'Guardando...' : modal === 'editFondo' ? 'Guardar cambios' : 'Crear fondo'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Modal: Registrar aporte ───────────────────────────────────────── */}
+      {modal === 'newAporte' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <h2 className="mb-4 text-lg font-semibold text-gray-900">Registrar aporte</h2>
+
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+              Este aporte impactará el saldo del fondo de forma inmediata e irreversible.
+              Para corregir un error, registrá un aporte de tipo <strong>ajuste</strong> con el monto equivalente.
+            </div>
+
+            <form onSubmit={handleAporteSubmit} className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Fondo <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={aporteForm.fondo_id}
+                  onChange={(e) => setAporteForm({ ...aporteForm, fondo_id: e.target.value })}
+                  className={inputCls}
+                >
+                  <option value="">Seleccioná un fondo</option>
+                  {activeFondos.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.nombre} ({f.moneda})
+                    </option>
+                  ))}
+                </select>
+                {selectedFondoForAporte && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Saldo actual:{' '}
+                    <span className="font-medium tabular-nums">
+                      {selectedFondoForAporte.moneda} {fmt(selectedFondoForAporte.saldo_actual)}
+                    </span>
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Fecha <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={aporteForm.fecha_aporte}
+                    onChange={(e) => setAporteForm({ ...aporteForm, fecha_aporte: e.target.value })}
+                    className={inputCls}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Monto <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={aporteForm.monto}
+                    onChange={(e) => setAporteForm({ ...aporteForm, monto: e.target.value })}
+                    className={inputCls}
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Tipo de aporte</label>
+                <select
+                  value={aporteForm.tipo_aporte}
+                  onChange={(e) => setAporteForm({ ...aporteForm, tipo_aporte: e.target.value as TipoAporte })}
+                  className={inputCls}
+                >
+                  {TIPOS_APORTE.map((t) => (
+                    <option key={t} value={t}>{TIPO_APORTE_LABELS[t]}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Concepto <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={aporteForm.concepto}
+                  onChange={(e) => setAporteForm({ ...aporteForm, concepto: e.target.value })}
+                  className={inputCls}
+                  placeholder="Descripción del aporte"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Aportante</label>
+                <input
+                  type="text"
+                  value={aporteForm.aportante}
+                  onChange={(e) => setAporteForm({ ...aporteForm, aportante: e.target.value })}
+                  className={inputCls}
+                  placeholder="Nombre del aportante (opcional)"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">URL comprobante</label>
+                <input
+                  type="url"
+                  value={aporteForm.comprobante_url}
+                  onChange={(e) => setAporteForm({ ...aporteForm, comprobante_url: e.target.value })}
+                  className={inputCls}
+                  placeholder="https://... (opcional)"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Observaciones</label>
+                <textarea
+                  value={aporteForm.observaciones}
+                  onChange={(e) => setAporteForm({ ...aporteForm, observaciones: e.target.value })}
+                  rows={2}
+                  className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                  placeholder="Observaciones opcionales"
+                />
+              </div>
+
+              {aporteFormError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {aporteFormError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  disabled={isPending}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 transition-colors disabled:opacity-50"
+                >
+                  {isPending ? 'Registrando...' : 'Registrar aporte'}
                 </button>
               </div>
             </form>
