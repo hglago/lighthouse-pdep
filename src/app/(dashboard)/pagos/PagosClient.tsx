@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import type { UserRole, PagoEstado, PagoTipo, ObligacionPendiente, ObligacionTipo } from '@/types'
 import type { PagoPayload } from './actions'
+import { exportToExcel, todayForFile } from '@/lib/excel'
 
 export interface PagoRow {
   id: string
@@ -42,6 +43,7 @@ interface Props {
   onUpdatePago: (id: string, data: PagoPayload) => Promise<void>
   onConfirmarPago: (id: string) => Promise<void>
   onAnularPago: (id: string) => Promise<void>
+  onConfirmarPagosBulk: (ids: string[]) => Promise<{ confirmados: string[]; errores: { id: string; error: string }[] }>
 }
 
 interface FormState {
@@ -162,6 +164,7 @@ export default function PagosClient({
   onUpdatePago,
   onConfirmarPago,
   onAnularPago,
+  onConfirmarPagosBulk,
 }: Props) {
   // ── Modal / form state ──────────────────────────────────────────────────────
   const [search, setSearch] = useState('')
@@ -262,25 +265,27 @@ export default function PagosClient({
       return
     setBulkPagosMessage(null)
     setActionError('')
+    const ids = selectedVisibleBorradores.map(p => p.id)
     startTransition(async () => {
-      let confirmados = 0
-      const errores: string[] = []
-      for (const p of selectedVisibleBorradores) {
-        try {
-          await onConfirmarPago(p.id)
-          confirmados++
-        } catch (err) {
-          errores.push(err instanceof Error ? err.message : 'Error desconocido')
+      try {
+        const result = await onConfirmarPagosBulk(ids)
+        const nConfirm = result.confirmados.length
+        const nErr = result.errores.length
+        if (nConfirm > 0) {
+          setSelectedPagoIds(new Set())
+          setBulkMessage(null)
         }
+        const partes: string[] = [
+          `${nConfirm} pago${nConfirm !== 1 ? 's' : ''} confirmado${nConfirm !== 1 ? 's' : ''}.`,
+        ]
+        if (nErr > 0) {
+          const detalle = result.errores.slice(0, 2).map(e => e.error || 'sin mensaje').join('; ')
+          partes.push(`${nErr} error${nErr !== 1 ? 'es' : ''}: ${detalle}`)
+        }
+        setBulkPagosMessage({ text: partes.join(' '), isError: nErr > 0 })
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : 'Error al confirmar pagos.')
       }
-      setSelectedPagoIds(new Set())
-      const partes: string[] = [
-        `${confirmados} pago${confirmados !== 1 ? 's' : ''} confirmado${confirmados !== 1 ? 's' : ''}.`,
-      ]
-      if (errores.length > 0) {
-        partes.push(`${errores.length} error${errores.length !== 1 ? 'es' : ''}: ${errores.slice(0, 2).join('; ')}`)
-      }
-      setBulkPagosMessage({ text: partes.join(' '), isError: errores.length > 0 })
     })
   }
 
@@ -499,10 +504,27 @@ export default function PagosClient({
     startTransition(async () => {
       try {
         await onConfirmarPago(id)
+        setBulkMessage(null)
       } catch (err: unknown) {
         setActionError(err instanceof Error ? err.message : 'Error al confirmar pago.')
       }
     })
+  }
+
+  function handleExportPagos() {
+    const rows = filteredPagos.map(p => ({
+      nro_pago: p.nro_pago,
+      fecha: p.fecha_pago,
+      tipo: TIPO_LABELS[p.tipo] ?? p.tipo,
+      fondo: p.fondos?.nombre ?? '',
+      proveedor: p.proveedores?.nombre ?? '',
+      concepto: p.concepto,
+      monto: p.monto,
+      moneda: p.moneda,
+      estado: ESTADO_LABELS[p.estado] ?? p.estado,
+      created_at: p.created_at,
+    }))
+    exportToExcel(rows, `pagos_${todayForFile()}.xlsx`, 'Pagos')
   }
 
   function handleAnular(id: string, concepto: string) {
@@ -708,6 +730,13 @@ export default function PagosClient({
               placeholder="Buscar..."
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:w-48"
             />
+            <button
+              onClick={handleExportPagos}
+              disabled={filteredPagos.length === 0}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 whitespace-nowrap"
+            >
+              Exportar Excel
+            </button>
             {canWrite && (
               <button
                 onClick={openNew}
@@ -737,6 +766,7 @@ export default function PagosClient({
                 {formatMonto(total, moneda)}
               </span>
             ))}
+            <span className="text-xs font-medium text-amber-700">Confirmar impactará saldos de fondos</span>
             <button
               onClick={handleBulkConfirmar}
               disabled={isPending}

@@ -67,3 +67,29 @@ export async function anularPago(id: string) {
   revalidatePath('/pagos')
   revalidatePath('/fondos')
 }
+
+export async function confirmarPagosBulk(
+  ids: string[]
+): Promise<{ confirmados: string[]; errores: { id: string; error: string }[] }> {
+  const supabase = createClient()
+  const confirmados: string[] = []
+  const errores: { id: string; error: string }[] = []
+
+  for (const id of ids) {
+    const { error } = await supabase.rpc('fn_confirmar_pago', { p_pago_id: id })
+    if (error) {
+      const msg = cleanDbError(error.message)
+      console.error('[confirmarPagosBulk]', { id, error: msg })
+      errores.push({ id, error: msg })
+    } else {
+      confirmados.push(id)
+    }
+  }
+
+  if (confirmados.length > 0) {
+    revalidatePath('/pagos')
+    revalidatePath('/fondos')
+  }
+
+  return { confirmados, errores }
+}

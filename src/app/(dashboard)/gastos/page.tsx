@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import GastosClient, { type GastoRow } from './GastosClient'
+import GastosClient, { type GastoRow, type GastoRecurrenteRow } from './GastosClient'
 import type { Fondo, Proveedor, UserRole } from '@/types'
-import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto } from './actions'
+import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente } from './actions'
 
 export default async function GastosPage() {
   const supabase = createClient()
@@ -11,7 +11,7 @@ export default async function GastosPage() {
   const user = authResult.data?.user
   if (!user) redirect('/login')
 
-  const [profileResult, gastosResult, fondosResult, proveedoresResult] = await Promise.all([
+  const [profileResult, gastosResult, fondosResult, proveedoresResult, recurrentesResult] = await Promise.all([
     supabase
       .from('profiles')
       .select('role')
@@ -33,12 +33,18 @@ export default async function GastosPage() {
       .select('id, nombre')
       .is('deleted_at', null)
       .order('nombre', { ascending: true }),
+    supabase
+      .from('gastos_recurrentes')
+      .select('id, fondo_id, proveedor_id, concepto, categoria, monto, moneda, dia_vencimiento, fecha_inicio, fecha_fin, activo, prioridad_pago, observaciones, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
+      .is('deleted_at', null)
+      .order('concepto', { ascending: true }),
   ])
 
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const gastos: GastoRow[] = (gastosResult.data ?? []) as unknown as GastoRow[]
   const fondos = (fondosResult.data ?? []) as Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
   const proveedores = (proveedoresResult.data ?? []) as Pick<Proveedor, 'id' | 'nombre'>[]
+  const recurrentes: GastoRecurrenteRow[] = (recurrentesResult.data ?? []) as unknown as GastoRecurrenteRow[]
 
   return (
     <div className="space-y-6">
@@ -50,15 +56,19 @@ export default async function GastosPage() {
       </div>
 
       <GastosClient
-          gastos={gastos}
-          fondos={fondos}
-          proveedores={proveedores}
-          role={role}
-          onCreateGasto={createGasto}
-          onUpdateGasto={updateGasto}
-          onDeleteGasto={deleteGasto}
-          onCambiarEstado={cambiarEstadoGasto}
-        />
+        gastos={gastos}
+        recurrentes={recurrentes}
+        fondos={fondos}
+        proveedores={proveedores}
+        role={role}
+        onCreateGasto={createGasto}
+        onUpdateGasto={updateGasto}
+        onDeleteGasto={deleteGasto}
+        onCambiarEstado={cambiarEstadoGasto}
+        onCreateRecurrente={createGastoRecurrente}
+        onUpdateRecurrente={updateGastoRecurrente}
+        onDeleteRecurrente={deleteGastoRecurrente}
+      />
     </div>
   )
 }
