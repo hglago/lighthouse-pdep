@@ -27,7 +27,7 @@ export default async function PagosPage() {
     supabase
       .from('pagos')
       .select(
-        'id, fondo_id, proveedor_id, gasto_id, anticipo_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
+        'id, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
       )
       .order('fecha_pago', { ascending: false }),
     supabase
@@ -44,14 +44,14 @@ export default async function PagosPage() {
       .order('nombre'),
     supabase
       .from('gastos')
-      .select('id, descripcion, fondo_id')
+      .select('id, descripcion, fondo_id, monto, proveedor_id')
       .eq('estado', 'aprobado')
       .is('deleted_at', null)
       .order('fecha_gasto', { ascending: false }),
     supabase
       .from('anticipos')
       .select('id, concepto, fondo_id')
-      .neq('estado', 'cancelado')
+      .in('estado', ['aprobado', 'anticipo_pagado'])
       .is('deleted_at', null)
       .order('fecha_acuerdo', { ascending: false }),
   ])
@@ -60,7 +60,23 @@ export default async function PagosPage() {
   const pagos = (pagosResult.data ?? []) as unknown as PagoRow[]
   const fondos = (fondosResult.data ?? []) as { id: string; nombre: string; moneda: string }[]
   const proveedores = (proveedoresResult.data ?? []) as { id: string; nombre: string }[]
-  const gastosAprobados = (gastosResult.data ?? []) as { id: string; descripcion: string; fondo_id: string }[]
+
+  // Excluir gastos que ya tienen un pago confirmado
+  // Nota: gasto_id en pagosResult es columna plana (UUID string), no el join anidado gastos(...)
+  const gastoIdsPagados = new Set(
+    pagos
+      .filter(p => p.estado === 'pagado' && typeof p.gasto_id === 'string' && p.gasto_id !== '')
+      .map(p => p.gasto_id as string)
+  )
+  const gastosAprobados = (gastosResult.data ?? [])
+    .filter(g => !gastoIdsPagados.has(g.id)) as {
+      id: string
+      descripcion: string
+      fondo_id: string
+      monto: number
+      proveedor_id: string | null
+    }[]
+
   const anticiposActivos = (anticiposResult.data ?? []) as { id: string; concepto: string; fondo_id: string }[]
 
   return (

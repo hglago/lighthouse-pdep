@@ -6,6 +6,7 @@ import type { PagoPayload } from './actions'
 
 export interface PagoRow {
   id: string
+  nro_pago: string
   fondo_id: string
   proveedor_id: string
   gasto_id: string | null
@@ -32,7 +33,7 @@ interface Props {
   pagos: PagoRow[]
   fondos: { id: string; nombre: string; moneda: string }[]
   proveedores: { id: string; nombre: string }[]
-  gastosAprobados: { id: string; descripcion: string; fondo_id: string }[]
+  gastosAprobados: { id: string; descripcion: string; fondo_id: string; monto: number; proveedor_id: string | null }[]
   anticiposActivos: { id: string; concepto: string; fondo_id: string }[]
   role: UserRole
   onCreatePago: (data: PagoPayload) => Promise<void>
@@ -137,9 +138,13 @@ export default function PagosClient({
       )
     : pagos
 
-  const gastosParaFondo = form.fondo_id
-    ? gastosAprobados.filter(g => g.fondo_id === form.fondo_id)
-    : gastosAprobados
+  // Para tipo='gasto' el gasto dirige el fondo (no al revés): mostrar todos sin filtrar.
+  // Para anticipo/saldo_anticipo, filtrar por fondo seleccionado.
+  const gastosParaFondo = form.tipo === 'gasto'
+    ? gastosAprobados
+    : form.fondo_id
+      ? gastosAprobados.filter(g => g.fondo_id === form.fondo_id)
+      : gastosAprobados
 
   const anticiposParaFondo = form.fondo_id
     ? anticiposActivos.filter(a => a.fondo_id === form.fondo_id)
@@ -163,6 +168,8 @@ export default function PagosClient({
       concepto: gasto?.descripcion ?? prev.concepto,
       fondo_id: gasto?.fondo_id ?? prev.fondo_id,
       moneda: fondo?.moneda ?? prev.moneda,
+      monto: gasto ? String(gasto.monto) : prev.monto,
+      proveedor_id: gasto?.proveedor_id ?? prev.proveedor_id,
     }))
   }
 
@@ -221,6 +228,10 @@ export default function PagosClient({
     if (form.tipo === 'gasto' && !form.gasto_id) { setFormError('Seleccioná el gasto vinculado.'); return }
     if ((form.tipo === 'anticipo' || form.tipo === 'saldo_anticipo') && !form.anticipo_id) {
       setFormError('Seleccioná el anticipo vinculado.')
+      return
+    }
+    if (form.tipo === 'directo' && !form.notas.trim()) {
+      setFormError('Los pagos directos requieren justificación en el campo Notas.')
       return
     }
 
@@ -314,6 +325,7 @@ export default function PagosClient({
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">Nro</th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Concepto</th>
                   <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">Tipo</th>
@@ -329,6 +341,7 @@ export default function PagosClient({
               <tbody className="divide-y divide-gray-100">
                 {filtered.map(p => (
                   <tr key={p.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="hidden px-4 py-3 text-xs text-gray-400 whitespace-nowrap font-mono sm:table-cell">{p.nro_pago}</td>
                     <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</td>
                     <td className="px-4 py-3">
                       <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{p.concepto}</div>
@@ -489,8 +502,8 @@ export default function PagosClient({
                       <option key={g.id} value={g.id}>{g.descripcion}</option>
                     ))}
                   </select>
-                  {form.fondo_id && gastosParaFondo.length === 0 && (
-                    <p className="mt-1 text-xs text-gray-400">No hay gastos aprobados para este fondo.</p>
+                  {gastosParaFondo.length === 0 && (
+                    <p className="mt-1 text-xs text-gray-400">No hay gastos aprobados pendientes de pago.</p>
                   )}
                 </div>
               )}
@@ -569,13 +582,21 @@ export default function PagosClient({
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Notas</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Notas
+                  {form.tipo === 'directo' && (
+                    <span className="ml-1 text-red-500">*</span>
+                  )}
+                  {form.tipo === 'directo' && (
+                    <span className="ml-1 text-xs font-normal text-gray-400">(requerida para pagos directos)</span>
+                  )}
+                </label>
                 <textarea
                   value={form.notas}
                   onChange={e => setForm({ ...form, notas: e.target.value })}
                   rows={2}
                   className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  placeholder="Notas internas opcionales"
+                  placeholder={form.tipo === 'directo' ? 'Justificación obligatoria para pagos directos' : 'Notas internas opcionales'}
                 />
               </div>
 

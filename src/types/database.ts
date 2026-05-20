@@ -1,7 +1,7 @@
 export type UserRole = 'admin' | 'contador' | 'revisor' | 'visualizador'
 export type FondoEstado = 'activo' | 'cerrado' | 'suspendido'
 export type GastoEstado = 'borrador' | 'enviado' | 'aprobado' | 'pagado' | 'rechazado'
-export type AnticipoEstado = 'borrador' | 'comprometido' | 'parcialmente_pagado' | 'pagado' | 'cancelado'
+export type AnticipoEstado = 'borrador' | 'aprobado' | 'anticipo_pagado' | 'completado' | 'cancelado'
 
 export interface Profile {
   id: string
@@ -90,6 +90,7 @@ export type PagoTipo   = 'gasto' | 'anticipo' | 'saldo_anticipo' | 'directo'
 
 export interface Pago {
   id: string
+  nro_pago: string
   fondo_id: string
   proveedor_id: string
   gasto_id: string | null

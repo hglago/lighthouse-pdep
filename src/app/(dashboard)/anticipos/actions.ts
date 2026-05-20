@@ -47,9 +47,12 @@ export async function updateAnticipo(id: string, data: AnticipoPayload) {
   revalidatePath('/anticipos')
 }
 
-type NuevoEstado = Exclude<AnticipoEstado, 'borrador'>
-
-export async function cambiarEstadoAnticipo(id: string, nuevoEstado: NuevoEstado) {
+// Solo transiciones manuales. Las payment-driven (anticipo_pagado, completado)
+// las ejecuta fn_confirmar_pago en el módulo de pagos.
+export async function cambiarEstadoAnticipo(
+  id: string,
+  nuevoEstado: 'aprobado' | 'cancelado'
+) {
   const supabase = createClient()
 
   if (nuevoEstado === 'cancelado') {
@@ -58,11 +61,6 @@ export async function cambiarEstadoAnticipo(id: string, nuevoEstado: NuevoEstado
       throw new Error('Solo admin puede cancelar anticipos.')
   }
 
-  const estadoOrigen: AnticipoEstado | null =
-    nuevoEstado === 'comprometido'       ? 'borrador' :
-    nuevoEstado === 'parcialmente_pagado' ? 'comprometido' :
-    nuevoEstado === 'pagado'             ? 'parcialmente_pagado' : null
-
   const base = supabase
     .from('anticipos')
     .update({ estado: nuevoEstado })
@@ -70,9 +68,9 @@ export async function cambiarEstadoAnticipo(id: string, nuevoEstado: NuevoEstado
     .is('deleted_at', null)
 
   const result = await (
-    estadoOrigen !== null
-      ? base.eq('estado', estadoOrigen)
-      : base.neq('estado', 'cancelado')
+    nuevoEstado === 'aprobado'
+      ? base.eq('estado', 'borrador')
+      : base.neq('estado', 'completado').neq('estado', 'cancelado')
   ).select('id')
 
   if (result.error) throw new Error(result.error.message)

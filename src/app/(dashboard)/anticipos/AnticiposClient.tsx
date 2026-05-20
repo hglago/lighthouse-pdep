@@ -31,22 +31,22 @@ interface Props {
   role: UserRole
   onCreateAnticipo: (data: AnticipoPayload) => Promise<void>
   onUpdateAnticipo: (id: string, data: AnticipoPayload) => Promise<void>
-  onCambiarEstado: (id: string, nuevoEstado: Exclude<AnticipoEstado, 'borrador'>) => Promise<void>
+  onCambiarEstado: (id: string, nuevoEstado: 'aprobado' | 'cancelado') => Promise<void>
 }
 
 const ESTADO_LABELS: Record<AnticipoEstado, string> = {
   borrador: 'Borrador',
-  comprometido: 'Comprometido',
-  parcialmente_pagado: 'Parcialmente pagado',
-  pagado: 'Pagado',
+  aprobado: 'Aprobado',
+  anticipo_pagado: 'Anticipo pagado',
+  completado: 'Completado',
   cancelado: 'Cancelado',
 }
 
 const ESTADO_COLORS: Record<AnticipoEstado, string> = {
   borrador: 'bg-gray-100 text-gray-700',
-  comprometido: 'bg-blue-100 text-blue-700',
-  parcialmente_pagado: 'bg-yellow-100 text-yellow-700',
-  pagado: 'bg-green-100 text-green-700',
+  aprobado: 'bg-blue-100 text-blue-700',
+  anticipo_pagado: 'bg-yellow-100 text-yellow-700',
+  completado: 'bg-green-100 text-green-700',
   cancelado: 'bg-red-100 text-red-700',
 }
 
@@ -158,7 +158,7 @@ export default function AnticiposClient({
     })
   }
 
-  function handleEstado(id: string, nuevoEstado: Exclude<AnticipoEstado, 'borrador'>) {
+  function handleEstado(id: string, nuevoEstado: 'aprobado' | 'cancelado') {
     setActionError(null)
     startTransition(async () => {
       try {
@@ -403,33 +403,15 @@ export default function AnticiposClient({
                           Editar
                         </button>
                         <button
-                          onClick={() => handleEstado(a.id, 'comprometido')}
+                          onClick={() => handleEstado(a.id, 'aprobado')}
                           disabled={isPending}
                           className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                         >
-                          Comprometer
+                          Aprobar
                         </button>
                       </>
                     )}
-                    {a.estado === 'comprometido' && canWrite && (
-                      <button
-                        onClick={() => handleEstado(a.id, 'parcialmente_pagado')}
-                        disabled={isPending}
-                        className="px-2 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50"
-                      >
-                        Reg. anticipo
-                      </button>
-                    )}
-                    {a.estado === 'parcialmente_pagado' && canWrite && (
-                      <button
-                        onClick={() => handleEstado(a.id, 'pagado')}
-                        disabled={isPending}
-                        className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-                      >
-                        Reg. pago final
-                      </button>
-                    )}
-                    {a.estado !== 'pagado' && a.estado !== 'cancelado' && isAdmin && (
+                    {a.estado !== 'completado' && a.estado !== 'cancelado' && isAdmin && (
                       <button
                         onClick={() => handleEstado(a.id, 'cancelado')}
                         disabled={isPending}
