@@ -55,6 +55,14 @@ export interface Gasto {
   fecha_gasto: string
   comprobante_url: string | null
   notas: string | null
+  tiene_anticipo: boolean
+  monto_anticipo: number | null
+  porcentaje_anticipo: number | null
+  fecha_prevista_pago_anticipo: string | null
+  fecha_comprometida_pago_saldo: string | null
+  condiciones_pago_notas: string | null
+  fecha_vencimiento: string | null
+  prioridad_pago: number
   created_by: string
   aprobado_por: string | null
   aprobado_en: string | null
@@ -86,7 +94,7 @@ export interface Anticipo {
 }
 
 export type PagoEstado = 'borrador' | 'pagado' | 'anulado'
-export type PagoTipo   = 'gasto' | 'anticipo' | 'saldo_anticipo' | 'directo'
+export type PagoTipo   = 'gasto' | 'anticipo' | 'saldo_anticipo' | 'recurrente' | 'directo'
 
 export interface Pago {
   id: string
@@ -95,6 +103,7 @@ export interface Pago {
   proveedor_id: string
   gasto_id: string | null
   anticipo_id: string | null
+  gasto_recurrente_id: string | null
   tipo: PagoTipo
   concepto: string
   monto: number
@@ -108,6 +117,46 @@ export interface Pago {
   anulado_en: string | null
   created_at: string
   updated_at: string
+}
+
+export interface GastoRecurrente {
+  id: string
+  fondo_id: string
+  proveedor_id: string | null
+  concepto: string
+  categoria: string | null
+  monto: number
+  moneda: string
+  dia_vencimiento: number
+  fecha_inicio: string
+  fecha_fin: string | null
+  activo: boolean
+  prioridad_pago: number
+  observaciones: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+}
+
+export type ObligacionTipo = 'gasto_total' | 'anticipo' | 'saldo_anticipo' | 'recurrente'
+
+export interface ObligacionPendiente {
+  obligacion_id: string
+  tipo_obligacion: ObligacionTipo
+  gasto_id: string | null
+  gasto_recurrente_id: string | null
+  fondo_id: string
+  proveedor_id: string | null
+  concepto: string
+  monto_pendiente: number
+  moneda: string
+  fecha_vencimiento: string | null
+  prioridad_pago: number
+  fecha_gasto: string | null
+  fondo_nombre: string
+  fondo_saldo_actual: number
+  proveedor_nombre: string | null
 }
 
 export type MovimientoTipo = 'debito' | 'credito'

@@ -19,7 +19,7 @@ export default async function GastosPage() {
       .single(),
     supabase
       .from('gastos')
-      .select('id, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
+      .select('id, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
       .is('deleted_at', null)
       .order('fecha_gasto', { ascending: false }),
     supabase

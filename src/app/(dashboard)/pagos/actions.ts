@@ -9,6 +9,7 @@ export type PagoPayload = {
   proveedor_id: string
   gasto_id: string | null
   anticipo_id: string | null
+  gasto_recurrente_id: string | null
   tipo: PagoTipo
   concepto: string
   monto: number

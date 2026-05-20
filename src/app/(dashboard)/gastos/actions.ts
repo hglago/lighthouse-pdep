@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 
-export async function createGasto(data: {
+export type GastoPayload = {
   fondo_id: string
   proveedor_id: string
   descripcion: string
@@ -11,7 +11,17 @@ export async function createGasto(data: {
   moneda: string
   fecha_gasto: string
   notas: string | null
-}) {
+  tiene_anticipo: boolean
+  monto_anticipo: number | null
+  porcentaje_anticipo: number | null
+  fecha_prevista_pago_anticipo: string | null
+  fecha_comprometida_pago_saldo: string | null
+  condiciones_pago_notas: string | null
+  fecha_vencimiento: string | null
+  prioridad_pago: number
+}
+
+export async function createGasto(data: GastoPayload) {
   const supabase = createClient()
   const authResult = await supabase.auth.getUser()
   const user = authResult.data?.user
@@ -27,18 +37,7 @@ export async function createGasto(data: {
   revalidatePath('/gastos')
 }
 
-export async function updateGasto(
-  id: string,
-  data: {
-    fondo_id: string
-    proveedor_id: string
-    descripcion: string
-    monto: number
-    moneda: string
-    fecha_gasto: string
-    notas: string | null
-  }
-) {
+export async function updateGasto(id: string, data: GastoPayload) {
   const supabase = createClient()
   const result = await supabase
     .from('gastos')

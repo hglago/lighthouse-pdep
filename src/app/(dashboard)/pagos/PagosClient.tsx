@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import type { UserRole, PagoEstado, PagoTipo } from '@/types'
+import type { UserRole, PagoEstado, PagoTipo, ObligacionPendiente, ObligacionTipo } from '@/types'
 import type { PagoPayload } from './actions'
 
 export interface PagoRow {
@@ -11,6 +11,7 @@ export interface PagoRow {
   proveedor_id: string
   gasto_id: string | null
   anticipo_id: string | null
+  gasto_recurrente_id: string | null
   tipo: PagoTipo
   concepto: string
   monto: number
@@ -29,12 +30,14 @@ export interface PagoRow {
   anticipos: { concepto: string } | null
 }
 
+// UI tipo shown in dropdown (does not expose 'anticipo' as new option)
+type UiTipo = 'gasto' | 'saldo_anticipo' | 'recurrente' | 'directo'
+
 interface Props {
   pagos: PagoRow[]
   fondos: { id: string; nombre: string; moneda: string }[]
   proveedores: { id: string; nombre: string }[]
-  gastosAprobados: { id: string; descripcion: string; fondo_id: string; monto: number; proveedor_id: string | null }[]
-  anticiposActivos: { id: string; concepto: string; fondo_id: string }[]
+  obligaciones: ObligacionPendiente[]
   role: UserRole
   onCreatePago: (data: PagoPayload) => Promise<void>
   onUpdatePago: (id: string, data: PagoPayload) => Promise<void>
@@ -43,11 +46,13 @@ interface Props {
 }
 
 interface FormState {
+  ui_tipo: UiTipo
+  obligacion_id: string
   fondo_id: string
   proveedor_id: string
   gasto_id: string
+  gasto_recurrente_id: string
   anticipo_id: string
-  tipo: PagoTipo
   concepto: string
   monto: string
   moneda: string
@@ -57,11 +62,13 @@ interface FormState {
 }
 
 const EMPTY_FORM: FormState = {
+  ui_tipo: 'directo',
+  obligacion_id: '',
   fondo_id: '',
   proveedor_id: '',
   gasto_id: '',
+  gasto_recurrente_id: '',
   anticipo_id: '',
-  tipo: 'directo',
   concepto: '',
   monto: '',
   moneda: '',
@@ -75,6 +82,7 @@ const TIPO_LABELS: Record<PagoTipo, string> = {
   gasto: 'Gasto aprobado',
   anticipo: 'Anticipo',
   saldo_anticipo: 'Saldo anticipo',
+  recurrente: 'Recurrente',
 }
 
 const TIPO_COLORS: Record<PagoTipo, string> = {
@@ -82,6 +90,7 @@ const TIPO_COLORS: Record<PagoTipo, string> = {
   gasto: 'bg-blue-100 text-blue-700',
   anticipo: 'bg-purple-100 text-purple-700',
   saldo_anticipo: 'bg-orange-100 text-orange-700',
+  recurrente: 'bg-teal-100 text-teal-700',
 }
 
 const ESTADO_LABELS: Record<PagoEstado, string> = {
@@ -96,6 +105,13 @@ const ESTADO_COLORS: Record<PagoEstado, string> = {
   anulado: 'bg-red-100 text-red-700',
 }
 
+const OBLIGACION_TIPO_LABELS: Record<ObligacionTipo, string> = {
+  gasto_total: 'Gasto',
+  anticipo: 'Anticipo (1er pago)',
+  saldo_anticipo: 'Saldo anticipo',
+  recurrente: 'Recurrente',
+}
+
 function formatMonto(monto: number, moneda: string) {
   const currency = moneda === 'USD' ? 'USD' : moneda === 'EUR' ? 'EUR' : 'ARS'
   return new Intl.NumberFormat('es-AR', {
@@ -105,12 +121,21 @@ function formatMonto(monto: number, moneda: string) {
   }).format(monto)
 }
 
+// Derive actual DB tipo from UiTipo + obligation
+function resolveDbTipo(uiTipo: UiTipo, obligacionTipo: ObligacionTipo | null): PagoTipo {
+  if (uiTipo === 'directo') return 'directo'
+  if (uiTipo === 'recurrente') return 'recurrente'
+  if (uiTipo === 'saldo_anticipo') return 'saldo_anticipo'
+  // uiTipo === 'gasto'
+  if (obligacionTipo === 'anticipo') return 'anticipo'
+  return 'gasto'
+}
+
 export default function PagosClient({
   pagos,
   fondos,
   proveedores,
-  gastosAprobados,
-  anticiposActivos,
+  obligaciones,
   role,
   onCreatePago,
   onUpdatePago,
@@ -138,48 +163,51 @@ export default function PagosClient({
       )
     : pagos
 
-  // Para tipo='gasto' el gasto dirige el fondo (no al revés): mostrar todos sin filtrar.
-  // Para anticipo/saldo_anticipo, filtrar por fondo seleccionado.
-  const gastosParaFondo = form.tipo === 'gasto'
-    ? gastosAprobados
-    : form.fondo_id
-      ? gastosAprobados.filter(g => g.fondo_id === form.fondo_id)
-      : gastosAprobados
+  // Filter obligations by ui_tipo
+  const obligacionesFiltradas = (() => {
+    if (form.ui_tipo === 'gasto') {
+      return obligaciones.filter(o => o.tipo_obligacion === 'gasto_total' || o.tipo_obligacion === 'anticipo')
+    }
+    if (form.ui_tipo === 'saldo_anticipo') {
+      return obligaciones.filter(o => o.tipo_obligacion === 'saldo_anticipo')
+    }
+    if (form.ui_tipo === 'recurrente') {
+      return obligaciones.filter(o => o.tipo_obligacion === 'recurrente')
+    }
+    return []
+  })()
 
-  const anticiposParaFondo = form.fondo_id
-    ? anticiposActivos.filter(a => a.fondo_id === form.fondo_id)
-    : anticiposActivos
+  function handleUiTipoChange(ui_tipo: UiTipo) {
+    setForm(prev => ({
+      ...EMPTY_FORM,
+      fecha_pago: prev.fecha_pago,
+      ui_tipo,
+    }))
+  }
+
+  function handleObligacionChange(obligacion_id: string) {
+    const ob = obligaciones.find(o => o.obligacion_id === obligacion_id)
+    if (!ob) {
+      setForm(prev => ({ ...prev, obligacion_id: '', gasto_id: '', gasto_recurrente_id: '', concepto: '', monto: '', moneda: '', fondo_id: '', proveedor_id: '' }))
+      return
+    }
+    const fondo = fondos.find(f => f.id === ob.fondo_id)
+    setForm(prev => ({
+      ...prev,
+      obligacion_id,
+      gasto_id: ob.gasto_id ?? '',
+      gasto_recurrente_id: ob.gasto_recurrente_id ?? '',
+      fondo_id: ob.fondo_id,
+      moneda: fondo?.moneda ?? ob.moneda,
+      proveedor_id: ob.proveedor_id ?? prev.proveedor_id,
+      concepto: ob.concepto,
+      monto: String(ob.monto_pendiente),
+    }))
+  }
 
   function handleFondoChange(fondo_id: string) {
     const fondo = fondos.find(f => f.id === fondo_id)
-    setForm(prev => ({ ...prev, fondo_id, moneda: fondo?.moneda ?? '', gasto_id: '', anticipo_id: '' }))
-  }
-
-  function handleTipoChange(tipo: PagoTipo) {
-    setForm(prev => ({ ...prev, tipo, gasto_id: '', anticipo_id: '' }))
-  }
-
-  function handleGastoChange(gasto_id: string) {
-    const gasto = gastosAprobados.find(g => g.id === gasto_id)
-    const fondo = gasto ? fondos.find(f => f.id === gasto.fondo_id) : undefined
-    setForm(prev => ({
-      ...prev,
-      gasto_id,
-      concepto: gasto?.descripcion ?? prev.concepto,
-      fondo_id: gasto?.fondo_id ?? prev.fondo_id,
-      moneda: fondo?.moneda ?? prev.moneda,
-      monto: gasto ? String(gasto.monto) : prev.monto,
-      proveedor_id: gasto?.proveedor_id ?? prev.proveedor_id,
-    }))
-  }
-
-  function handleAnticipoChange(anticipo_id: string) {
-    const anticipo = anticiposActivos.find(a => a.id === anticipo_id)
-    setForm(prev => ({
-      ...prev,
-      anticipo_id,
-      concepto: anticipo?.concepto ?? prev.concepto,
-    }))
+    setForm(prev => ({ ...prev, fondo_id, moneda: fondo?.moneda ?? '' }))
   }
 
   function openNew() {
@@ -191,12 +219,20 @@ export default function PagosClient({
 
   function openEdit(p: PagoRow) {
     setEditing(p)
+    // Reconstruct ui_tipo from db tipo
+    let ui_tipo: UiTipo = 'directo'
+    if (p.tipo === 'gasto' || p.tipo === 'anticipo') ui_tipo = 'gasto'
+    else if (p.tipo === 'saldo_anticipo') ui_tipo = 'saldo_anticipo'
+    else if (p.tipo === 'recurrente') ui_tipo = 'recurrente'
+
     setForm({
+      ui_tipo,
+      obligacion_id: '',
       fondo_id: p.fondo_id,
       proveedor_id: p.proveedor_id,
       gasto_id: p.gasto_id ?? '',
+      gasto_recurrente_id: p.gasto_recurrente_id ?? '',
       anticipo_id: p.anticipo_id ?? '',
-      tipo: p.tipo,
       concepto: p.concepto,
       monto: String(p.monto),
       moneda: p.moneda,
@@ -225,22 +261,37 @@ export default function PagosClient({
     const monto = parseFloat(form.monto)
     if (!form.monto || isNaN(monto) || monto <= 0) { setFormError('El monto debe ser mayor a 0.'); return }
     if (!form.fecha_pago) { setFormError('La fecha es requerida.'); return }
-    if (form.tipo === 'gasto' && !form.gasto_id) { setFormError('Seleccioná el gasto vinculado.'); return }
-    if ((form.tipo === 'anticipo' || form.tipo === 'saldo_anticipo') && !form.anticipo_id) {
-      setFormError('Seleccioná el anticipo vinculado.')
+
+    if (form.ui_tipo === 'gasto' && !form.gasto_id) {
+      setFormError('Seleccioná la obligación vinculada.')
       return
     }
-    if (form.tipo === 'directo' && !form.notas.trim()) {
+    if (form.ui_tipo === 'saldo_anticipo' && !form.gasto_id && !form.anticipo_id) {
+      setFormError('Seleccioná la obligación vinculada.')
+      return
+    }
+    if (form.ui_tipo === 'recurrente' && !form.gasto_recurrente_id) {
+      setFormError('Seleccioná la obligación recurrente vinculada.')
+      return
+    }
+    if (form.ui_tipo === 'directo' && !form.notas.trim()) {
       setFormError('Los pagos directos requieren justificación en el campo Notas.')
       return
     }
+
+    // Derive actual DB tipo
+    const selectedOb = obligaciones.find(o => o.obligacion_id === form.obligacion_id)
+    const tipo = editing
+      ? editing.tipo  // preserve original tipo when editing
+      : resolveDbTipo(form.ui_tipo, selectedOb?.tipo_obligacion ?? null)
 
     const payload: PagoPayload = {
       fondo_id: form.fondo_id,
       proveedor_id: form.proveedor_id,
       gasto_id: form.gasto_id || null,
       anticipo_id: form.anticipo_id || null,
-      tipo: form.tipo,
+      gasto_recurrente_id: form.gasto_recurrente_id || null,
+      tipo,
       concepto: form.concepto.trim(),
       monto,
       moneda: form.moneda,
@@ -442,17 +493,42 @@ export default function PagosClient({
                     Tipo <span className="text-red-500">*</span>
                   </label>
                   <select
-                    value={form.tipo}
-                    onChange={e => handleTipoChange(e.target.value as PagoTipo)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                    value={form.ui_tipo}
+                    onChange={e => handleUiTipoChange(e.target.value as UiTipo)}
+                    disabled={!!editing}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 disabled:bg-gray-50 disabled:text-gray-500"
                   >
-                    <option value="directo">Pago directo</option>
                     <option value="gasto">Gasto aprobado</option>
-                    <option value="anticipo">Anticipo</option>
                     <option value="saldo_anticipo">Saldo anticipo</option>
+                    <option value="recurrente">Recurrente</option>
+                    <option value="directo">Pago directo</option>
                   </select>
                 </div>
               </div>
+
+              {/* Obligation selector (not for directo) */}
+              {form.ui_tipo !== 'directo' && !editing && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Obligación pendiente <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={form.obligacion_id}
+                    onChange={e => handleObligacionChange(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                  >
+                    <option value="">Seleccionar obligación...</option>
+                    {obligacionesFiltradas.map(o => (
+                      <option key={o.obligacion_id} value={o.obligacion_id}>
+                        [{OBLIGACION_TIPO_LABELS[o.tipo_obligacion]}] {o.concepto} — {o.fondo_nombre} — {formatMonto(o.monto_pendiente, o.moneda)}
+                      </option>
+                    ))}
+                  </select>
+                  {obligacionesFiltradas.length === 0 && (
+                    <p className="mt-1 text-xs text-gray-400">No hay obligaciones pendientes para este tipo.</p>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
@@ -486,48 +562,6 @@ export default function PagosClient({
                   </select>
                 </div>
               </div>
-
-              {form.tipo === 'gasto' && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Gasto aprobado <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={form.gasto_id}
-                    onChange={e => handleGastoChange(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  >
-                    <option value="">Seleccionar gasto...</option>
-                    {gastosParaFondo.map(g => (
-                      <option key={g.id} value={g.id}>{g.descripcion}</option>
-                    ))}
-                  </select>
-                  {gastosParaFondo.length === 0 && (
-                    <p className="mt-1 text-xs text-gray-400">No hay gastos aprobados pendientes de pago.</p>
-                  )}
-                </div>
-              )}
-
-              {(form.tipo === 'anticipo' || form.tipo === 'saldo_anticipo') && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Anticipo <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={form.anticipo_id}
-                    onChange={e => handleAnticipoChange(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  >
-                    <option value="">Seleccionar anticipo...</option>
-                    {anticiposParaFondo.map(a => (
-                      <option key={a.id} value={a.id}>{a.concepto}</option>
-                    ))}
-                  </select>
-                  {form.fondo_id && anticiposParaFondo.length === 0 && (
-                    <p className="mt-1 text-xs text-gray-400">No hay anticipos activos para este fondo.</p>
-                  )}
-                </div>
-              )}
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -584,10 +618,8 @@ export default function PagosClient({
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Notas
-                  {form.tipo === 'directo' && (
-                    <span className="ml-1 text-red-500">*</span>
-                  )}
-                  {form.tipo === 'directo' && (
+                  {form.ui_tipo === 'directo' && <span className="ml-1 text-red-500">*</span>}
+                  {form.ui_tipo === 'directo' && (
                     <span className="ml-1 text-xs font-normal text-gray-400">(requerida para pagos directos)</span>
                   )}
                 </label>
@@ -596,7 +628,7 @@ export default function PagosClient({
                   onChange={e => setForm({ ...form, notas: e.target.value })}
                   rows={2}
                   className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  placeholder={form.tipo === 'directo' ? 'Justificación obligatoria para pagos directos' : 'Notas internas opcionales'}
+                  placeholder={form.ui_tipo === 'directo' ? 'Justificación obligatoria para pagos directos' : 'Notas internas opcionales'}
                 />
               </div>
 

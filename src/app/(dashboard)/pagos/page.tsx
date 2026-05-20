@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import PagosClient, { type PagoRow } from './PagosClient'
-import type { UserRole } from '@/types'
+import type { UserRole, ObligacionPendiente } from '@/types'
 import { createPago, updatePago, confirmarPago, anularPago } from './actions'
 
 export default async function PagosPage() {
@@ -16,8 +16,7 @@ export default async function PagosPage() {
     pagosResult,
     fondosResult,
     proveedoresResult,
-    gastosResult,
-    anticiposResult,
+    obligacionesResult,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -27,7 +26,7 @@ export default async function PagosPage() {
     supabase
       .from('pagos')
       .select(
-        'id, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
+        'id, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
       )
       .order('fecha_pago', { ascending: false }),
     supabase
@@ -43,41 +42,16 @@ export default async function PagosPage() {
       .eq('activo', true)
       .order('nombre'),
     supabase
-      .from('gastos')
-      .select('id, descripcion, fondo_id, monto, proveedor_id')
-      .eq('estado', 'aprobado')
-      .is('deleted_at', null)
-      .order('fecha_gasto', { ascending: false }),
-    supabase
-      .from('anticipos')
-      .select('id, concepto, fondo_id')
-      .in('estado', ['aprobado', 'anticipo_pagado'])
-      .is('deleted_at', null)
-      .order('fecha_acuerdo', { ascending: false }),
+      .from('v_obligaciones_pendientes')
+      .select('obligacion_id, tipo_obligacion, gasto_id, gasto_recurrente_id, fondo_id, proveedor_id, concepto, monto_pendiente, moneda, fecha_vencimiento, prioridad_pago, fecha_gasto, fondo_nombre, fondo_saldo_actual, proveedor_nombre')
+      .order('prioridad_pago', { ascending: true }),
   ])
 
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const pagos = (pagosResult.data ?? []) as unknown as PagoRow[]
   const fondos = (fondosResult.data ?? []) as { id: string; nombre: string; moneda: string }[]
   const proveedores = (proveedoresResult.data ?? []) as { id: string; nombre: string }[]
-
-  // Excluir gastos que ya tienen un pago confirmado
-  // Nota: gasto_id en pagosResult es columna plana (UUID string), no el join anidado gastos(...)
-  const gastoIdsPagados = new Set(
-    pagos
-      .filter(p => p.estado === 'pagado' && typeof p.gasto_id === 'string' && p.gasto_id !== '')
-      .map(p => p.gasto_id as string)
-  )
-  const gastosAprobados = (gastosResult.data ?? [])
-    .filter(g => !gastoIdsPagados.has(g.id)) as {
-      id: string
-      descripcion: string
-      fondo_id: string
-      monto: number
-      proveedor_id: string | null
-    }[]
-
-  const anticiposActivos = (anticiposResult.data ?? []) as { id: string; concepto: string; fondo_id: string }[]
+  const obligaciones = (obligacionesResult.data ?? []) as ObligacionPendiente[]
 
   return (
     <div className="space-y-6">
@@ -92,8 +66,7 @@ export default async function PagosPage() {
         pagos={pagos}
         fondos={fondos}
         proveedores={proveedores}
-        gastosAprobados={gastosAprobados}
-        anticiposActivos={anticiposActivos}
+        obligaciones={obligaciones}
         role={role}
         onCreatePago={createPago}
         onUpdatePago={updatePago}

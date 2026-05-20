@@ -6,7 +6,7 @@ const PROTECTED_PREFIXES = [
   '/fondos',
   '/gastos',
   '/pagos',
-  '/anticipos',
+  '/gastos-recurrentes',
   '/proveedores',
   '/honorarios',
   '/rendiciones',

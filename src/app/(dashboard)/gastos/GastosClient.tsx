@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from 'react'
 import type { Fondo, Proveedor, UserRole, GastoEstado } from '@/types'
+import type { GastoPayload } from './actions'
+
 export interface GastoRow {
   id: string
   fondo_id: string
@@ -12,20 +14,18 @@ export interface GastoRow {
   estado: GastoEstado
   fecha_gasto: string
   notas: string | null
+  tiene_anticipo: boolean
+  monto_anticipo: number | null
+  porcentaje_anticipo: number | null
+  fecha_prevista_pago_anticipo: string | null
+  fecha_comprometida_pago_saldo: string | null
+  condiciones_pago_notas: string | null
+  fecha_vencimiento: string | null
+  prioridad_pago: number
   created_by: string
   created_at: string
   fondos: { nombre: string; moneda: string } | null
   proveedores: { nombre: string } | null
-}
-
-type GastoPayload = {
-  fondo_id: string
-  proveedor_id: string
-  descripcion: string
-  monto: number
-  moneda: string
-  fecha_gasto: string
-  notas: string | null
 }
 
 interface Props {
@@ -47,6 +47,13 @@ interface FormState {
   moneda: string
   fecha_gasto: string
   notas: string
+  tiene_anticipo: boolean
+  monto_anticipo: string
+  fecha_prevista_pago_anticipo: string
+  fecha_comprometida_pago_saldo: string
+  condiciones_pago_notas: string
+  fecha_vencimiento: string
+  prioridad_pago: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -57,6 +64,13 @@ const EMPTY_FORM: FormState = {
   moneda: '',
   fecha_gasto: new Date().toISOString().slice(0, 10),
   notas: '',
+  tiene_anticipo: false,
+  monto_anticipo: '',
+  fecha_prevista_pago_anticipo: '',
+  fecha_comprometida_pago_saldo: '',
+  condiciones_pago_notas: '',
+  fecha_vencimiento: '',
+  prioridad_pago: '3',
 }
 
 function formatMonto(monto: number, moneda: string) {
@@ -81,6 +95,13 @@ const ESTADO_COLORS: Record<GastoEstado, string> = {
   aprobado: 'bg-green-100 text-green-700',
   pagado: 'bg-emerald-100 text-emerald-700',
   rechazado: 'bg-red-100 text-red-700',
+}
+
+const PRIORIDAD_LABELS: Record<number, string> = {
+  1: 'Crítica',
+  2: 'Alta',
+  3: 'Normal',
+  4: 'Baja',
 }
 
 export default function GastosClient({ gastos, fondos, proveedores, role, onCreateGasto, onUpdateGasto, onDeleteGasto, onCambiarEstado }: Props) {
@@ -111,6 +132,10 @@ export default function GastosClient({ gastos, fondos, proveedores, role, onCrea
     setForm((prev) => ({ ...prev, fondo_id, moneda: fondo?.moneda ?? '' }))
   }
 
+  function handleMontoAnticipo(value: string) {
+    setForm((prev) => ({ ...prev, monto_anticipo: value }))
+  }
+
   function openNew() {
     setEditing(null)
     setForm(EMPTY_FORM)
@@ -128,6 +153,13 @@ export default function GastosClient({ gastos, fondos, proveedores, role, onCrea
       moneda: g.moneda,
       fecha_gasto: g.fecha_gasto,
       notas: g.notas ?? '',
+      tiene_anticipo: g.tiene_anticipo,
+      monto_anticipo: g.monto_anticipo != null ? String(g.monto_anticipo) : '',
+      fecha_prevista_pago_anticipo: g.fecha_prevista_pago_anticipo ?? '',
+      fecha_comprometida_pago_saldo: g.fecha_comprometida_pago_saldo ?? '',
+      condiciones_pago_notas: g.condiciones_pago_notas ?? '',
+      fecha_vencimiento: g.fecha_vencimiento ?? '',
+      prioridad_pago: String(g.prioridad_pago),
     })
     setFormError('')
     setModalOpen(true)
@@ -150,7 +182,22 @@ export default function GastosClient({ gastos, fondos, proveedores, role, onCrea
     if (!form.monto || isNaN(monto) || monto <= 0) { setFormError('El monto debe ser mayor a 0.'); return }
     if (!form.fecha_gasto) { setFormError('La fecha es requerida.'); return }
 
-    const payload = {
+    let monto_anticipo: number | null = null
+    let porcentaje_anticipo: number | null = null
+    if (form.tiene_anticipo) {
+      monto_anticipo = parseFloat(form.monto_anticipo)
+      if (!form.monto_anticipo || isNaN(monto_anticipo) || monto_anticipo <= 0) {
+        setFormError('El monto de anticipo debe ser mayor a 0.')
+        return
+      }
+      if (monto_anticipo > monto) {
+        setFormError('El monto de anticipo no puede superar el monto total.')
+        return
+      }
+      porcentaje_anticipo = Math.round((monto_anticipo / monto) * 10000) / 100
+    }
+
+    const payload: GastoPayload = {
       fondo_id: form.fondo_id,
       proveedor_id: form.proveedor_id || '',
       descripcion: form.descripcion.trim(),
@@ -158,6 +205,14 @@ export default function GastosClient({ gastos, fondos, proveedores, role, onCrea
       moneda: form.moneda,
       fecha_gasto: form.fecha_gasto,
       notas: form.notas.trim() || null,
+      tiene_anticipo: form.tiene_anticipo,
+      monto_anticipo,
+      porcentaje_anticipo,
+      fecha_prevista_pago_anticipo: form.fecha_prevista_pago_anticipo || null,
+      fecha_comprometida_pago_saldo: form.fecha_comprometida_pago_saldo || null,
+      condiciones_pago_notas: form.condiciones_pago_notas.trim() || null,
+      fecha_vencimiento: form.fecha_vencimiento || null,
+      prioridad_pago: parseInt(form.prioridad_pago) || 3,
     }
 
     startTransition(async () => {
@@ -255,9 +310,17 @@ export default function GastosClient({ gastos, fondos, proveedores, role, onCrea
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{g.descripcion}</div>
-                      {g.notas && (
-                        <div className="text-xs text-gray-400 truncate max-w-xs">{g.notas}</div>
-                      )}
+                      <div className="flex gap-1 mt-0.5">
+                        {g.tiene_anticipo && (
+                          <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-purple-100 text-purple-700">Anticipo</span>
+                        )}
+                        {g.prioridad_pago <= 2 && (
+                          <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-700">{PRIORIDAD_LABELS[g.prioridad_pago]}</span>
+                        )}
+                        {g.fecha_vencimiento && (
+                          <span className="text-xs text-gray-400">vence {g.fecha_vencimiento}</span>
+                        )}
+                      </div>
                     </td>
                     <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">
                       {g.fondos?.nombre ?? <span className="text-gray-300">—</span>}
@@ -411,18 +474,43 @@ export default function GastosClient({ gastos, fondos, proveedores, role, onCrea
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Proveedor</label>
+                  <select
+                    value={form.proveedor_id}
+                    onChange={(e) => setForm({ ...form, proveedor_id: e.target.value })}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                  >
+                    <option value="">Sin proveedor</option>
+                    {proveedores.map((p) => (
+                      <option key={p.id} value={p.id}>{p.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Prioridad</label>
+                  <select
+                    value={form.prioridad_pago}
+                    onChange={(e) => setForm({ ...form, prioridad_pago: e.target.value })}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                  >
+                    <option value="1">1 — Crítica</option>
+                    <option value="2">2 — Alta</option>
+                    <option value="3">3 — Normal</option>
+                    <option value="4">4 — Baja</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Proveedor</label>
-                <select
-                  value={form.proveedor_id}
-                  onChange={(e) => setForm({ ...form, proveedor_id: e.target.value })}
+                <label className="mb-1 block text-sm font-medium text-gray-700">Fecha de vencimiento</label>
+                <input
+                  type="date"
+                  value={form.fecha_vencimiento}
+                  onChange={(e) => setForm({ ...form, fecha_vencimiento: e.target.value })}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                >
-                  <option value="">Sin proveedor</option>
-                  {proveedores.map((p) => (
-                    <option key={p.id} value={p.id}>{p.nombre}</option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div>
@@ -434,6 +522,73 @@ export default function GastosClient({ gastos, fondos, proveedores, role, onCrea
                   className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
                   placeholder="Notas internas opcionales"
                 />
+              </div>
+
+              {/* Anticipo section */}
+              <div className="rounded-lg border border-gray-200 p-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.tiene_anticipo}
+                    onChange={(e) => setForm({ ...form, tiene_anticipo: e.target.checked, monto_anticipo: '', fecha_prevista_pago_anticipo: '', fecha_comprometida_pago_saldo: '', condiciones_pago_notas: '' })}
+                    className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">Requiere anticipo</span>
+                </label>
+
+                {form.tiene_anticipo && (
+                  <div className="mt-3 space-y-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Monto anticipo <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={form.monto_anticipo}
+                          onChange={(e) => handleMontoAnticipo(e.target.value)}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                          placeholder="0.00"
+                        />
+                        {form.monto && form.monto_anticipo && !isNaN(parseFloat(form.monto_anticipo)) && parseFloat(form.monto) > 0 && (
+                          <p className="mt-0.5 text-xs text-gray-400">
+                            {Math.round((parseFloat(form.monto_anticipo) / parseFloat(form.monto)) * 10000) / 100}% del total
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">Fecha prevista pago anticipo</label>
+                        <input
+                          type="date"
+                          value={form.fecha_prevista_pago_anticipo}
+                          onChange={(e) => setForm({ ...form, fecha_prevista_pago_anticipo: e.target.value })}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-gray-700">Fecha comprometida pago saldo</label>
+                      <input
+                        type="date"
+                        value={form.fecha_comprometida_pago_saldo}
+                        onChange={(e) => setForm({ ...form, fecha_comprometida_pago_saldo: e.target.value })}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-gray-700">Condiciones de pago</label>
+                      <textarea
+                        value={form.condiciones_pago_notas}
+                        onChange={(e) => setForm({ ...form, condiciones_pago_notas: e.target.value })}
+                        rows={2}
+                        className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                        placeholder="Condiciones acordadas con el proveedor"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {formError && (
