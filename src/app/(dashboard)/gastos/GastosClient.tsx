@@ -2,8 +2,9 @@
 
 import { useState, useTransition } from 'react'
 import type { Fondo, Proveedor, UserRole, GastoEstado } from '@/types'
-import type { GastoPayload, GastoRecurrentePayload } from './actions'
+import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload } from './actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
+import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
 
 // ─── Row types ───────────────────────────────────────────────────────────────
 
@@ -25,6 +26,12 @@ export interface GastoRow {
   condiciones_pago_notas: string | null
   fecha_vencimiento: string | null
   prioridad_pago: number
+  comprobante_path: string | null
+  comprobante_nombre: string | null
+  comprobante_mime: string | null
+  comprobante_size_bytes: number | null
+  comprobante_uploaded_by: string | null
+  comprobante_subido_en: string | null
   created_by: string
   created_at: string
   fondos: { nombre: string; moneda: string } | null
@@ -158,13 +165,18 @@ interface Props {
   fondos: Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
   proveedores: Pick<Proveedor, 'id' | 'nombre'>[]
   role: UserRole
-  onCreateGasto: (data: GastoPayload) => Promise<void>
+  onCreateGasto: (
+    data: GastoPayload,
+    options?: { id?: string; comprobante?: ComprobantePayload }
+  ) => Promise<void>
   onUpdateGasto: (id: string, data: GastoPayload) => Promise<void>
   onDeleteGasto: (id: string) => Promise<void>
   onCambiarEstado: (id: string, nuevoEstado: 'enviado' | 'aprobado' | 'rechazado') => Promise<void>
   onCreateRecurrente: (data: GastoRecurrentePayload) => Promise<void>
   onUpdateRecurrente: (id: string, data: GastoRecurrentePayload) => Promise<void>
   onDeleteRecurrente: (id: string) => Promise<void>
+  onSetComprobante: (id: string, data: ComprobantePayload) => Promise<void>
+  onRemoveComprobante: (id: string) => Promise<void>
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -182,6 +194,8 @@ export default function GastosClient({
   onCreateRecurrente,
   onUpdateRecurrente,
   onDeleteRecurrente,
+  onSetComprobante,
+  onRemoveComprobante,
 }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('gastos')
   const [searchGastos, setSearchGastos] = useState('')
@@ -192,6 +206,9 @@ export default function GastosClient({
   const [formError, setFormError] = useState('')
   const [actionError, setActionError] = useState('')
   const [isPending, startTransition] = useTransition()
+  const [comprobanteError, setComprobanteError] = useState('')
+  const [comprobanteUploading, setComprobanteUploading] = useState(false)
+  const [pendingComprobante, setPendingComprobante] = useState<File | null>(null)
 
   const canWrite = role === 'admin' || role === 'contador'
   const canDelete = role === 'admin'
@@ -328,6 +345,8 @@ export default function GastosClient({
     setEditing(null)
     setForm(EMPTY_FORM)
     setFormError('')
+    setComprobanteError('')
+    setPendingComprobante(null)
   }
 
   // ─── Submit ─────────────────────────────────────────────────────────────────
@@ -421,6 +440,32 @@ export default function GastosClient({
         try {
           if (editing && editing.tipo === 'gasto') {
             await onUpdateGasto(editing.row.id, payload)
+          } else if (pendingComprobante) {
+            const newId = crypto.randomUUID()
+            const path = `gastos/${newId}`
+            const supabase = createSupabaseBrowser()
+            const { error: upErr } = await supabase.storage
+              .from('comprobantes')
+              .upload(path, pendingComprobante, {
+                upsert: true,
+                contentType: pendingComprobante.type,
+              })
+            if (upErr) throw new Error(`Error al subir comprobante: ${upErr.message}`)
+            try {
+              await onCreateGasto(payload, {
+                id: newId,
+                comprobante: {
+                  path,
+                  mime: pendingComprobante.type,
+                  nombre: pendingComprobante.name,
+                  size: pendingComprobante.size,
+                },
+              })
+            } catch (err) {
+              // Cleanup best-effort si el INSERT falla tras subir
+              try { await supabase.storage.from('comprobantes').remove([path]) } catch {}
+              throw err
+            }
           } else {
             await onCreateGasto(payload)
           }
@@ -493,6 +538,70 @@ export default function GastosClient({
     })
   }
 
+  // ─── Comprobantes ────────────────────────────────────────────────────────────
+
+  async function handleUploadComprobante(file: File) {
+    if (!editing || editing.tipo !== 'gasto') return
+    const id = editing.row.id
+
+    if (!/\.(pdf|jpe?g|png|webp)$/i.test(file.name)) {
+      setComprobanteError('Extensión no permitida. Aceptados: PDF, JPG, JPEG, PNG, WEBP.')
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setComprobanteError('Archivo supera 10 MB.')
+      return
+    }
+
+    setComprobanteError('')
+    setComprobanteUploading(true)
+    try {
+      const supabase = createSupabaseBrowser()
+      const path = `gastos/${id}`
+      const { error: upErr } = await supabase.storage
+        .from('comprobantes')
+        .upload(path, file, { upsert: true, contentType: file.type })
+      if (upErr) throw new Error(upErr.message)
+      await onSetComprobante(id, { path, mime: file.type, nombre: file.name, size: file.size })
+    } catch (err) {
+      setComprobanteError(err instanceof Error ? err.message : 'Error al subir.')
+    } finally {
+      setComprobanteUploading(false)
+    }
+  }
+
+  async function handleViewComprobante(path: string) {
+    setComprobanteError('')
+    try {
+      const supabase = createSupabaseBrowser()
+      const { data, error } = await supabase.storage
+        .from('comprobantes')
+        .createSignedUrl(path, 3600)
+      if (error) throw new Error(error.message)
+      if (!data?.signedUrl) throw new Error('No se pudo generar el link.')
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      setComprobanteError(err instanceof Error ? err.message : 'Error al abrir.')
+    }
+  }
+
+  function handleRemoveComprobante() {
+    if (!editing || editing.tipo !== 'gasto') return
+    if (!confirm('¿Quitar el comprobante de este gasto?')) return
+    setComprobanteError('')
+    startTransition(async () => {
+      try {
+        await onRemoveComprobante(editing.row.id)
+      } catch (err) {
+        setComprobanteError(err instanceof Error ? err.message : 'Error al quitar.')
+      }
+    })
+  }
+
+  function formatBytes(b: number): string {
+    return b < 1048576 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1048576).toFixed(1)} MB`
+  }
+
   // ─── Export ──────────────────────────────────────────────────────────────────
 
   function handleExportGastos() {
@@ -535,6 +644,9 @@ export default function GastosClient({
 
   const isRecurrenteMode = editing ? editing.tipo === 'recurrente' : form.es_recurrente
   const isEditing = editing !== null
+  const editingGastoLatest = editing?.tipo === 'gasto'
+    ? (gastos.find(g => g.id === editing.row.id) ?? editing.row)
+    : null
 
   const inputCls =
     'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20'
@@ -639,8 +751,24 @@ export default function GastosClient({
                       <tr key={g.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{g.fecha_gasto}</td>
                         <td className="px-4 py-3">
-                          <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{g.descripcion}</div>
-                          <div className="flex gap-1 mt-0.5">
+                          <div className="flex items-center gap-1.5 max-w-xs">
+                            <span className="text-sm font-medium text-gray-900 truncate min-w-0">{g.descripcion}</span>
+                            {g.comprobante_path && (
+                              <button
+                                type="button"
+                                title="Ver comprobante"
+                                aria-label="Ver comprobante"
+                                onClick={() => handleViewComprobante(g.comprobante_path!)}
+                                className="flex-shrink-0 text-slate-400 hover:text-slate-700 transition-colors"
+                              >
+                                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                  <polyline points="14 2 14 8 20 8" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex gap-1 mt-0.5 items-center">
                             {g.tiene_anticipo && (
                               <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-purple-100 text-purple-700">Anticipo</span>
                             )}
@@ -968,6 +1096,113 @@ export default function GastosClient({
                       </div>
                     )}
                   </div>
+
+                  {/* ─── Comprobante (modo crear nuevo gasto) ──────────────── */}
+                  {!editing && (
+                    <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">Comprobante (opcional)</label>
+                      {pendingComprobante ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm text-gray-900 truncate">{pendingComprobante.name}</p>
+                            <p className="text-xs text-gray-400">{formatBytes(pendingComprobante.size)}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setPendingComprobante(null)}
+                            disabled={isPending}
+                            className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      ) : (
+                        <label className={`block rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 transition-colors ${isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                          Adjuntar archivo (PDF, JPG, PNG, WEBP — max 10 MB)
+                          <input
+                            type="file"
+                            accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+                            className="hidden"
+                            disabled={isPending}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0]
+                              e.target.value = ''
+                              if (!f) return
+                              if (!/\.(pdf|jpe?g|png|webp)$/i.test(f.name)) {
+                                setComprobanteError('Extensión no permitida. Aceptados: PDF, JPG, JPEG, PNG, WEBP.')
+                                return
+                              }
+                              if (f.size > 10 * 1024 * 1024) {
+                                setComprobanteError('Archivo supera 10 MB.')
+                                return
+                              }
+                              setComprobanteError('')
+                              setPendingComprobante(f)
+                            }}
+                          />
+                        </label>
+                      )}
+                      {comprobanteError && (
+                        <p className="text-xs text-red-600">{comprobanteError}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ─── Comprobante (solo edit de gasto en borrador) ──────── */}
+                  {editingGastoLatest && editingGastoLatest.estado === 'borrador' && (
+                    <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">Comprobante</label>
+                      {editingGastoLatest.comprobante_path && editingGastoLatest.comprobante_nombre ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm text-gray-900 truncate">{editingGastoLatest.comprobante_nombre}</p>
+                            <p className="text-xs text-gray-400">{formatBytes(editingGastoLatest.comprobante_size_bytes ?? 0)}</p>
+                          </div>
+                          <div className="flex gap-2 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleViewComprobante(editingGastoLatest.comprobante_path!)}
+                              className="rounded px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 transition-colors"
+                            >
+                              Ver
+                            </button>
+                            <label className={`rounded px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors ${comprobanteUploading || isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                              {comprobanteUploading ? 'Subiendo...' : 'Reemplazar'}
+                              <input
+                                type="file"
+                                accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+                                className="hidden"
+                                disabled={comprobanteUploading || isPending}
+                                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleUploadComprobante(f) }}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={handleRemoveComprobante}
+                              disabled={isPending || comprobanteUploading}
+                              className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <label className={`block rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 transition-colors ${comprobanteUploading || isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                          {comprobanteUploading ? 'Subiendo...' : 'Adjuntar archivo (PDF, JPG, PNG, WEBP — max 10 MB)'}
+                          <input
+                            type="file"
+                            accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+                            className="hidden"
+                            disabled={comprobanteUploading || isPending}
+                            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleUploadComprobante(f) }}
+                          />
+                        </label>
+                      )}
+                      {comprobanteError && (
+                        <p className="text-xs text-red-600">{comprobanteError}</p>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
 

@@ -21,18 +21,34 @@ export type GastoPayload = {
   prioridad_pago: number
 }
 
-export async function createGasto(data: GastoPayload) {
+export async function createGasto(
+  data: GastoPayload,
+  options?: { id?: string; comprobante?: { path: string; mime: string; nombre: string; size: number } }
+) {
   const supabase = createClient()
   const authResult = await supabase.auth.getUser()
   const user = authResult.data?.user
   if (!user) throw new Error('No autenticado')
 
-  const { error } = await supabase.from('gastos').insert({
+  const insert: Record<string, unknown> = {
     ...data,
     proveedor_id: data.proveedor_id || null,
     estado: 'borrador',
     created_by: user.id,
-  })
+  }
+  if (options?.id) {
+    insert.id = options.id
+  }
+  if (options?.comprobante) {
+    insert.comprobante_path = options.comprobante.path
+    insert.comprobante_nombre = options.comprobante.nombre
+    insert.comprobante_mime = options.comprobante.mime
+    insert.comprobante_size_bytes = options.comprobante.size
+    insert.comprobante_uploaded_by = user.id
+    insert.comprobante_subido_en = new Date().toISOString()
+  }
+
+  const { error } = await supabase.from('gastos').insert(insert)
   if (error) throw new Error(error.message)
   revalidatePath('/gastos')
 }
@@ -163,5 +179,79 @@ export async function cambiarEstadoGasto(
   if (result.error) throw new Error(result.error.message)
   if (!result.data || result.data.length === 0)
     throw new Error('Sin permiso para cambiar el estado de este gasto.')
+  revalidatePath('/gastos')
+}
+
+// ─── Comprobantes ─────────────────────────────────────────────────────────────
+
+export type ComprobantePayload = {
+  path: string
+  mime: string
+  nombre: string
+  size: number
+}
+
+export async function setComprobanteGasto(id: string, data: ComprobantePayload) {
+  const supabase = createClient()
+  const authResult = await supabase.auth.getUser()
+  const user = authResult.data?.user
+  if (!user) throw new Error('No autenticado')
+
+  const { data: rows, error } = await supabase
+    .from('gastos')
+    .update({
+      comprobante_path: data.path,
+      comprobante_nombre: data.nombre,
+      comprobante_mime: data.mime,
+      comprobante_size_bytes: data.size,
+      comprobante_uploaded_by: user.id,
+      comprobante_subido_en: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('estado', 'borrador')
+    .is('deleted_at', null)
+    .select('id')
+  if (error) throw new Error(error.message)
+  if (!rows || rows.length === 0)
+    throw new Error('Sin permiso o el gasto ya no está en borrador.')
+  revalidatePath('/gastos')
+}
+
+export async function removeComprobanteGasto(id: string) {
+  const supabase = createClient()
+
+  const { data: gasto, error: fetchErr } = await supabase
+    .from('gastos')
+    .select('comprobante_path')
+    .eq('id', id)
+    .eq('estado', 'borrador')
+    .is('deleted_at', null)
+    .maybeSingle()
+  if (fetchErr) throw new Error(fetchErr.message)
+  if (!gasto) throw new Error('Gasto no está en borrador o no existe.')
+  if (!gasto.comprobante_path) throw new Error('Este gasto no tiene comprobante.')
+
+  const { error: rmErr } = await supabase.storage
+    .from('comprobantes')
+    .remove([gasto.comprobante_path])
+  if (rmErr) console.error('[removeComprobanteGasto] storage warning:', rmErr.message)
+
+  const { data: rows, error: updErr } = await supabase
+    .from('gastos')
+    .update({
+      comprobante_path: null,
+      comprobante_nombre: null,
+      comprobante_mime: null,
+      comprobante_size_bytes: null,
+      comprobante_uploaded_by: null,
+      comprobante_subido_en: null,
+    })
+    .eq('id', id)
+    .eq('estado', 'borrador')
+    .is('deleted_at', null)
+    .select('id')
+  if (updErr) throw new Error(updErr.message)
+  if (!rows || rows.length === 0)
+    throw new Error('Sin permiso para limpiar comprobante.')
   revalidatePath('/gastos')
 }
