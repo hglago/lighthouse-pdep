@@ -21,7 +21,20 @@ interface SidebarProps {
   user: SessionUser
 }
 
-const navigation = [
+function IconUsers() {
+  return (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  )
+}
+
+type NavItem = { label: string; href: string; Icon: React.ComponentType; requiresAdmin?: boolean }
+
+const navigation: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', Icon: IconDashboard },
   { label: 'Fondos', href: '/fondos', Icon: IconFondos },
   { label: 'Gastos', href: '/gastos', Icon: IconGastos },
@@ -29,6 +42,7 @@ const navigation = [
   { label: 'Proveedores', href: '/proveedores', Icon: IconProveedores },
   { label: 'Honorarios', href: '/honorarios', Icon: IconHonorarios },
   { label: 'Rendiciones', href: '/rendiciones', Icon: IconRendiciones },
+  { label: 'Usuarios', href: '/usuarios', Icon: IconUsers, requiresAdmin: true },
 ]
 
 function getInitials(name: string | null, email: string): string {
@@ -87,7 +101,9 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="space-y-1">
-            {navigation.map(({ label, href, Icon }) => {
+            {navigation
+              .filter(item => !item.requiresAdmin || user.role === 'admin')
+              .map(({ label, href, Icon }) => {
               const isActive = pathname === href || pathname.startsWith(href + '/')
               return (
                 <li key={href}>

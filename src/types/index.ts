@@ -1,10 +1,10 @@
-export type { UserRole, FondoEstado, GastoEstado, AnticipoEstado, PagoEstado, PagoTipo, MovimientoTipo, TipoAporte, Profile, Fondo, Proveedor, Gasto, Anticipo, Pago, MovimientoFondo, AporteFondo, SessionUser, GastoRecurrente, ObligacionPendiente, ObligacionTipo } from './database'
+export type { UserRole, FondoEstado, GastoEstado, AnticipoEstado, PagoEstado, PagoTipo, MovimientoTipo, TipoAporte, Profile, Fondo, Proveedor, Gasto, Anticipo, Pago, MovimientoFondo, AporteFondo, SessionUser, GastoRecurrente, ObligacionPendiente, ObligacionTipo, GoogleAllowedUser } from './database'
 
 export const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
-  contador: 'Contador',
-  revisor: 'Revisor',
-  visualizador: 'Visualizador',
+  contador: 'Supervisor',
+  revisor: 'Supervisor',
+  visualizador: 'Usuario',
 }
 
 export interface NavItem {

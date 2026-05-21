@@ -26,6 +26,10 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
+# OAuth client secrets descargados de Google Cloud Console — NUNCA commitear
+client_secret_*.json
+client_secret_*.apps.googleusercontent.com.json
+
 # vercel
 .vercel
 

@@ -6,9 +6,15 @@ export type AnticipoEstado = 'borrador' | 'aprobado' | 'anticipo_pagado' | 'comp
 export interface Profile {
   id: string
   email: string
+  usuario_login: string | null
   full_name: string | null
   role: UserRole
   activo: boolean
+  puede_exportar: boolean
+  puede_aprobar_gastos: boolean
+  puede_confirmar_pagos: boolean
+  fondo_default_id: string | null
+  notas_admin: string | null
   created_at: string
   updated_at: string
   deleted_at: string | null
@@ -182,6 +188,18 @@ export interface AporteFondo {
   created_at: string
   updated_at: string
   deleted_at: string | null
+}
+
+export interface GoogleAllowedUser {
+  id: string
+  email: string
+  activo: boolean
+  role: UserRole
+  usuario_login: string | null
+  full_name: string | null
+  notas_admin: string | null
+  created_at: string
+  created_by: string | null
 }
 
 export type MovimientoTipo = 'debito' | 'credito'
