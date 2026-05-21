@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import GastosClient, { type GastoRow, type GastoRecurrenteRow } from './GastosClient'
 import type { Fondo, Proveedor, UserRole } from '@/types'
 import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente, setComprobanteGasto, removeComprobanteGasto, generarGastosRecurrentes } from './actions'
+import { createProveedorQuick } from '../proveedores/actions'
 
 export default async function GastosPage() {
   const supabase = createClient()
@@ -74,6 +75,7 @@ export default async function GastosPage() {
         onDeleteRecurrente={deleteGastoRecurrente}
         onSetComprobante={setComprobanteGasto}
         onRemoveComprobante={removeComprobanteGasto}
+        onCreateProveedorQuick={createProveedorQuick}
       />
     </div>
   )

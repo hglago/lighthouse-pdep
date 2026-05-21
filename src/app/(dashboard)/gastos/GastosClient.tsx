@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import type { Fondo, Proveedor, UserRole, GastoEstado } from '@/types'
 import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult } from './actions'
+import type { ProveedorQuickResult } from '../proveedores/actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
 
@@ -179,6 +180,13 @@ interface Props {
   onDeleteRecurrente: (id: string) => Promise<RecurrenteActionResult>
   onSetComprobante: (id: string, data: ComprobantePayload) => Promise<void>
   onRemoveComprobante: (id: string) => Promise<void>
+  onCreateProveedorQuick: (data: {
+    nombre: string
+    cuit: string | null
+    email: string | null
+    telefono: string | null
+    observaciones: string | null
+  }) => Promise<ProveedorQuickResult>
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -198,6 +206,7 @@ export default function GastosClient({
   onDeleteRecurrente,
   onSetComprobante,
   onRemoveComprobante,
+  onCreateProveedorQuick,
 }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('gastos')
   const [searchGastos, setSearchGastos] = useState('')
@@ -211,6 +220,53 @@ export default function GastosClient({
   const [comprobanteError, setComprobanteError] = useState('')
   const [comprobanteUploading, setComprobanteUploading] = useState(false)
   const [pendingComprobante, setPendingComprobante] = useState<File | null>(null)
+
+  // ── Quick crear proveedor (desde modal de gasto) ───────────────────────────
+  const [localExtraProveedores, setLocalExtraProveedores] = useState<{ id: string; nombre: string }[]>([])
+  const [quickProvOpen, setQuickProvOpen] = useState(false)
+  const [qpNombre, setQpNombre] = useState('')
+  const [qpCuit, setQpCuit] = useState('')
+  const [qpEmail, setQpEmail] = useState('')
+  const [qpTelefono, setQpTelefono] = useState('')
+  const [qpObs, setQpObs] = useState('')
+  const [qpError, setQpError] = useState('')
+  const [qpSubmitting, setQpSubmitting] = useState(false)
+
+  function openQuickProv() {
+    setQpNombre(''); setQpCuit(''); setQpEmail(''); setQpTelefono(''); setQpObs('')
+    setQpError('')
+    setQuickProvOpen(true)
+  }
+
+  async function handleQuickProvSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setQpError('')
+    if (!qpNombre.trim()) { setQpError('El nombre es requerido.'); return }
+    setQpSubmitting(true)
+    const result = await onCreateProveedorQuick({
+      nombre: qpNombre,
+      cuit: qpCuit.trim() || null,
+      email: qpEmail.trim() || null,
+      telefono: qpTelefono.trim() || null,
+      observaciones: qpObs.trim() || null,
+    })
+    setQpSubmitting(false)
+    if (!result.ok) { setQpError(result.error); return }
+    // Append a la lista local + autoseleccionar en el form de gasto
+    setLocalExtraProveedores(prev =>
+      prev.some(p => p.id === result.id) ? prev : [...prev, { id: result.id, nombre: result.nombre }]
+    )
+    setForm(prev => ({ ...prev, proveedor_id: result.id }))
+    setQuickProvOpen(false)
+  }
+
+  // Lista efectiva de proveedores: props + locales (deduplicado por id), ordenado
+  const effectiveProveedores = (() => {
+    const map = new Map<string, { id: string; nombre: string }>()
+    proveedores.forEach(p => map.set(p.id, { id: p.id, nombre: p.nombre }))
+    localExtraProveedores.forEach(p => { if (!map.has(p.id)) map.set(p.id, p) })
+    return Array.from(map.values()).sort((a, b) => a.nombre.localeCompare(b.nombre))
+  })()
 
   const canWrite = role === 'admin' || role === 'contador'
   const canDelete = role === 'admin'
@@ -1005,10 +1061,26 @@ export default function GastosClient({
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Proveedor</label>
-                  <select value={form.proveedor_id} onChange={(e) => setForm({ ...form, proveedor_id: e.target.value })} className={inputCls}>
-                    <option value="">Sin proveedor</option>
-                    {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      value={form.proveedor_id}
+                      onChange={(e) => setForm({ ...form, proveedor_id: e.target.value })}
+                      className={`${inputCls} flex-1`}
+                    >
+                      <option value="">Sin proveedor</option>
+                      {effectiveProveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                    {canWrite && (
+                      <button
+                        type="button"
+                        onClick={openQuickProv}
+                        title="Crear proveedor nuevo sin salir del formulario"
+                        className="flex-shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap"
+                      >
+                        + Crear
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1298,6 +1370,47 @@ export default function GastosClient({
                     : isEditing
                     ? 'Guardar cambios'
                     : isRecurrenteMode ? 'Crear recurrente' : 'Crear gasto'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Quick Crear Proveedor — sibling overlay sobre el modal de gasto */}
+      {quickProvOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <h2 className="mb-1 text-lg font-semibold text-gray-900">Crear proveedor</h2>
+            <p className="mb-4 text-xs text-gray-500">Quedará seleccionado en el gasto al guardar.</p>
+            <form onSubmit={handleQuickProvSubmit} className="space-y-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Nombre / Razón social <span className="text-red-500">*</span>
+                </label>
+                <input type="text" value={qpNombre} onChange={e => setQpNombre(e.target.value)} className={inputCls} autoFocus />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">CUIT</label>
+                <input type="text" value={qpCuit} onChange={e => setQpCuit(e.target.value)} className={inputCls} placeholder="opcional" />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
+                <input type="email" value={qpEmail} onChange={e => setQpEmail(e.target.value)} className={inputCls} placeholder="opcional" />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Teléfono</label>
+                <input type="text" value={qpTelefono} onChange={e => setQpTelefono(e.target.value)} className={inputCls} placeholder="opcional" />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Observaciones</label>
+                <textarea value={qpObs} onChange={e => setQpObs(e.target.value)} rows={2} className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20" placeholder="opcional" />
+              </div>
+              {qpError && <p className="text-sm text-red-700">{qpError}</p>}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setQuickProvOpen(false)} disabled={qpSubmitting} className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50">Cancelar</button>
+                <button type="submit" disabled={qpSubmitting} className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50">
+                  {qpSubmitting ? 'Creando...' : 'Crear proveedor'}
                 </button>
               </div>
             </form>
