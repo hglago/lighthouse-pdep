@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import type { Fondo, Proveedor, UserRole, GastoEstado } from '@/types'
-import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload } from './actions'
+import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult } from './actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
 
@@ -32,6 +32,8 @@ export interface GastoRow {
   comprobante_size_bytes: number | null
   comprobante_uploaded_by: string | null
   comprobante_subido_en: string | null
+  recurrente_id: string | null
+  periodo: string | null
   created_by: string
   created_at: string
   fondos: { nombre: string; moneda: string } | null
@@ -172,9 +174,9 @@ interface Props {
   onUpdateGasto: (id: string, data: GastoPayload) => Promise<void>
   onDeleteGasto: (id: string) => Promise<void>
   onCambiarEstado: (id: string, nuevoEstado: 'enviado' | 'aprobado' | 'rechazado') => Promise<void>
-  onCreateRecurrente: (data: GastoRecurrentePayload) => Promise<void>
-  onUpdateRecurrente: (id: string, data: GastoRecurrentePayload) => Promise<void>
-  onDeleteRecurrente: (id: string) => Promise<void>
+  onCreateRecurrente: (data: GastoRecurrentePayload) => Promise<RecurrenteActionResult>
+  onUpdateRecurrente: (id: string, data: GastoRecurrentePayload) => Promise<RecurrenteActionResult>
+  onDeleteRecurrente: (id: string) => Promise<RecurrenteActionResult>
   onSetComprobante: (id: string, data: ComprobantePayload) => Promise<void>
   onRemoveComprobante: (id: string) => Promise<void>
 }
@@ -385,16 +387,11 @@ export default function GastosClient({
       }
 
       startTransition(async () => {
-        try {
-          if (editing && editing.tipo === 'recurrente') {
-            await onUpdateRecurrente(editing.row.id, payload)
-          } else {
-            await onCreateRecurrente(payload)
-          }
-          closeModal()
-        } catch (err: unknown) {
-          setFormError(err instanceof Error ? err.message : 'Error al guardar.')
-        }
+        const result = editing && editing.tipo === 'recurrente'
+          ? await onUpdateRecurrente(editing.row.id, payload)
+          : await onCreateRecurrente(payload)
+        if (!result.ok) { setFormError(result.error); return }
+        closeModal()
       })
     } else {
       if (!form.fondo_id) { setFormError('Seleccioná un fondo.'); return }
@@ -506,35 +503,29 @@ export default function GastosClient({
     if (!confirm(`¿Eliminar el gasto recurrente "${concepto}"?`)) return
     setActionError('')
     startTransition(async () => {
-      try {
-        await onDeleteRecurrente(id)
-      } catch (err: unknown) {
-        setActionError(err instanceof Error ? err.message : 'Error al eliminar.')
-      }
+      const result = await onDeleteRecurrente(id)
+      if (!result.ok) setActionError(result.error)
     })
   }
 
   function handleToggleActivo(r: GastoRecurrenteRow) {
     setActionError('')
     startTransition(async () => {
-      try {
-        await onUpdateRecurrente(r.id, {
-          fondo_id: r.fondo_id,
-          proveedor_id: r.proveedor_id,
-          concepto: r.concepto,
-          categoria: r.categoria,
-          monto: r.monto,
-          moneda: r.moneda,
-          dia_vencimiento: r.dia_vencimiento,
-          fecha_inicio: r.fecha_inicio,
-          fecha_fin: r.fecha_fin,
-          activo: !r.activo,
-          prioridad_pago: r.prioridad_pago,
-          observaciones: r.observaciones,
-        })
-      } catch (err: unknown) {
-        setActionError(err instanceof Error ? err.message : 'Error al cambiar estado.')
-      }
+      const result = await onUpdateRecurrente(r.id, {
+        fondo_id: r.fondo_id,
+        proveedor_id: r.proveedor_id,
+        concepto: r.concepto,
+        categoria: r.categoria,
+        monto: r.monto,
+        moneda: r.moneda,
+        dia_vencimiento: r.dia_vencimiento,
+        fecha_inicio: r.fecha_inicio,
+        fecha_fin: r.fecha_fin,
+        activo: !r.activo,
+        prioridad_pago: r.prioridad_pago,
+        observaciones: r.observaciones,
+      })
+      if (!result.ok) setActionError(result.error)
     })
   }
 
@@ -647,6 +638,14 @@ export default function GastosClient({
   const editingGastoLatest = editing?.tipo === 'gasto'
     ? (gastos.find(g => g.id === editing.row.id) ?? editing.row)
     : null
+
+  // Set de recurrente_id que YA tienen gasto generado para el período actual (YYYY-MM)
+  const periodoActual = new Date().toISOString().slice(0, 7)
+  const recurrentesGeneradosEsteMes = new Set(
+    gastos
+      .filter(g => g.recurrente_id && g.periodo === periodoActual)
+      .map(g => g.recurrente_id as string)
+  )
 
   const inputCls =
     'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20'
@@ -769,6 +768,14 @@ export default function GastosClient({
                             )}
                           </div>
                           <div className="flex gap-1 mt-0.5 items-center">
+                            {g.recurrente_id && (
+                              <span
+                                title={`Generado automáticamente desde recurrente${g.periodo ? ` — período ${g.periodo}` : ''}`}
+                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-indigo-100 text-indigo-700"
+                              >
+                                Recurrente{g.periodo ? ` ${g.periodo}` : ''}
+                              </span>
+                            )}
                             {g.tiene_anticipo && (
                               <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-purple-100 text-purple-700">Anticipo</span>
                             )}
@@ -892,10 +899,18 @@ export default function GastosClient({
                       <tr key={r.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3">
                           <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{r.concepto}</div>
-                          <div className="flex gap-1 mt-0.5">
+                          <div className="flex gap-1 mt-0.5 items-center">
                             {r.categoria && <span className="text-xs text-gray-400">{r.categoria}</span>}
                             {r.prioridad_pago <= 2 && (
                               <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-700">{PRIORIDAD_LABELS[r.prioridad_pago]}</span>
+                            )}
+                            {recurrentesGeneradosEsteMes.has(r.id) && (
+                              <span
+                                title={`Ya generó gasto para el período ${periodoActual}`}
+                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-emerald-100 text-emerald-700"
+                              >
+                                Generado {periodoActual}
+                              </span>
                             )}
                           </div>
                         </td>
@@ -1037,6 +1052,25 @@ export default function GastosClient({
               {/* ─── Campos exclusivos: Gasto ─────────────────────────────── */}
               {!isRecurrenteMode && (
                 <>
+                  {/* Origen recurrente — solo en edición de gasto auto-generado */}
+                  {editingGastoLatest?.recurrente_id && (() => {
+                    const origen = recurrentes.find(r => r.id === editingGastoLatest.recurrente_id)
+                    return (
+                      <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-xs space-y-0.5">
+                        <p className="font-semibold text-indigo-800">Generado automáticamente desde recurrente</p>
+                        {origen ? (
+                          <>
+                            <p className="text-indigo-700">Concepto plantilla: <span className="font-medium">{origen.concepto}</span></p>
+                            <p className="text-indigo-700">Día vencimiento plantilla: <span className="font-medium">{origen.dia_vencimiento}</span></p>
+                          </>
+                        ) : (
+                          <p className="text-indigo-700 italic">Plantilla original eliminada o sin acceso.</p>
+                        )}
+                        <p className="text-indigo-700">Período: <span className="font-medium">{editingGastoLatest.periodo ?? '—'}</span></p>
+                      </div>
+                    )
+                  })()}
+
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-sm font-medium text-gray-700">

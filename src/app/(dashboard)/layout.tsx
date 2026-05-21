@@ -16,9 +16,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     .eq('id', user.id)
     .single()
 
-  if (profile && profile.activo === false) {
-    await supabase.auth.signOut()
-    redirect('/login')
+  // Sin profile (auth.user huérfano) o profile inactivo → expulsar vía route handler.
+  // signOut() en Server Components NO limpia cookies del browser (read-only context),
+  // por eso delegamos a /auth/signout que SÍ puede clearear cookies y cierra sesión limpia.
+  if (!profile || profile.activo === false) {
+    redirect('/auth/signout')
   }
 
   const sessionUser: SessionUser = {

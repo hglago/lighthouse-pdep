@@ -123,46 +123,114 @@ export type GastoRecurrentePayload = {
   observaciones: string | null
 }
 
-export async function createGastoRecurrente(data: GastoRecurrentePayload) {
-  const supabase = createClient()
-  const authResult = await supabase.auth.getUser()
-  const user = authResult.data?.user
-  if (!user) throw new Error('No autenticado')
-  const { error } = await supabase.from('gastos_recurrentes').insert({
-    ...data,
-    proveedor_id: data.proveedor_id || null,
-    created_by: user.id,
-  })
-  if (error) throw new Error(error.message)
-  revalidatePath('/gastos')
+export type RecurrenteActionResult = { ok: true } | { ok: false; error: string }
+
+export async function createGastoRecurrente(data: GastoRecurrentePayload): Promise<RecurrenteActionResult> {
+  try {
+    const supabase = createClient()
+    const authResult = await supabase.auth.getUser()
+    const user = authResult.data?.user
+    if (!user) return { ok: false, error: 'No autenticado' }
+
+    const insertPayload = {
+      ...data,
+      proveedor_id: data.proveedor_id || null,
+      created_by: user.id,
+    }
+    console.error('[createGastoRecurrente] payload:', JSON.stringify(insertPayload))
+
+    const { error } = await supabase.from('gastos_recurrentes').insert(insertPayload)
+    if (error) {
+      console.error('[createGastoRecurrente] supabase error:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      })
+      return { ok: false, error: `${error.message}${error.details ? ' — ' + error.details : ''}${error.hint ? ' (' + error.hint + ')' : ''}` }
+    }
+
+    revalidatePath('/gastos')
+    return { ok: true }
+  } catch (err) {
+    console.error('[createGastoRecurrente] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
 }
 
-export async function updateGastoRecurrente(id: string, data: GastoRecurrentePayload) {
-  const supabase = createClient()
-  const { data: rows, error } = await supabase
-    .from('gastos_recurrentes')
-    .update({ ...data, proveedor_id: data.proveedor_id || null })
-    .eq('id', id)
-    .is('deleted_at', null)
-    .select('id')
-  if (error) throw new Error(error.message)
-  if (!rows || rows.length === 0)
-    throw new Error('Sin permiso para editar este gasto recurrente.')
-  revalidatePath('/gastos')
+export async function updateGastoRecurrente(id: string, data: GastoRecurrentePayload): Promise<RecurrenteActionResult> {
+  try {
+    const supabase = createClient()
+    const updatePayload = { ...data, proveedor_id: data.proveedor_id || null }
+    console.error('[updateGastoRecurrente] id:', id, 'payload:', JSON.stringify(updatePayload))
+
+    const { data: rows, error } = await supabase
+      .from('gastos_recurrentes')
+      .update(updatePayload)
+      .eq('id', id)
+      .is('deleted_at', null)
+      .select('id')
+    if (error) {
+      console.error('[updateGastoRecurrente] supabase error:', {
+        code: error.code, message: error.message, details: error.details, hint: error.hint,
+      })
+      return { ok: false, error: `${error.message}${error.details ? ' — ' + error.details : ''}${error.hint ? ' (' + error.hint + ')' : ''}` }
+    }
+    if (!rows || rows.length === 0) {
+      return { ok: false, error: 'Sin permiso para editar este gasto recurrente.' }
+    }
+
+    revalidatePath('/gastos')
+    return { ok: true }
+  } catch (err) {
+    console.error('[updateGastoRecurrente] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
 }
 
-export async function deleteGastoRecurrente(id: string) {
-  const supabase = createClient()
-  const { data: rows, error } = await supabase
-    .from('gastos_recurrentes')
-    .update({ deleted_at: new Date().toISOString() })
-    .eq('id', id)
-    .is('deleted_at', null)
-    .select('id')
-  if (error) throw new Error(error.message)
-  if (!rows || rows.length === 0)
-    throw new Error('Sin permiso para eliminar este gasto recurrente.')
-  revalidatePath('/gastos')
+export async function deleteGastoRecurrente(id: string): Promise<RecurrenteActionResult> {
+  try {
+    const supabase = createClient()
+    const { data: rows, error } = await supabase
+      .from('gastos_recurrentes')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', id)
+      .is('deleted_at', null)
+      .select('id')
+    if (error) {
+      console.error('[deleteGastoRecurrente] supabase error:', {
+        code: error.code, message: error.message, details: error.details, hint: error.hint,
+      })
+      return { ok: false, error: error.message }
+    }
+    if (!rows || rows.length === 0) {
+      return { ok: false, error: 'Sin permiso para eliminar este gasto recurrente.' }
+    }
+    revalidatePath('/gastos')
+    return { ok: true }
+  } catch (err) {
+    console.error('[deleteGastoRecurrente] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
+}
+
+// Genera gastos pendientes desde recurrentes activos hasta el mes actual.
+// Idempotente vía UNIQUE INDEX (recurrente_id, periodo).
+// Se invoca desde /gastos page.tsx al cargar el módulo (dev).
+// En producción se puede mover a pg_cron diario sin cambios.
+export async function generarGastosRecurrentes(): Promise<{ created: number; error: string | null }> {
+  try {
+    const supabase = createClient()
+    const { data, error } = await supabase.rpc('fn_generar_gastos_recurrentes')
+    if (error) {
+      console.error('[generarGastosRecurrentes] rpc error:', error.message)
+      return { created: 0, error: error.message }
+    }
+    return { created: (data as number) ?? 0, error: null }
+  } catch (err) {
+    console.error('[generarGastosRecurrentes] unhandled:', err)
+    return { created: 0, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
 }
 
 export async function cambiarEstadoGasto(

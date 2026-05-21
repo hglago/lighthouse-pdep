@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import GastosClient, { type GastoRow, type GastoRecurrenteRow } from './GastosClient'
 import type { Fondo, Proveedor, UserRole } from '@/types'
-import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente, setComprobanteGasto, removeComprobanteGasto } from './actions'
+import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente, setComprobanteGasto, removeComprobanteGasto, generarGastosRecurrentes } from './actions'
 
 export default async function GastosPage() {
   const supabase = createClient()
@@ -10,6 +10,10 @@ export default async function GastosPage() {
   const authResult = await supabase.auth.getUser()
   const user = authResult.data?.user
   if (!user) redirect('/login')
+
+  // Generar gastos pendientes desde recurrentes activos (idempotente vía UNIQUE)
+  // antes de leer la lista — así los recién generados aparecen en la primera carga.
+  await generarGastosRecurrentes()
 
   const [profileResult, gastosResult, fondosResult, proveedoresResult, recurrentesResult] = await Promise.all([
     supabase
@@ -19,7 +23,7 @@ export default async function GastosPage() {
       .single(),
     supabase
       .from('gastos')
-      .select('id, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
+      .select('id, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
       .is('deleted_at', null)
       .order('fecha_gasto', { ascending: false }),
     supabase
