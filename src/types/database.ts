@@ -110,6 +110,12 @@ export interface Pago {
   codigo: string | null  // P000001, P000002... generado por trigger DB. Null hasta aplicar migración.
   nro_pago: string
   fondo_id: string
+  // Cajas pagadora vs responsable. Si difieren, el pago genera deuda interna.
+  // Hasta aplicar la migración pueden ser null; defaultean a fondo_id en runtime.
+  fondo_pagador_id: string | null
+  fondo_responsable_id: string | null
+  genera_deuda_interna: boolean
+  deuda_interna_id: string | null
   proveedor_id: string
   gasto_id: string | null
   anticipo_id: string | null
@@ -127,6 +133,38 @@ export interface Pago {
   anulado_en: string | null
   created_at: string
   updated_at: string
+}
+
+// Cuenta corriente entre fondos
+export type MovimientoEntreFondosTipo = 'deuda_generada' | 'cancelacion' | 'ajuste'
+export type MovimientoEntreFondosEstado = 'pendiente' | 'parcial' | 'cancelado'
+
+export interface MovimientoEntreFondos {
+  id: string
+  fecha: string
+  fondo_acreedor_id: string
+  fondo_deudor_id: string
+  pago_origen_id: string | null
+  tipo_movimiento: MovimientoEntreFondosTipo
+  importe: number
+  moneda: string
+  descripcion: string | null
+  estado: MovimientoEntreFondosEstado
+  created_at: string
+  created_by: string | null
+}
+
+// Fila agregada de v_cuenta_corriente_fondos
+export interface CuentaCorrienteFondoRow {
+  fondo_deudor_id: string
+  fondo_deudor_nombre: string
+  fondo_acreedor_id: string
+  fondo_acreedor_nombre: string
+  moneda: string
+  total_deuda_generada: number
+  total_cancelado: number
+  total_ajustes: number
+  saldo_pendiente: number
 }
 
 export interface GastoRecurrente {

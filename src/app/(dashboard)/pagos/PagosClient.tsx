@@ -12,6 +12,13 @@ export interface PagoRow {
   codigo: string | null  // P000001... generado por trigger DB; null si la migración no se aplicó
   nro_pago: string
   fondo_id: string
+  // Cuenta corriente entre fondos. Si fondo_pagador_id != fondo_responsable_id,
+  // el pago genera deuda interna (la caja pagadora "presta" a la responsable).
+  // Null hasta que se aplique la migración de etapa 1.
+  fondo_pagador_id: string | null
+  fondo_responsable_id: string | null
+  genera_deuda_interna: boolean
+  deuda_interna_id: string | null
   proveedor_id: string
   gasto_id: string | null
   anticipo_id: string | null
@@ -661,6 +668,15 @@ export default function PagosClient({
   const { sorted: filteredPagos, sortKey: pSortKey, sortDir: pSortDir, onSort: onPagoSort } =
     useSortable(filteredPagosBase, pagosAccessors, { key: 'fecha', dir: 'desc' })
 
+  // Map id → nombre para resolver fondo_responsable_id en pagos cruzados.
+  // `fondos` viene como prop con solo activos; si el responsable está cerrado,
+  // mostramos el id truncado como fallback.
+  const fondoNombrePorId = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const f of fondos) m.set(f.id, f.nombre)
+    return m
+  }, [fondos])
+
   const visibleBorradores = filteredPagos.filter(p => p.estado === 'borrador')
   const selectedVisibleBorradores = visibleBorradores.filter(p => selectedPagoIds.has(p.id))
   const allVisibleBorradoresSelected =
@@ -954,6 +970,12 @@ export default function PagosClient({
                       <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</td>
                       <td className="px-4 py-3">
                         <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{p.concepto}</div>
+                        {p.genera_deuda_interna && p.fondo_responsable_id && (
+                          <div className="mt-0.5 inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 ring-1 ring-indigo-200">
+                            <span aria-hidden="true">⇄</span>
+                            Por cuenta de {fondoNombrePorId.get(p.fondo_responsable_id) ?? p.fondo_responsable_id.slice(0, 8)}
+                          </div>
+                        )}
                         {p.comprobante_url && (
                           <a href={p.comprobante_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
                             Ver comprobante

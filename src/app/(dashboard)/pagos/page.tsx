@@ -26,7 +26,7 @@ export default async function PagosPage() {
     supabase
       .from('pagos')
       .select(
-        'id, codigo, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
+        'id, codigo, nro_pago, fondo_id, fondo_pagador_id, fondo_responsable_id, genera_deuda_interna, deuda_interna_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
       )
       .order('fecha_pago', { ascending: false }),
     supabase
@@ -47,17 +47,30 @@ export default async function PagosPage() {
       .order('prioridad_pago', { ascending: true }),
   ])
 
-  // Tolerancia: si la migración de codigo no se aplicó, retry sin codigo
-  let pagosData = pagosResult.data
-  if (pagosResult.error?.code === '42703' && (pagosResult.error.message ?? '').includes('codigo')) {
-    console.warn('[pagos] columna codigo no disponible aún; retry sin ella')
+  // Tolerancia: si alguna columna nueva todavía no existe (42703), hacemos un
+  // SELECT base (las columnas que siempre existieron) y hidratamos defaults para
+  // codigo, fondo_pagador_id, fondo_responsable_id, genera_deuda_interna, deuda_interna_id.
+  type PagoRaw = Record<string, unknown> & { fondo_id?: string }
+  let pagosData: PagoRaw[] | null = pagosResult.data as PagoRaw[] | null
+  if (
+    pagosResult.error?.code === '42703' &&
+    /codigo|fondo_pagador_id|fondo_responsable_id|genera_deuda_interna|deuda_interna_id/.test(pagosResult.error.message ?? '')
+  ) {
+    console.warn('[pagos] columnas nuevas no disponibles aún; retry con SELECT base:', pagosResult.error.message)
     const fallback = await supabase
       .from('pagos')
       .select(
         'id, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
       )
       .order('fecha_pago', { ascending: false })
-    pagosData = (fallback.data ?? []).map(p => ({ ...p, codigo: null }))
+    pagosData = ((fallback.data ?? []) as PagoRaw[]).map(p => ({
+      ...p,
+      codigo: null,
+      fondo_pagador_id: p.fondo_id ?? null,
+      fondo_responsable_id: p.fondo_id ?? null,
+      genera_deuda_interna: false,
+      deuda_interna_id: null,
+    }))
   }
 
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
