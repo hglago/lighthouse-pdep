@@ -23,29 +23,87 @@ function normalizeUplift(data: ProveedorPayload): ProveedorPayload {
   return { ...data, tiene_uplift: tiene, porcentaje_uplift: tiene ? pct : 0 }
 }
 
-export async function createProveedor(data: ProveedorPayload) {
-  const supabase = createClient()
-  const authResult = await supabase.auth.getUser()
-  const user = authResult.data?.user
-  if (!user) throw new Error('No autenticado')
-
-  const { error } = await supabase.from('proveedores').insert({
-    ...normalizeUplift(data),
-    created_by: user.id,
-  })
-  if (error) throw new Error(error.message)
-  revalidatePath('/proveedores')
+// Detecta error de Postgres por columna inexistente (42703) que afecta
+// específicamente a las columnas de uplift. Esto pasa si el ALTER no se aplicó.
+function isUpliftColumnMissingError(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false
+  if (err.code === '42703') return true
+  const msg = (err.message ?? '').toLowerCase()
+  return msg.includes('tiene_uplift') || msg.includes('porcentaje_uplift')
 }
 
-export async function updateProveedor(id: string, data: ProveedorPayload) {
-  const supabase = createClient()
-  const { error } = await supabase
-    .from('proveedores')
-    .update(normalizeUplift(data))
-    .eq('id', id)
-    .is('deleted_at', null)
-  if (error) throw new Error(error.message)
-  revalidatePath('/proveedores')
+// Quita las columnas de uplift del payload — para el retry cuando la DB no las tiene.
+function stripUplift<T extends { tiene_uplift?: boolean; porcentaje_uplift?: number }>(p: T): Omit<T, 'tiene_uplift' | 'porcentaje_uplift'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { tiene_uplift, porcentaje_uplift, ...rest } = p
+  return rest
+}
+
+export type ProveedorActionResult = { ok: true } | { ok: false; error: string }
+
+export async function createProveedor(data: ProveedorPayload): Promise<ProveedorActionResult> {
+  try {
+    const supabase = createClient()
+    const authResult = await supabase.auth.getUser()
+    const user = authResult.data?.user
+    if (!user) return { ok: false, error: 'No autenticado' }
+
+    const fullPayload = { ...normalizeUplift(data), created_by: user.id }
+
+    const { error } = await supabase.from('proveedores').insert(fullPayload)
+    if (!error) {
+      revalidatePath('/proveedores')
+      return { ok: true }
+    }
+
+    // Retry sin columnas de uplift si la DB todavía no las tiene
+    if (isUpliftColumnMissingError(error)) {
+      console.warn('[createProveedor] columnas uplift no disponibles, reintentando sin ellas')
+      const retry = await supabase.from('proveedores').insert(stripUplift(fullPayload))
+      if (retry.error) return { ok: false, error: retry.error.message }
+      revalidatePath('/proveedores')
+      return { ok: true }
+    }
+
+    return { ok: false, error: error.message }
+  } catch (err) {
+    console.error('[createProveedor] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
+}
+
+export async function updateProveedor(id: string, data: ProveedorPayload): Promise<ProveedorActionResult> {
+  try {
+    const supabase = createClient()
+    const fullPayload = normalizeUplift(data)
+
+    const { error } = await supabase
+      .from('proveedores')
+      .update(fullPayload)
+      .eq('id', id)
+      .is('deleted_at', null)
+    if (!error) {
+      revalidatePath('/proveedores')
+      return { ok: true }
+    }
+
+    if (isUpliftColumnMissingError(error)) {
+      console.warn('[updateProveedor] columnas uplift no disponibles, reintentando sin ellas')
+      const retry = await supabase
+        .from('proveedores')
+        .update(stripUplift(fullPayload))
+        .eq('id', id)
+        .is('deleted_at', null)
+      if (retry.error) return { ok: false, error: retry.error.message }
+      revalidatePath('/proveedores')
+      return { ok: true }
+    }
+
+    return { ok: false, error: error.message }
+  } catch (err) {
+    console.error('[updateProveedor] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
 }
 
 // Crear proveedor desde el modal de gastos. Devuelve id + nombre del nuevo

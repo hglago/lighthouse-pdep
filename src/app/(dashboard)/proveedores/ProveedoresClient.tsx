@@ -147,21 +147,19 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
     }
 
     startTransition(async () => {
-      try {
-        if (editing) {
-          await updateProveedor(editing.id, payload)
-        } else {
-          await createProveedor(payload)
-        }
+      const result = editing
+        ? await updateProveedor(editing.id, payload)
+        : await createProveedor(payload)
+      if (result.ok) {
         closeModal()
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Error al guardar.'
-        setFormError(
-          msg.includes('proveedores_cuit_unico')
-            ? 'Ya existe un proveedor con ese CUIT.'
-            : msg
-        )
+        return
       }
+      const msg = result.error || 'Error al guardar.'
+      setFormError(
+        msg.includes('proveedores_cuit_unico')
+          ? 'Ya existe un proveedor con ese CUIT.'
+          : msg
+      )
     })
   }
 
