@@ -17,6 +17,8 @@ interface FormState {
   telefono: string
   direccion: string
   observaciones: string
+  tiene_uplift: boolean
+  porcentaje_uplift: string  // string en el form, se castea a number al submit
 }
 
 const EMPTY_FORM: FormState = {
@@ -26,6 +28,8 @@ const EMPTY_FORM: FormState = {
   telefono: '',
   direccion: '',
   observaciones: '',
+  tiene_uplift: false,
+  porcentaje_uplift: '',
 }
 
 function toNullable(s: string): string | null {
@@ -60,6 +64,17 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
     { key: 'cuit', label: 'CUIT', accessor: (p) => p.cuit ?? '', type: 'text', className: 'hidden sm:table-cell' },
     { key: 'email', label: 'Email', accessor: (p) => p.email ?? '', type: 'text', className: 'hidden md:table-cell' },
     { key: 'telefono', label: 'Teléfono', accessor: (p) => p.telefono ?? '', type: 'text', className: 'hidden lg:table-cell' },
+    {
+      key: 'uplift',
+      label: 'Uplift',
+      accessor: (p) => p.tiene_uplift ? p.porcentaje_uplift : -1, // -1 ordena los "sin uplift" al final
+      type: 'number',
+      align: 'right',
+      className: 'hidden md:table-cell',
+      render: (p) => p.tiene_uplift && p.porcentaje_uplift > 0
+        ? <span className="tabular-nums text-indigo-700 font-medium">{p.porcentaje_uplift.toFixed(2)}%</span>
+        : <span className="text-gray-300">—</span>,
+    },
   ]
 
   function openNew() {
@@ -78,6 +93,10 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
       telefono: p.telefono ?? '',
       direccion: p.direccion ?? '',
       observaciones: (p.observaciones ?? null) ?? '',
+      tiene_uplift: p.tiene_uplift === true,
+      porcentaje_uplift: p.tiene_uplift && p.porcentaje_uplift > 0
+        ? String(p.porcentaje_uplift)
+        : '',
     })
     setFormError('')
     setModalOpen(true)
@@ -100,6 +119,22 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
       return
     }
 
+    // Validación uplift: solo requerido si el checkbox está activo
+    let porcentajeUplift = 0
+    if (form.tiene_uplift) {
+      const raw = form.porcentaje_uplift.trim().replace(',', '.')
+      if (raw === '') {
+        setFormError('Indicá el % de uplift o desmarcá la opción.')
+        return
+      }
+      const n = parseFloat(raw)
+      if (!Number.isFinite(n) || n < 0) {
+        setFormError('El % de uplift debe ser un número mayor o igual a 0.')
+        return
+      }
+      porcentajeUplift = n
+    }
+
     const payload = {
       nombre,
       cuit: toNullable(form.cuit),
@@ -107,6 +142,8 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
       telefono: toNullable(form.telefono),
       direccion: toNullable(form.direccion),
       observaciones: toNullable(form.observaciones),
+      tiene_uplift: form.tiene_uplift,
+      porcentaje_uplift: porcentajeUplift,
     }
 
     startTransition(async () => {
@@ -266,6 +303,43 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
                   className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
                   placeholder="Notas internas opcionales"
                 />
+              </div>
+
+              {/* Uplift: porcentaje incremental para rendición/informes.
+                  No modifica el importe original del gasto/honorario. */}
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-3 space-y-2">
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={form.tiene_uplift}
+                    onChange={(e) => setForm({
+                      ...form,
+                      tiene_uplift: e.target.checked,
+                      // Si desactivan el checkbox, limpio el % para evitar confusión
+                      porcentaje_uplift: e.target.checked ? form.porcentaje_uplift : '',
+                    })}
+                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  Tiene uplift
+                  <span className="text-xs font-normal text-gray-500">
+                    (incremento para rendición — no afecta importes cargados)
+                  </span>
+                </label>
+                {form.tiene_uplift && (
+                  <div className="flex items-center gap-2 pl-6">
+                    <label className="text-sm text-gray-600">% uplift</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.porcentaje_uplift}
+                      onChange={(e) => setForm({ ...form, porcentaje_uplift: e.target.value })}
+                      className="w-28 rounded-lg border border-gray-300 px-3 py-1.5 text-sm tabular-nums outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                      placeholder="0.00"
+                    />
+                    <span className="text-sm text-gray-400">%</span>
+                  </div>
+                )}
               </div>
 
               {formError && (

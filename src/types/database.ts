@@ -44,6 +44,8 @@ export interface Proveedor {
   direccion: string | null
   observaciones: string | null
   activo: boolean
+  tiene_uplift: boolean
+  porcentaje_uplift: number
   created_by: string
   created_at: string
   updated_at: string

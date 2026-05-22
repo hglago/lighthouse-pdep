@@ -3,42 +3,45 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 
-export async function createProveedor(data: {
+export type ProveedorPayload = {
   nombre: string
   cuit: string | null
   email: string | null
   telefono: string | null
   direccion: string | null
   observaciones: string | null
-}) {
+  tiene_uplift: boolean
+  porcentaje_uplift: number
+}
+
+// Si no tiene uplift, forzamos porcentaje a 0 para evitar inconsistencia.
+// Si tiene uplift, no permitimos negativos (mismo check que la DB).
+function normalizeUplift(data: ProveedorPayload): ProveedorPayload {
+  const tiene = data.tiene_uplift === true
+  let pct = Number(data.porcentaje_uplift)
+  if (!Number.isFinite(pct) || pct < 0) pct = 0
+  return { ...data, tiene_uplift: tiene, porcentaje_uplift: tiene ? pct : 0 }
+}
+
+export async function createProveedor(data: ProveedorPayload) {
   const supabase = createClient()
   const authResult = await supabase.auth.getUser()
   const user = authResult.data?.user
   if (!user) throw new Error('No autenticado')
 
   const { error } = await supabase.from('proveedores').insert({
-    ...data,
+    ...normalizeUplift(data),
     created_by: user.id,
   })
   if (error) throw new Error(error.message)
   revalidatePath('/proveedores')
 }
 
-export async function updateProveedor(
-  id: string,
-  data: {
-    nombre: string
-    cuit: string | null
-    email: string | null
-    telefono: string | null
-    direccion: string | null
-    observaciones: string | null
-  }
-) {
+export async function updateProveedor(id: string, data: ProveedorPayload) {
   const supabase = createClient()
   const { error } = await supabase
     .from('proveedores')
-    .update(data)
+    .update(normalizeUplift(data))
     .eq('id', id)
     .is('deleted_at', null)
   if (error) throw new Error(error.message)
