@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useTransition, useMemo } from 'react'
+import { useState, useTransition } from 'react'
 import type { Proveedor, UserRole } from '@/types'
 import { createProveedor, updateProveedor, deleteProveedor } from './actions'
-import { useSortable } from '@/lib/useSortable'
-import SortableHeader from '@/components/SortableHeader'
+import DataTable, { type Column } from '@/components/DataTable'
 
 interface Props {
   proveedores: Proveedor[]
@@ -44,23 +43,24 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
   const canWrite = role === 'admin' || role === 'contador'
   const canDelete = role === 'admin'
 
-  const q = search.trim().toLowerCase()
-  const filteredBase = q
-    ? proveedores.filter(
-        (p) =>
-          p.nombre.toLowerCase().includes(q) ||
-          (p.cuit ?? '').toLowerCase().includes(q)
-      )
-    : proveedores
-
-  const provAccessors = useMemo(() => ({
-    nombre: (p: Proveedor) => p.nombre,
-    cuit: (p: Proveedor) => p.cuit ?? '',
-    email: (p: Proveedor) => p.email ?? '',
-    telefono: (p: Proveedor) => p.telefono ?? '',
-  }), [])
-  const { sorted: filtered, sortKey: pvSortKey, sortDir: pvSortDir, onSort: onProvSort } =
-    useSortable(filteredBase, provAccessors, { key: 'nombre', dir: 'asc' })
+  // Columnas para DataTable (sort + filter por columna habilitados por defecto).
+  const columns: Column<Proveedor>[] = [
+    {
+      key: 'nombre',
+      label: 'Nombre',
+      accessor: (p) => p.nombre,
+      type: 'text',
+      render: (p) => (
+        <div>
+          <div className="text-sm font-medium text-gray-900">{p.nombre}</div>
+          {p.direccion && <div className="text-xs text-gray-400 truncate max-w-xs">{p.direccion}</div>}
+        </div>
+      ),
+    },
+    { key: 'cuit', label: 'CUIT', accessor: (p) => p.cuit ?? '', type: 'text', className: 'hidden sm:table-cell' },
+    { key: 'email', label: 'Email', accessor: (p) => p.email ?? '', type: 'text', className: 'hidden md:table-cell' },
+    { key: 'telefono', label: 'Teléfono', accessor: (p) => p.telefono ?? '', type: 'text', className: 'hidden lg:table-cell' },
+  ]
 
   function openNew() {
     setEditing(null)
@@ -161,73 +161,35 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
         )}
       </div>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-        {filtered.length === 0 ? (
-          <div className="p-12 text-center text-sm text-gray-400">
-            {search ? 'Sin resultados para esa búsqueda.' : 'No hay proveedores registrados.'}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <SortableHeader label="Nombre" sortKey="nombre" activeKey={pvSortKey} dir={pvSortDir} onSort={onProvSort} />
-                  <SortableHeader label="CUIT" sortKey="cuit" activeKey={pvSortKey} dir={pvSortDir} onSort={onProvSort} className="hidden sm:table-cell" />
-                  <SortableHeader label="Email" sortKey="email" activeKey={pvSortKey} dir={pvSortDir} onSort={onProvSort} className="hidden md:table-cell" />
-                  <SortableHeader label="Teléfono" sortKey="telefono" activeKey={pvSortKey} dir={pvSortDir} onSort={onProvSort} className="hidden lg:table-cell" />
-                  {canWrite && (
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filtered.map((p) => (
-                  <tr key={p.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="text-sm font-medium text-gray-900">{p.nombre}</div>
-                      {p.direccion && (
-                        <div className="text-xs text-gray-400 truncate max-w-xs">{p.direccion}</div>
-                      )}
-                    </td>
-                    <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">
-                      {p.cuit ?? <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">
-                      {p.email ?? <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="hidden px-4 py-3 text-sm text-gray-500 lg:table-cell">
-                      {p.telefono ?? <span className="text-gray-300">—</span>}
-                    </td>
-                    {canWrite && (
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => openEdit(p)}
-                            disabled={isPending}
-                            className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
-                          >
-                            Editar
-                          </button>
-                          {canDelete && (
-                            <button
-                              onClick={() => handleDelete(p.id, p.nombre)}
-                              disabled={isPending}
-                              className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                            >
-                              Eliminar
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <DataTable
+        rows={proveedores}
+        columns={columns}
+        getRowId={(p) => p.id}
+        searchTerm={search}
+        searchKeys={['nombre', 'cuit', 'email']}
+        initialSort={{ key: 'nombre', dir: 'asc' }}
+        emptyMessage={search ? 'Sin resultados para esa búsqueda.' : 'No hay proveedores registrados.'}
+        rowActions={canWrite ? (p) => (
+          <>
+            <button
+              onClick={() => openEdit(p)}
+              disabled={isPending}
+              className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+            >
+              Editar
+            </button>
+            {canDelete && (
+              <button
+                onClick={() => handleDelete(p.id, p.nombre)}
+                disabled={isPending}
+                className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+              >
+                Eliminar
+              </button>
+            )}
+          </>
+        ) : undefined}
+      />
 
       {/* Modal */}
       {modalOpen && (

@@ -5,6 +5,7 @@ import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo } from '@/ty
 import type { AportePayload } from './actions'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
+import DataTable, { type Column } from '@/components/DataTable'
 
 export interface AporteFondoRow extends AporteFondo {
   fondos: { nombre: string } | null
@@ -152,15 +153,39 @@ export default function FondosClient({
   const fondoMap = new Map(fondos.map((f) => [f.id, f]))
   const activeFondos = fondos.filter((f) => f.estado === 'activo')
 
-  const fondosAccessors = useMemo(() => ({
-    nombre: (f: Fondo) => f.nombre,
-    moneda: (f: Fondo) => f.moneda,
-    monto_inicial: (f: Fondo) => f.monto_inicial,
-    saldo_actual: (f: Fondo) => f.saldo_actual,
-    estado: (f: Fondo) => f.estado,
-  }), [])
-  const { sorted: sortedFondos, sortKey: fSortKey, sortDir: fSortDir, onSort: onFondoSort } =
-    useSortable(fondos, fondosAccessors, { key: 'nombre', dir: 'asc' })
+  // Columnas DataTable para Fondos (sort + filter por columna)
+  const fondoColumns: Column<Fondo>[] = [
+    { key: 'nombre', label: 'Nombre', accessor: (f) => f.nombre, type: 'text' },
+    { key: 'moneda', label: 'Moneda', accessor: (f) => f.moneda, type: 'enum' },
+    {
+      key: 'monto_inicial',
+      label: 'Monto inicial',
+      accessor: (f) => f.monto_inicial,
+      type: 'number',
+      align: 'right',
+      render: (f) => <span className="tabular-nums text-gray-500">{fmt(f.monto_inicial)}</span>,
+    },
+    {
+      key: 'saldo_actual',
+      label: 'Saldo actual',
+      accessor: (f) => f.saldo_actual,
+      type: 'number',
+      align: 'right',
+      render: (f) => <span className="tabular-nums font-semibold text-gray-900">{fmt(f.saldo_actual)}</span>,
+    },
+    {
+      key: 'estado',
+      label: 'Estado',
+      accessor: (f) => f.estado,
+      type: 'enum',
+      enumOptions: ESTADOS_FONDO.map(e => ({ value: e, label: FONDO_ESTADO_LABELS[e] })),
+      render: (f) => (
+        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${FONDO_ESTADO_COLORS[f.estado]}`}>
+          {FONDO_ESTADO_LABELS[f.estado]}
+        </span>
+      ),
+    },
+  ]
 
   const filteredAportes = aportes.filter((a) => {
     if (filterFondoId && a.fondo_id !== filterFondoId) return false
@@ -341,79 +366,51 @@ export default function FondosClient({
           )}
         </div>
 
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          {fondos.length === 0 ? (
-            <div className="p-12 text-center text-sm text-gray-400">No hay fondos registrados.</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <SortableHeader label="Nombre" sortKey="nombre" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} />
-                    <SortableHeader label="Moneda" sortKey="moneda" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} />
-                    <SortableHeader label="Monto inicial" sortKey="monto_inicial" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} align="right" />
-                    <SortableHeader label="Saldo actual" sortKey="saldo_actual" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} align="right" />
-                    <SortableHeader label="Estado" sortKey="estado" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} />
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {sortedFondos.map((fondo) => (
-                    <tr key={fondo.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 text-sm font-medium text-gray-900">{fondo.nombre}</td>
-                      <td className="px-4 py-3 text-sm text-gray-500">{fondo.moneda}</td>
-                      <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-500">{fmt(fondo.monto_inicial)}</td>
-                      <td className="px-4 py-3 text-right text-sm tabular-nums font-semibold text-gray-900">{fmt(fondo.saldo_actual)}</td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${FONDO_ESTADO_COLORS[fondo.estado]}`}>
-                          {FONDO_ESTADO_LABELS[fondo.estado]}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-1.5">
-                          {canWrite && (
-                            <button
-                              onClick={() => openEditFondo(fondo)}
-                              disabled={isPending}
-                              className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
-                            >
-                              Editar
-                            </button>
-                          )}
-                          {canWrite && fondo.estado === 'activo' && (
-                            <button
-                              onClick={() => openNewAporte(fondo.id)}
-                              disabled={isPending}
-                              className="rounded px-2.5 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
-                            >
-                              + Aporte
-                            </button>
-                          )}
-                          <button
-                            onClick={() => scrollToAportes(fondo.id)}
-                            disabled={isPending}
-                            className="rounded px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 transition-colors disabled:opacity-50"
-                          >
-                            Ver aportes
-                          </button>
-                          {canDelete && (
-                            <button
-                              onClick={() => handleDeleteFondo(fondo.id, fondo.nombre)}
-                              disabled={isPending}
-                              className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                            >
-                              Eliminar
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        <DataTable
+          rows={fondos}
+          columns={fondoColumns}
+          getRowId={(f) => f.id}
+          initialSort={{ key: 'nombre', dir: 'asc' }}
+          emptyMessage="No hay fondos registrados."
+          rowActions={(fondo) => (
+            <>
+              {canWrite && (
+                <button
+                  onClick={() => openEditFondo(fondo)}
+                  disabled={isPending}
+                  className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                >
+                  Editar
+                </button>
+              )}
+              {canWrite && fondo.estado === 'activo' && (
+                <button
+                  onClick={() => openNewAporte(fondo.id)}
+                  disabled={isPending}
+                  className="rounded px-2.5 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                >
+                  + Aporte
+                </button>
+              )}
+              <button
+                onClick={() => scrollToAportes(fondo.id)}
+                disabled={isPending}
+                className="rounded px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 transition-colors disabled:opacity-50"
+              >
+                Ver aportes
+              </button>
+              {canDelete && (
+                <button
+                  onClick={() => handleDeleteFondo(fondo.id, fondo.nombre)}
+                  disabled={isPending}
+                  className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  Eliminar
+                </button>
+              )}
+            </>
           )}
-        </div>
+        />
       </div>
 
       {/* ─── Section B: Aportes ────────────────────────────────────────────── */}
