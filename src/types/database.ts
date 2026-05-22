@@ -54,6 +54,7 @@ export interface Proveedor {
 
 export interface Gasto {
   id: string
+  codigo: string | null  // G000001, G000002... generado por trigger DB. Null hasta aplicar migración.
   fondo_id: string
   proveedor_id: string | null
   descripcion: string
@@ -106,6 +107,7 @@ export type PagoTipo   = 'gasto' | 'anticipo' | 'saldo_anticipo' | 'recurrente' 
 
 export interface Pago {
   id: string
+  codigo: string | null  // P000001, P000002... generado por trigger DB. Null hasta aplicar migración.
   nro_pago: string
   fondo_id: string
   proveedor_id: string

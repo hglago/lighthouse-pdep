@@ -26,7 +26,7 @@ export default async function PagosPage() {
     supabase
       .from('pagos')
       .select(
-        'id, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
+        'id, codigo, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
       )
       .order('fecha_pago', { ascending: false }),
     supabase
@@ -47,8 +47,21 @@ export default async function PagosPage() {
       .order('prioridad_pago', { ascending: true }),
   ])
 
+  // Tolerancia: si la migración de codigo no se aplicó, retry sin codigo
+  let pagosData = pagosResult.data
+  if (pagosResult.error?.code === '42703' && (pagosResult.error.message ?? '').includes('codigo')) {
+    console.warn('[pagos] columna codigo no disponible aún; retry sin ella')
+    const fallback = await supabase
+      .from('pagos')
+      .select(
+        'id, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
+      )
+      .order('fecha_pago', { ascending: false })
+    pagosData = (fallback.data ?? []).map(p => ({ ...p, codigo: null }))
+  }
+
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
-  const pagos = (pagosResult.data ?? []) as unknown as PagoRow[]
+  const pagos = (pagosData ?? []) as unknown as PagoRow[]
   const fondos = (fondosResult.data ?? []) as { id: string; nombre: string; moneda: string }[]
   const proveedores = (proveedoresResult.data ?? []) as { id: string; nombre: string }[]
   const obligaciones = (obligacionesResult.data ?? []) as ObligacionPendiente[]

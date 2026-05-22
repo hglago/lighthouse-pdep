@@ -9,6 +9,7 @@ import SortableHeader from '@/components/SortableHeader'
 
 export interface PagoRow {
   id: string
+  codigo: string | null  // P000001... generado por trigger DB; null si la migración no se aplicó
   nro_pago: string
   fondo_id: string
   proveedor_id: string
@@ -638,13 +639,16 @@ export default function PagosClient({
   const filteredPagosBase = q
     ? pagos.filter(
         p =>
+          (p.codigo ?? '').toLowerCase().includes(q) ||
           p.concepto.toLowerCase().includes(q) ||
           (p.fondos?.nombre ?? '').toLowerCase().includes(q) ||
-          (p.proveedores?.nombre ?? '').toLowerCase().includes(q)
+          (p.proveedores?.nombre ?? '').toLowerCase().includes(q) ||
+          (p.notas ?? '').toLowerCase().includes(q)
       )
     : pagos
 
   const pagosAccessors = useMemo(() => ({
+    codigo: (p: PagoRow) => p.codigo ?? '',
     nro: (p: PagoRow) => p.nro_pago,
     fecha: (p: PagoRow) => p.fecha_pago,
     concepto: (p: PagoRow) => p.concepto,
@@ -835,7 +839,7 @@ export default function PagosClient({
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar..."
+              placeholder="Buscar por código, concepto, fondo o proveedor..."
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:w-48"
             />
             <button
@@ -912,6 +916,7 @@ export default function PagosClient({
                         />
                       </th>
                     )}
+                    <SortableHeader label="Código" sortKey="codigo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Nro" sortKey="nro" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
                     <SortableHeader label="Fecha" sortKey="fecha" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Concepto" sortKey="concepto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
@@ -942,6 +947,9 @@ export default function PagosClient({
                           )}
                         </td>
                       )}
+                      <td className="px-4 py-3 text-xs font-mono tabular-nums text-slate-600 whitespace-nowrap">
+                        {p.codigo ?? <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="hidden px-4 py-3 text-xs text-gray-400 whitespace-nowrap font-mono sm:table-cell">{p.nro_pago}</td>
                       <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</td>
                       <td className="px-4 py-3">

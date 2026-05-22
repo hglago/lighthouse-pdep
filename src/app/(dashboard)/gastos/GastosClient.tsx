@@ -13,6 +13,7 @@ import SortableHeader from '@/components/SortableHeader'
 
 export interface GastoRow {
   id: string
+  codigo: string | null  // G000001... generado por trigger DB; null si la migración no se aplicó
   fondo_id: string
   proveedor_id: string | null
   descripcion: string
@@ -299,13 +300,16 @@ export default function GastosClient({
   const filteredGastosBase = qg
     ? gastos.filter(
         (g) =>
+          (g.codigo ?? '').toLowerCase().includes(qg) ||
           g.descripcion.toLowerCase().includes(qg) ||
           (g.fondos?.nombre ?? '').toLowerCase().includes(qg) ||
-          (g.proveedores?.nombre ?? '').toLowerCase().includes(qg)
+          (g.proveedores?.nombre ?? '').toLowerCase().includes(qg) ||
+          (g.notas ?? '').toLowerCase().includes(qg)
       )
     : gastos
 
   const gastosAccessors = useMemo(() => ({
+    codigo: (g: GastoRow) => g.codigo ?? '',
     fecha: (g: GastoRow) => g.fecha_gasto,
     descripcion: (g: GastoRow) => g.descripcion,
     fondo: (g: GastoRow) => g.fondos?.nombre ?? '',
@@ -893,7 +897,7 @@ export default function GastosClient({
               type="text"
               value={searchGastos}
               onChange={(e) => setSearchGastos(e.target.value)}
-              placeholder="Buscar por concepto, fondo o proveedor..."
+              placeholder="Buscar por código, concepto, fondo o proveedor..."
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-sm"
             />
             <div className="flex items-center gap-2">
@@ -1003,6 +1007,7 @@ export default function GastosClient({
                           />
                         </th>
                       )}
+                      <SortableHeader label="Código" sortKey="codigo" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
                       <SortableHeader label="Fecha" sortKey="fecha" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
                       <SortableHeader label="Concepto" sortKey="descripcion" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
                       <SortableHeader label="Fondo" sortKey="fondo" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} className="hidden sm:table-cell" />
@@ -1028,6 +1033,9 @@ export default function GastosClient({
                             />
                           </td>
                         )}
+                        <td className="px-4 py-3 text-xs font-mono tabular-nums text-slate-600 whitespace-nowrap">
+                          {g.codigo ?? <span className="text-gray-300">—</span>}
+                        </td>
                         <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{g.fecha_gasto}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5 max-w-xs">

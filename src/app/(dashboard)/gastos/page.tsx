@@ -24,7 +24,7 @@ export default async function GastosPage() {
       .single(),
     supabase
       .from('gastos')
-      .select('id, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
+      .select('id, codigo, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
       .is('deleted_at', null)
       .order('fecha_gasto', { ascending: false }),
     supabase
@@ -50,8 +50,21 @@ export default async function GastosPage() {
       .order('fecha_pago', { ascending: true }),
   ])
 
+  // Tolerancia: si la migración de codigo no se aplicó, retry sin codigo
+  // y hidratar como null. El listado funciona igual.
+  let gastosData = gastosResult.data
+  if (gastosResult.error?.code === '42703' && (gastosResult.error.message ?? '').includes('codigo')) {
+    console.warn('[gastos] columna codigo no disponible aún; retry sin ella')
+    const fallback = await supabase
+      .from('gastos')
+      .select('id, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
+      .is('deleted_at', null)
+      .order('fecha_gasto', { ascending: false })
+    gastosData = (fallback.data ?? []).map(g => ({ ...g, codigo: null }))
+  }
+
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
-  const gastos: GastoRow[] = (gastosResult.data ?? []) as unknown as GastoRow[]
+  const gastos: GastoRow[] = (gastosData ?? []) as unknown as GastoRow[]
   const fondos = (fondosResult.data ?? []) as Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
   const proveedores = (proveedoresResult.data ?? []) as Pick<Proveedor, 'id' | 'nombre'>[]
   const recurrentes: GastoRecurrenteRow[] = (recurrentesResult.data ?? []) as unknown as GastoRecurrenteRow[]
