@@ -1,6 +1,6 @@
 export type UserRole = 'admin' | 'contador' | 'revisor' | 'visualizador'
 export type FondoEstado = 'activo' | 'cerrado' | 'suspendido'
-export type GastoEstado = 'borrador' | 'enviado' | 'aprobado' | 'pagado' | 'rechazado'
+export type GastoEstado = 'borrador' | 'enviado' | 'aprobado' | 'pagado_parcial' | 'pagado' | 'rechazado'
 export type AnticipoEstado = 'borrador' | 'aprobado' | 'anticipo_pagado' | 'completado' | 'cancelado'
 
 export interface Profile {
@@ -145,7 +145,10 @@ export interface GastoRecurrente {
   deleted_at: string | null
 }
 
-export type ObligacionTipo = 'gasto_total' | 'anticipo' | 'saldo_anticipo' | 'recurrente'
+// Valores devueltos por v_obligaciones_pendientes en columna tipo_obligacion.
+// Antes incluía 'saldo_anticipo' — renombrado a 'saldo' para alinear con UI "Pagar saldo".
+// El enum PagoTipo de la tabla pagos sigue teniendo 'saldo_anticipo' (sin migrar).
+export type ObligacionTipo = 'gasto_total' | 'anticipo' | 'saldo' | 'recurrente'
 
 export interface ObligacionPendiente {
   obligacion_id: string

@@ -33,7 +33,7 @@ export async function createGasto(
   const insert: Record<string, unknown> = {
     ...data,
     proveedor_id: data.proveedor_id || null,
-    estado: 'borrador',
+    estado: 'enviado',  // alta directa a pendiente de aprobación (sin paso por borrador)
     created_by: user.id,
   }
   if (options?.id) {
@@ -59,12 +59,12 @@ export async function updateGasto(id: string, data: GastoPayload) {
     .from('gastos')
     .update({ ...data, proveedor_id: data.proveedor_id || null })
     .eq('id', id)
-    .eq('estado', 'borrador')
+    .in('estado', ['borrador', 'enviado'])  // editable mientras no esté aprobado/pagado
     .is('deleted_at', null)
     .select('id')
   if (result.error) throw new Error(result.error.message)
   if (!result.data || result.data.length === 0)
-    throw new Error('Sin permiso para editar este gasto o ya no está en borrador.')
+    throw new Error('Sin permiso para editar este gasto o ya fue aprobado/pagado.')
   revalidatePath('/gastos')
 }
 
@@ -276,12 +276,12 @@ export async function setComprobanteGasto(id: string, data: ComprobantePayload) 
       comprobante_subido_en: new Date().toISOString(),
     })
     .eq('id', id)
-    .eq('estado', 'borrador')
+    .in('estado', ['borrador', 'enviado', 'aprobado', 'pagado_parcial'])
     .is('deleted_at', null)
     .select('id')
   if (error) throw new Error(error.message)
   if (!rows || rows.length === 0)
-    throw new Error('Sin permiso o el gasto ya no está en borrador.')
+    throw new Error('Sin permiso o el gasto ya está cerrado (pagado/rechazado).')
   revalidatePath('/gastos')
 }
 
@@ -292,11 +292,11 @@ export async function removeComprobanteGasto(id: string) {
     .from('gastos')
     .select('comprobante_path')
     .eq('id', id)
-    .eq('estado', 'borrador')
+    .in('estado', ['borrador', 'enviado', 'aprobado', 'pagado_parcial'])
     .is('deleted_at', null)
     .maybeSingle()
   if (fetchErr) throw new Error(fetchErr.message)
-  if (!gasto) throw new Error('Gasto no está en borrador o no existe.')
+  if (!gasto) throw new Error('Gasto ya cerrado (pagado/rechazado) o no existe.')
   if (!gasto.comprobante_path) throw new Error('Este gasto no tiene comprobante.')
 
   const { error: rmErr } = await supabase.storage
@@ -315,7 +315,7 @@ export async function removeComprobanteGasto(id: string) {
       comprobante_subido_en: null,
     })
     .eq('id', id)
-    .eq('estado', 'borrador')
+    .in('estado', ['borrador', 'enviado', 'aprobado', 'pagado_parcial'])
     .is('deleted_at', null)
     .select('id')
   if (updErr) throw new Error(updErr.message)

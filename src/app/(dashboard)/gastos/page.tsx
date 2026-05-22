@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import GastosClient, { type GastoRow, type GastoRecurrenteRow } from './GastosClient'
+import GastosClient, { type GastoRow, type GastoRecurrenteRow, type PagoDeGasto } from './GastosClient'
 import type { Fondo, Proveedor, UserRole } from '@/types'
 import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente, setComprobanteGasto, removeComprobanteGasto, generarGastosRecurrentes } from './actions'
 import { createProveedorQuick } from '../proveedores/actions'
@@ -16,7 +16,7 @@ export default async function GastosPage() {
   // antes de leer la lista — así los recién generados aparecen en la primera carga.
   await generarGastosRecurrentes()
 
-  const [profileResult, gastosResult, fondosResult, proveedoresResult, recurrentesResult] = await Promise.all([
+  const [profileResult, gastosResult, fondosResult, proveedoresResult, recurrentesResult, pagosDeGastosResult] = await Promise.all([
     supabase
       .from('profiles')
       .select('role')
@@ -43,6 +43,11 @@ export default async function GastosPage() {
       .select('id, fondo_id, proveedor_id, concepto, categoria, monto, moneda, dia_vencimiento, fecha_inicio, fecha_fin, activo, prioridad_pago, observaciones, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
       .is('deleted_at', null)
       .order('concepto', { ascending: true }),
+    supabase
+      .from('pagos')
+      .select('id, gasto_id, nro_pago, tipo, estado, monto, moneda, fecha_pago')
+      .not('gasto_id', 'is', null)
+      .order('fecha_pago', { ascending: true }),
   ])
 
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
@@ -50,6 +55,7 @@ export default async function GastosPage() {
   const fondos = (fondosResult.data ?? []) as Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
   const proveedores = (proveedoresResult.data ?? []) as Pick<Proveedor, 'id' | 'nombre'>[]
   const recurrentes: GastoRecurrenteRow[] = (recurrentesResult.data ?? []) as unknown as GastoRecurrenteRow[]
+  const pagosDeGastos: PagoDeGasto[] = (pagosDeGastosResult.data ?? []) as PagoDeGasto[]
 
   return (
     <div className="space-y-6">
@@ -65,6 +71,7 @@ export default async function GastosPage() {
         recurrentes={recurrentes}
         fondos={fondos}
         proveedores={proveedores}
+        pagosDeGastos={pagosDeGastos}
         role={role}
         onCreateGasto={createGasto}
         onUpdateGasto={updateGasto}

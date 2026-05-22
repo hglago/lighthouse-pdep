@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import type { Fondo, Proveedor, UserRole, GastoEstado } from '@/types'
+import type { Fondo, Proveedor, UserRole, GastoEstado, PagoEstado, PagoTipo } from '@/types'
 import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult } from './actions'
 import type { ProveedorQuickResult } from '../proveedores/actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
@@ -41,6 +41,17 @@ export interface GastoRow {
   proveedores: { nombre: string } | null
 }
 
+export interface PagoDeGasto {
+  id: string
+  gasto_id: string
+  nro_pago: string
+  tipo: PagoTipo
+  estado: PagoEstado
+  monto: number
+  moneda: string
+  fecha_pago: string
+}
+
 export interface GastoRecurrenteRow {
   id: string
   fondo_id: string
@@ -67,6 +78,7 @@ const ESTADO_LABELS: Record<GastoEstado, string> = {
   borrador: 'Borrador',
   enviado: 'Pendiente',
   aprobado: 'Aprobado',
+  pagado_parcial: 'Pagado parcial',
   pagado: 'Pagado',
   rechazado: 'Rechazado',
 }
@@ -75,6 +87,7 @@ const ESTADO_COLORS: Record<GastoEstado, string> = {
   borrador: 'bg-gray-100 text-gray-600',
   enviado: 'bg-blue-100 text-blue-700',
   aprobado: 'bg-green-100 text-green-700',
+  pagado_parcial: 'bg-cyan-100 text-cyan-700',
   pagado: 'bg-emerald-100 text-emerald-700',
   rechazado: 'bg-red-100 text-red-700',
 }
@@ -167,6 +180,7 @@ interface Props {
   recurrentes: GastoRecurrenteRow[]
   fondos: Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
   proveedores: Pick<Proveedor, 'id' | 'nombre'>[]
+  pagosDeGastos: PagoDeGasto[]
   role: UserRole
   onCreateGasto: (
     data: GastoPayload,
@@ -196,6 +210,7 @@ export default function GastosClient({
   recurrentes,
   fondos,
   proveedores,
+  pagosDeGastos,
   role,
   onCreateGasto,
   onUpdateGasto,
@@ -703,6 +718,33 @@ export default function GastosClient({
       .map(g => g.recurrente_id as string)
   )
 
+  // Pagos por gasto_id (incluye todos los estados; el caller decide filtrar)
+  const pagosPorGastoId = new Map<string, PagoDeGasto[]>()
+  for (const p of pagosDeGastos) {
+    if (!p.gasto_id) continue
+    const arr = pagosPorGastoId.get(p.gasto_id)
+    if (arr) arr.push(p)
+    else pagosPorGastoId.set(p.gasto_id, [p])
+  }
+
+  // Suma de pagos CONFIRMADOS por gasto. Usado para badge "Pagado parcial".
+  function totalPagadoDeGasto(gastoId: string): number {
+    const pgs = pagosPorGastoId.get(gastoId) ?? []
+    return pgs.filter(p => p.estado === 'pagado').reduce((s, p) => s + Number(p.monto), 0)
+  }
+
+  // Estado visual del gasto: usa el real de DB salvo que detectemos pago parcial computado.
+  function estadoUI(g: GastoRow): { label: string; cls: string } {
+    if (g.estado === 'aprobado') {
+      const pagado = totalPagadoDeGasto(g.id)
+      const total = Number(g.monto)
+      if (pagado > 0 && pagado < total - 0.01) {
+        return { label: 'Pagado parcial', cls: 'bg-cyan-100 text-cyan-700' }
+      }
+    }
+    return { label: ESTADO_LABELS[g.estado], cls: ESTADO_COLORS[g.estado] }
+  }
+
   const inputCls =
     'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20'
 
@@ -853,24 +895,30 @@ export default function GastosClient({
                           {formatMonto(g.monto, g.moneda)}
                         </td>
                         <td className="hidden px-4 py-3 lg:table-cell">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${ESTADO_COLORS[g.estado]}`}>
-                            {ESTADO_LABELS[g.estado]}
-                          </span>
+                          {(() => {
+                            const ui = estadoUI(g)
+                            return (
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${ui.cls}`}>
+                                {ui.label}
+                              </span>
+                            )
+                          })()}
                         </td>
                         {(canWrite || canApprove) && (
                           <td className="px-4 py-3">
                             <div className="flex justify-end gap-2">
-                              {canWrite && g.estado === 'borrador' && (
+                              {canWrite && (g.estado === 'borrador' || g.estado === 'enviado') && (
                                 <button onClick={() => openEditGasto(g)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
                                   Editar
                                 </button>
                               )}
+                              {/* "Enviar" solo legacy: nuevos gastos nacen 'enviado' */}
                               {canWrite && g.estado === 'borrador' && (
                                 <button onClick={() => handleCambiarEstado(g.id, 'enviado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50">
                                   Enviar
                                 </button>
                               )}
-                              {canDelete && g.estado === 'borrador' && (
+                              {canDelete && (g.estado === 'borrador' || g.estado === 'enviado') && (
                                 <button onClick={() => handleDeleteGasto(g.id, g.descripcion)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
                                   Eliminar
                                 </button>
@@ -1124,6 +1172,55 @@ export default function GastosClient({
               {/* ─── Campos exclusivos: Gasto ─────────────────────────────── */}
               {!isRecurrenteMode && (
                 <>
+                  {/* Pagos asociados — solo en edit de gasto, no en borrador */}
+                  {editingGastoLatest && editingGastoLatest.estado !== 'borrador' && (() => {
+                    const pagosDelGasto = pagosPorGastoId.get(editingGastoLatest.id) ?? []
+                    const totalPagado = pagosDelGasto.filter(p => p.estado === 'pagado').reduce((s, p) => s + Number(p.monto), 0)
+                    const totalGasto = Number(editingGastoLatest.monto)
+                    const saldo = totalGasto - totalPagado
+                    return (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+                        <p className="text-sm font-medium text-gray-700">Pagos asociados</p>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="text-center">
+                            <p className="text-xs text-gray-500">Total</p>
+                            <p className="text-sm font-semibold text-gray-900">{formatMonto(totalGasto, editingGastoLatest.moneda)}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-xs text-gray-500">Pagado</p>
+                            <p className="text-sm font-semibold text-emerald-700">{formatMonto(totalPagado, editingGastoLatest.moneda)}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-xs text-gray-500">Saldo</p>
+                            <p className={`text-sm font-semibold ${saldo > 0.01 ? 'text-amber-700' : 'text-gray-500'}`}>{formatMonto(Math.max(0, saldo), editingGastoLatest.moneda)}</p>
+                          </div>
+                        </div>
+                        {pagosDelGasto.length > 0 && (
+                          <ul className="text-xs space-y-1 border-t border-gray-200 pt-2">
+                            {pagosDelGasto.map(p => (
+                              <li key={p.id} className="flex justify-between gap-2">
+                                <span className="text-gray-600 truncate">
+                                  {p.fecha_pago} · {p.tipo} · <span className="font-mono">{p.nro_pago}</span>
+                                </span>
+                                <span className={`whitespace-nowrap font-medium ${p.estado === 'pagado' ? 'text-emerald-700' : p.estado === 'anulado' ? 'text-gray-400 line-through' : 'text-gray-500'}`}>
+                                  {formatMonto(Number(p.monto), p.moneda)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <a
+                          href="/pagos"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block text-xs text-blue-700 hover:underline"
+                        >
+                          Ver / agregar pagos en módulo Pagos →
+                        </a>
+                      </div>
+                    )
+                  })()}
+
                   {/* Origen recurrente — solo en edición de gasto auto-generado */}
                   {editingGastoLatest?.recurrente_id && (() => {
                     const origen = recurrentes.find(r => r.id === editingGastoLatest.recurrente_id)
@@ -1255,7 +1352,7 @@ export default function GastosClient({
                   )}
 
                   {/* ─── Comprobante (solo edit de gasto en borrador) ──────── */}
-                  {editingGastoLatest && editingGastoLatest.estado === 'borrador' && (
+                  {editingGastoLatest && !['pagado', 'rechazado'].includes(editingGastoLatest.estado) && (
                     <div className="rounded-lg border border-gray-200 p-3 space-y-2">
                       <label className="block text-sm font-medium text-gray-700">Comprobante</label>
                       {editingGastoLatest.comprobante_path && editingGastoLatest.comprobante_nombre ? (

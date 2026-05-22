@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import PagosClient, { type PagoRow } from './PagosClient'
 import type { UserRole, ObligacionPendiente } from '@/types'
-import { createPago, updatePago, confirmarPago, anularPago, confirmarPagosBulk } from './actions'
+import { updatePago, confirmarPago, anularPago, confirmarPagosBulk, createPagoYConfirmar } from './actions'
 
 export default async function PagosPage() {
   const supabase = createClient()
@@ -68,7 +68,7 @@ export default async function PagosPage() {
         proveedores={proveedores}
         obligaciones={obligaciones}
         role={role}
-        onCreatePago={createPago}
+        onCreatePagoYConfirmar={createPagoYConfirmar}
         onUpdatePago={updatePago}
         onConfirmarPago={confirmarPago}
         onAnularPago={anularPago}

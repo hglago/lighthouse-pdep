@@ -31,7 +31,11 @@ export interface PagoRow {
   anticipos: { concepto: string } | null
 }
 
-type UiTipo = 'gasto' | 'saldo_anticipo' | 'recurrente' | 'directo'
+// UiTipo: opciones visibles en el modal de pago. Distinto a PagoTipo (enum DB).
+//   anticipo / saldo / parcial / final → linkean a un gasto vía obligación
+//   recurrente → linkea a un gasto_recurrente_id
+//   directo → pago sin obligación, requiere nota justificativa
+type UiTipo = 'anticipo' | 'saldo' | 'parcial' | 'final' | 'recurrente' | 'directo'
 
 interface Props {
   pagos: PagoRow[]
@@ -39,7 +43,7 @@ interface Props {
   proveedores: { id: string; nombre: string }[]
   obligaciones: ObligacionPendiente[]
   role: UserRole
-  onCreatePago: (data: PagoPayload) => Promise<void>
+  onCreatePagoYConfirmar: (data: PagoPayload) => Promise<{ ok: true } | { ok: false; error: string }>
   onUpdatePago: (id: string, data: PagoPayload) => Promise<void>
   onConfirmarPago: (id: string) => Promise<void>
   onAnularPago: (id: string) => Promise<void>
@@ -63,7 +67,7 @@ interface FormState {
 }
 
 const EMPTY_FORM: FormState = {
-  ui_tipo: 'gasto',
+  ui_tipo: 'final',
   obligacion_id: '',
   fondo_id: '',
   proveedor_id: '',
@@ -80,9 +84,9 @@ const EMPTY_FORM: FormState = {
 
 const TIPO_LABELS: Record<PagoTipo, string> = {
   directo: 'Pago directo',
-  gasto: 'Gasto aprobado',
+  gasto: 'Pago de gasto',
   anticipo: 'Anticipo',
-  saldo_anticipo: 'Saldo anticipo',
+  saldo_anticipo: 'Pagar saldo',
   recurrente: 'Recurrente',
 }
 
@@ -109,14 +113,14 @@ const ESTADO_COLORS: Record<PagoEstado, string> = {
 const OBLIGACION_TIPO_LABELS: Record<ObligacionTipo, string> = {
   gasto_total: 'Gasto',
   anticipo: 'Anticipo',
-  saldo_anticipo: 'Saldo',
+  saldo: 'Saldo',
   recurrente: 'Recurrente',
 }
 
 const OBLIGACION_TIPO_COLORS: Record<ObligacionTipo, string> = {
   gasto_total: 'bg-blue-100 text-blue-700',
   anticipo: 'bg-purple-100 text-purple-700',
-  saldo_anticipo: 'bg-orange-100 text-orange-700',
+  saldo: 'bg-orange-100 text-orange-700',
   recurrente: 'bg-teal-100 text-teal-700',
 }
 
@@ -133,25 +137,34 @@ function formatMonto(monto: number, moneda: string) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency, minimumFractionDigits: 2 }).format(monto)
 }
 
+// Mapeo UI → DB. Preservamos los valores del enum PagoTipo existentes
+// (anticipo / saldo_anticipo / gasto / recurrente / directo).
+// parcial/final son distinciones de UI; en DB se mapean según la obligación.
 function resolveDbTipo(uiTipo: UiTipo, obligacionTipo: ObligacionTipo | null): PagoTipo {
   if (uiTipo === 'directo') return 'directo'
   if (uiTipo === 'recurrente') return 'recurrente'
-  if (uiTipo === 'saldo_anticipo') return 'saldo_anticipo'
+  if (uiTipo === 'anticipo') return 'anticipo'
+  if (uiTipo === 'saldo') return 'saldo_anticipo'
+  // parcial / final: derivar del tipo de obligación
   if (obligacionTipo === 'anticipo') return 'anticipo'
+  if (obligacionTipo === 'saldo') return 'saldo_anticipo'
+  if (obligacionTipo === 'recurrente') return 'recurrente'
   return 'gasto'
 }
 
 function deriveDbTipoFromObligation(tipo: ObligacionTipo): PagoTipo {
   if (tipo === 'gasto_total') return 'gasto'
   if (tipo === 'anticipo') return 'anticipo'
-  if (tipo === 'saldo_anticipo') return 'saldo_anticipo'
+  if (tipo === 'saldo') return 'saldo_anticipo'
   return 'recurrente'
 }
 
+// Mapeo: cuando clickeas "Pagar" en una obligación, qué UI tipo pre-selecciono.
 function deriveUiTipoFromObligation(tipo: ObligacionTipo): UiTipo {
-  if (tipo === 'saldo_anticipo') return 'saldo_anticipo'
+  if (tipo === 'anticipo') return 'anticipo'
+  if (tipo === 'saldo') return 'saldo'
   if (tipo === 'recurrente') return 'recurrente'
-  return 'gasto'
+  return 'final' // gasto_total → sugerimos pago final (full pending)
 }
 
 export default function PagosClient({
@@ -160,7 +173,7 @@ export default function PagosClient({
   proveedores,
   obligaciones,
   role,
-  onCreatePago,
+  onCreatePagoYConfirmar,
   onUpdatePago,
   onConfirmarPago,
   onAnularPago,
@@ -349,18 +362,18 @@ export default function PagosClient({
           comprobante_url: null,
           notas: null,
         }
-        try {
-          await onCreatePago(payload)
+        const result = await onCreatePagoYConfirmar(payload)
+        if (result.ok) {
           creados++
-        } catch (err) {
-          errores.push(err instanceof Error ? err.message : 'Error desconocido')
+        } else {
+          errores.push(result.error)
         }
       }
 
       setSelectedObIds(new Set())
 
       const partes: string[] = [
-        `${creados} pago${creados !== 1 ? 's' : ''} creado${creados !== 1 ? 's' : ''} en borrador.`,
+        `${creados} pago${creados !== 1 ? 's' : ''} registrado${creados !== 1 ? 's' : ''}.`,
       ]
       if (sinProveedor.length > 0) {
         partes.push(`${sinProveedor.length} omitida${sinProveedor.length !== 1 ? 's' : ''} (sin proveedor).`)
@@ -375,15 +388,80 @@ export default function PagosClient({
 
   // ── Obligation selector filter (modal) ──────────────────────────────────────
   const obligacionesFiltradas = (() => {
-    if (form.ui_tipo === 'gasto') return obligaciones.filter(o => o.tipo_obligacion === 'gasto_total' || o.tipo_obligacion === 'anticipo')
-    if (form.ui_tipo === 'saldo_anticipo') return obligaciones.filter(o => o.tipo_obligacion === 'saldo_anticipo')
+    if (form.ui_tipo === 'anticipo')   return obligaciones.filter(o => o.tipo_obligacion === 'anticipo')
+    if (form.ui_tipo === 'saldo')      return obligaciones.filter(o => o.tipo_obligacion === 'saldo')
+    if (form.ui_tipo === 'parcial' || form.ui_tipo === 'final') {
+      return obligaciones.filter(o => o.tipo_obligacion === 'gasto_total' || o.tipo_obligacion === 'saldo')
+    }
     if (form.ui_tipo === 'recurrente') return obligaciones.filter(o => o.tipo_obligacion === 'recurrente')
-    return []
+    return []  // directo
   })()
 
   // ── Modal handlers ──────────────────────────────────────────────────────────
-  function handleUiTipoChange(ui_tipo: UiTipo) {
-    setForm(prev => ({ ...EMPTY_FORM, fecha_pago: prev.fecha_pago, ui_tipo }))
+
+  // Encuentra una obligación "hermana" (mismo gasto/recurrente, distinto tipo)
+  // que matchee con el nuevo UiTipo. Permite cambiar tipo sin perder contexto.
+  function findSisterObligacion(currentOb: ObligacionPendiente, newUiTipo: UiTipo): ObligacionPendiente | undefined {
+    if (newUiTipo === 'recurrente') {
+      if (!currentOb.gasto_recurrente_id) return undefined
+      return obligaciones.find(o =>
+        o.gasto_recurrente_id === currentOb.gasto_recurrente_id
+        && o.tipo_obligacion === 'recurrente'
+      )
+    }
+    if (!currentOb.gasto_id) return undefined
+    if (newUiTipo === 'anticipo') {
+      return obligaciones.find(o => o.gasto_id === currentOb.gasto_id && o.tipo_obligacion === 'anticipo')
+    }
+    if (newUiTipo === 'saldo') {
+      return obligaciones.find(o => o.gasto_id === currentOb.gasto_id && o.tipo_obligacion === 'saldo')
+    }
+    if (newUiTipo === 'parcial' || newUiTipo === 'final') {
+      return obligaciones.find(o =>
+        o.gasto_id === currentOb.gasto_id
+        && (o.tipo_obligacion === 'gasto_total' || o.tipo_obligacion === 'saldo')
+      )
+    }
+    return undefined
+  }
+
+  function handleUiTipoChange(newUiTipo: UiTipo) {
+    setForm(prev => {
+      // Pago directo no requiere obligación → limpiamos contexto de obligación
+      if (newUiTipo === 'directo') {
+        return { ...EMPTY_FORM, fecha_pago: prev.fecha_pago, ui_tipo: 'directo' }
+      }
+
+      // Si hay obligación seleccionada, buscar hermana compatible con nuevo tipo
+      if (prev.obligacion_id) {
+        const currentOb = obligaciones.find(o => o.obligacion_id === prev.obligacion_id)
+        if (currentOb) {
+          const sister = findSisterObligacion(currentOb, newUiTipo)
+          if (sister) {
+            const fondo = fondos.find(f => f.id === sister.fondo_id)
+            // Pago parcial: dejamos monto vacío para que el usuario tipee
+            // Resto: sugerimos el pendiente total
+            const newMonto = newUiTipo === 'parcial' ? '' : String(sister.monto_pendiente)
+            return {
+              ...prev,
+              ui_tipo: newUiTipo,
+              obligacion_id: sister.obligacion_id,
+              gasto_id: sister.gasto_id ?? '',
+              gasto_recurrente_id: sister.gasto_recurrente_id ?? '',
+              fondo_id: sister.fondo_id,
+              moneda: fondo?.moneda ?? sister.moneda,
+              proveedor_id: sister.proveedor_id ?? prev.proveedor_id,
+              concepto: sister.concepto,
+              monto: newMonto,
+            }
+          }
+        }
+      }
+
+      // No hay obligación compatible: cambiar solo el tipo, limpiar obligacion_id
+      // pero conservar fondo/proveedor/concepto/monto si los hubo (por si tipea manual)
+      return { ...prev, ui_tipo: newUiTipo, obligacion_id: '' }
+    })
   }
 
   function handleObligacionChange(obligacion_id: string) {
@@ -402,7 +480,7 @@ export default function PagosClient({
       moneda: fondo?.moneda ?? ob.moneda,
       proveedor_id: ob.proveedor_id ?? prev.proveedor_id,
       concepto: ob.concepto,
-      monto: String(ob.monto_pendiente),
+      monto: prev.ui_tipo === 'parcial' ? '' : String(ob.monto_pendiente),
       fecha_pago: new Date().toISOString().slice(0, 10),
     }))
   }
@@ -422,9 +500,10 @@ export default function PagosClient({
   function openEdit(p: PagoRow) {
     setEditing(p)
     let ui_tipo: UiTipo = 'directo'
-    if (p.tipo === 'gasto' || p.tipo === 'anticipo') ui_tipo = 'gasto'
-    else if (p.tipo === 'saldo_anticipo') ui_tipo = 'saldo_anticipo'
+    if (p.tipo === 'anticipo') ui_tipo = 'anticipo'
+    else if (p.tipo === 'saldo_anticipo') ui_tipo = 'saldo'
     else if (p.tipo === 'recurrente') ui_tipo = 'recurrente'
+    else if (p.tipo === 'gasto') ui_tipo = 'final'
     setForm({
       ui_tipo,
       obligacion_id: '',
@@ -453,6 +532,12 @@ export default function PagosClient({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    executeSubmit()
+  }
+
+  // Crea pagos en estado 'pagado' atómicamente. El flujo "borrador" se eliminó
+  // del UI; legacy borradores siguen siendo confirmables/editables desde la tabla.
+  function executeSubmit() {
     setFormError('')
     if (!form.fondo_id) { setFormError('Seleccioná un fondo.'); return }
     if (!form.proveedor_id) { setFormError('Seleccioná un proveedor.'); return }
@@ -460,10 +545,16 @@ export default function PagosClient({
     const monto = parseFloat(form.monto)
     if (!form.monto || isNaN(monto) || monto <= 0) { setFormError('El monto debe ser mayor a 0.'); return }
     if (!form.fecha_pago) { setFormError('La fecha es requerida.'); return }
-    if (form.ui_tipo === 'gasto' && !form.gasto_id) { setFormError('Seleccioná la obligación vinculada.'); return }
-    if (form.ui_tipo === 'saldo_anticipo' && !form.gasto_id && !form.anticipo_id) { setFormError('Seleccioná la obligación vinculada.'); return }
-    if (form.ui_tipo === 'recurrente' && !form.gasto_recurrente_id) { setFormError('Seleccioná la obligación recurrente vinculada.'); return }
-    if (form.ui_tipo === 'directo' && !form.notas.trim()) { setFormError('Los pagos directos requieren justificación en el campo Notas.'); return }
+    const tiposRequierenGasto: UiTipo[] = ['anticipo', 'saldo', 'parcial', 'final']
+    if (tiposRequierenGasto.includes(form.ui_tipo) && !form.gasto_id) {
+      setFormError('Seleccioná la obligación vinculada.'); return
+    }
+    if (form.ui_tipo === 'recurrente' && !form.gasto_recurrente_id) {
+      setFormError('Seleccioná la obligación recurrente vinculada.'); return
+    }
+    if (form.ui_tipo === 'directo' && !form.notas.trim()) {
+      setFormError('Los pagos directos requieren justificación en el campo Notas.'); return
+    }
 
     const selectedOb = obligaciones.find(o => o.obligacion_id === form.obligacion_id)
     const tipo = editing
@@ -490,7 +581,9 @@ export default function PagosClient({
         if (editing) {
           await onUpdatePago(editing.id, payload)
         } else {
-          await onCreatePago(payload)
+          // Alta nueva: siempre se crea ya pagado/confirmado (sin paso por borrador)
+          const result = await onCreatePagoYConfirmar(payload)
+          if (!result.ok) { setFormError(result.error); return }
         }
         closeModal()
       } catch (err: unknown) {
@@ -936,8 +1029,10 @@ export default function PagosClient({
                     disabled={!!editing}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 disabled:bg-gray-50 disabled:text-gray-500"
                   >
-                    <option value="gasto">Gasto aprobado</option>
-                    <option value="saldo_anticipo">Saldo anticipo</option>
+                    <option value="anticipo">Anticipo</option>
+                    <option value="saldo">Pagar saldo</option>
+                    <option value="parcial">Pago parcial</option>
+                    <option value="final">Pago final</option>
                     <option value="recurrente">Recurrente</option>
                     <option value="directo">Pago directo</option>
                   </select>
@@ -1089,7 +1184,11 @@ export default function PagosClient({
                   disabled={isPending}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
                 >
-                  {isPending ? 'Guardando...' : editing ? 'Guardar cambios' : 'Crear pago'}
+                  {isPending
+                    ? 'Guardando...'
+                    : editing
+                      ? 'Guardar cambios'
+                      : 'Registrar pago'}
                 </button>
               </div>
             </form>
