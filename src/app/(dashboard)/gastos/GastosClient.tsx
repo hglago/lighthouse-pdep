@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useMemo } from 'react'
 import type { Fondo, Proveedor, UserRole, GastoEstado, PagoEstado, PagoTipo } from '@/types'
-import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult } from './actions'
+import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult, BulkGastoResult } from './actions'
 import type { ProveedorQuickResult } from '../proveedores/actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
@@ -203,6 +203,9 @@ interface Props {
     telefono: string | null
     observaciones: string | null
   }) => Promise<ProveedorQuickResult>
+  onBulkAprobar: (ids: string[]) => Promise<BulkGastoResult>
+  onBulkRechazar: (ids: string[]) => Promise<BulkGastoResult>
+  onBulkDelete: (ids: string[]) => Promise<BulkGastoResult>
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -224,6 +227,9 @@ export default function GastosClient({
   onSetComprobante,
   onRemoveComprobante,
   onCreateProveedorQuick,
+  onBulkAprobar,
+  onBulkRechazar,
+  onBulkDelete,
 }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('gastos')
   const [searchGastos, setSearchGastos] = useState('')
@@ -312,8 +318,9 @@ export default function GastosClient({
 
   // Selección de gastos (mismo patrón que pagos: Set<string> + header select-all visible)
   const [selectedGastoIds, setSelectedGastoIds] = useState<Set<string>>(new Set())
-  const allVisibleGastosSelected =
-    filteredGastos.length > 0 && filteredGastos.every(g => selectedGastoIds.has(g.id))
+  const selectedVisibleCount = filteredGastos.reduce((n, g) => n + (selectedGastoIds.has(g.id) ? 1 : 0), 0)
+  const allVisibleGastosSelected = filteredGastos.length > 0 && selectedVisibleCount === filteredGastos.length
+  const someVisibleGastosSelected = selectedVisibleCount > 0 && !allVisibleGastosSelected
   function toggleSelectGasto(id: string) {
     setSelectedGastoIds(prev => {
       const next = new Set(prev)
@@ -325,6 +332,52 @@ export default function GastosClient({
   function toggleSelectAllGastos() {
     if (allVisibleGastosSelected) setSelectedGastoIds(new Set())
     else setSelectedGastoIds(new Set(filteredGastos.map(g => g.id)))
+  }
+
+  // ─── Bulk actions: estado + handlers ────────────────────────────────────────
+  const [bulkMessage, setBulkMessage] = useState<{ text: string; isError: boolean } | null>(null)
+
+  function describirResultado(r: BulkGastoResult, accion: string): { text: string; isError: boolean } {
+    const okN = r.procesados.length
+    const errN = r.errores.length
+    const partes: string[] = []
+    if (okN > 0) partes.push(`${okN} gasto${okN !== 1 ? 's' : ''} ${accion}`)
+    if (errN > 0) {
+      const detalles = r.errores.slice(0, 2).map(e => (e.descripcion ? `"${e.descripcion}": ` : '') + e.error).join('; ')
+      const masN = r.errores.length - 2
+      partes.push(`${errN} omitido${errN !== 1 ? 's' : ''}: ${detalles}${masN > 0 ? ` (+${masN} más)` : ''}`)
+    }
+    return { text: partes.join(' · ') || 'Sin cambios.', isError: errN > 0 }
+  }
+
+  function runBulk(
+    actionFn: (ids: string[]) => Promise<BulkGastoResult>,
+    accionDescriptiva: string,
+  ) {
+    const ids = Array.from(selectedGastoIds)
+    if (ids.length === 0) return
+    setBulkMessage(null)
+    startTransition(async () => {
+      try {
+        const result = await actionFn(ids)
+        setBulkMessage(describirResultado(result, accionDescriptiva))
+        setSelectedGastoIds(new Set())
+      } catch (err) {
+        setBulkMessage({ text: err instanceof Error ? err.message : 'Error inesperado.', isError: true })
+      }
+    })
+  }
+
+  function handleBulkAprobar() {
+    runBulk(onBulkAprobar, 'autorizado(s)')
+  }
+  function handleBulkRechazar() {
+    if (!confirm(`¿Cancelar ${selectedGastoIds.size} gasto(s)? Quedarán en estado "rechazado".`)) return
+    runBulk(onBulkRechazar, 'cancelado(s)')
+  }
+  function handleBulkDelete() {
+    if (!confirm(`¿Eliminar ${selectedGastoIds.size} gasto(s)? Solo se eliminarán los que no tengan pagos asociados.`)) return
+    runBulk(onBulkDelete, 'eliminado(s)')
   }
 
   const qr = searchRecurrentes.trim().toLowerCase()
@@ -863,6 +916,70 @@ export default function GastosClient({
             </div>
           </div>
 
+          {/* Barra de acciones masivas — solo cuando hay selección */}
+          {canWrite && selectedGastoIds.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+              <span className="text-sm font-medium text-emerald-900">
+                {selectedGastoIds.size} seleccionado{selectedGastoIds.size !== 1 ? 's' : ''}
+              </span>
+              <span className="text-emerald-300">·</span>
+              <button
+                type="button"
+                onClick={handleBulkAprobar}
+                disabled={isPending}
+                className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800 transition-colors disabled:opacity-50"
+              >
+                Autorizar seleccionados
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkRechazar}
+                disabled={isPending}
+                className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50"
+              >
+                Cancelar seleccionados
+              </button>
+              {canDelete && (
+                <button
+                  type="button"
+                  onClick={handleBulkDelete}
+                  disabled={isPending}
+                  className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  Eliminar seleccionados
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSelectedGastoIds(new Set())}
+                disabled={isPending}
+                className="ml-auto rounded-md px-2 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-50"
+              >
+                Limpiar selección
+              </button>
+            </div>
+          )}
+
+          {/* Feedback de última acción masiva */}
+          {bulkMessage && (
+            <div
+              className={`rounded-lg border px-3 py-2 text-sm ${
+                bulkMessage.isError
+                  ? 'border-amber-200 bg-amber-50 text-amber-800'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              }`}
+            >
+              {bulkMessage.text}
+              <button
+                type="button"
+                onClick={() => setBulkMessage(null)}
+                className="ml-2 text-xs underline hover:no-underline"
+              >
+                Cerrar
+              </button>
+            </div>
+          )}
+
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
             {filteredGastos.length === 0 ? (
               <div className="p-12 text-center text-sm text-gray-400">
@@ -877,6 +994,7 @@ export default function GastosClient({
                         <th className="w-10 px-4 py-3">
                           <input
                             type="checkbox"
+                            ref={el => { if (el) el.indeterminate = someVisibleGastosSelected }}
                             checked={allVisibleGastosSelected}
                             onChange={toggleSelectAllGastos}
                             disabled={filteredGastos.length === 0}

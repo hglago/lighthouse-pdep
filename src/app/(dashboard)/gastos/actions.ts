@@ -250,6 +250,132 @@ export async function cambiarEstadoGasto(
   revalidatePath('/gastos')
 }
 
+// ─── Bulk actions sobre gastos seleccionados ─────────────────────────────────
+
+export type BulkGastoResult = {
+  procesados: string[]
+  errores: { id: string; descripcion?: string; error: string }[]
+}
+
+// Cambia estado a 'aprobado' solo para gastos en 'borrador'/'enviado'.
+// Los que ya están aprobados/pagados/rechazados se omiten con error explicativo.
+export async function bulkAprobarGastos(ids: string[]): Promise<BulkGastoResult> {
+  const supabase = createClient()
+  const procesados: string[] = []
+  const errores: BulkGastoResult['errores'] = []
+
+  for (const id of ids) {
+    const { data: rows, error } = await supabase
+      .from('gastos')
+      .update({ estado: 'aprobado' })
+      .eq('id', id)
+      .in('estado', ['borrador', 'enviado'])
+      .is('deleted_at', null)
+      .select('id, descripcion')
+    if (error) {
+      errores.push({ id, error: error.message })
+    } else if (!rows || rows.length === 0) {
+      // Buscar la descripción para el mensaje
+      const { data: g } = await supabase
+        .from('gastos').select('descripcion, estado').eq('id', id).maybeSingle()
+      errores.push({
+        id,
+        descripcion: g?.descripcion,
+        error: g ? `Estado actual "${g.estado}" no permite aprobar.` : 'No encontrado.',
+      })
+    } else {
+      procesados.push(id)
+    }
+  }
+  if (procesados.length > 0) {
+    revalidatePath('/gastos')
+    revalidatePath('/pagos')
+  }
+  return { procesados, errores }
+}
+
+// Cancela (= rechaza) gastos. Solo permite si no están ya pagados/parciales.
+export async function bulkRechazarGastos(ids: string[]): Promise<BulkGastoResult> {
+  const supabase = createClient()
+  const procesados: string[] = []
+  const errores: BulkGastoResult['errores'] = []
+
+  for (const id of ids) {
+    const { data: rows, error } = await supabase
+      .from('gastos')
+      .update({ estado: 'rechazado' })
+      .eq('id', id)
+      .in('estado', ['borrador', 'enviado', 'aprobado'])
+      .is('deleted_at', null)
+      .select('id')
+    if (error) {
+      errores.push({ id, error: error.message })
+    } else if (!rows || rows.length === 0) {
+      const { data: g } = await supabase
+        .from('gastos').select('descripcion, estado').eq('id', id).maybeSingle()
+      errores.push({
+        id,
+        descripcion: g?.descripcion,
+        error: g
+          ? `No se puede cancelar un gasto en estado "${g.estado}".`
+          : 'No encontrado.',
+      })
+    } else {
+      procesados.push(id)
+    }
+  }
+  if (procesados.length > 0) {
+    revalidatePath('/gastos')
+    revalidatePath('/pagos')
+  }
+  return { procesados, errores }
+}
+
+// Soft-delete. Bloquea si el gasto tiene CUALQUIER pago asociado (cualquier estado),
+// para evitar dejar pagos huérfanos apuntando a un gasto borrado.
+export async function bulkDeleteGastos(ids: string[]): Promise<BulkGastoResult> {
+  const supabase = createClient()
+  const procesados: string[] = []
+  const errores: BulkGastoResult['errores'] = []
+
+  for (const id of ids) {
+    const { count, error: countErr } = await supabase
+      .from('pagos')
+      .select('id', { count: 'exact', head: true })
+      .eq('gasto_id', id)
+    if (countErr) {
+      errores.push({ id, error: countErr.message })
+      continue
+    }
+    if ((count ?? 0) > 0) {
+      const { data: g } = await supabase
+        .from('gastos').select('descripcion').eq('id', id).maybeSingle()
+      errores.push({
+        id,
+        descripcion: g?.descripcion,
+        error: `Tiene ${count} pago${count !== 1 ? 's' : ''} asociado${count !== 1 ? 's' : ''}. Anulalos primero.`,
+      })
+      continue
+    }
+
+    const { data: rows, error } = await supabase
+      .from('gastos')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', id)
+      .is('deleted_at', null)
+      .select('id')
+    if (error) {
+      errores.push({ id, error: error.message })
+    } else if (!rows || rows.length === 0) {
+      errores.push({ id, error: 'Sin permiso o gasto no encontrado.' })
+    } else {
+      procesados.push(id)
+    }
+  }
+  if (procesados.length > 0) revalidatePath('/gastos')
+  return { procesados, errores }
+}
+
 // ─── Comprobantes ─────────────────────────────────────────────────────────────
 
 export type ComprobantePayload = {

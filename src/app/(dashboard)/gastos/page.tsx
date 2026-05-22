@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import GastosClient, { type GastoRow, type GastoRecurrenteRow, type PagoDeGasto } from './GastosClient'
 import type { Fondo, Proveedor, UserRole } from '@/types'
-import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente, setComprobanteGasto, removeComprobanteGasto, generarGastosRecurrentes } from './actions'
+import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente, setComprobanteGasto, removeComprobanteGasto, generarGastosRecurrentes, bulkAprobarGastos, bulkRechazarGastos, bulkDeleteGastos } from './actions'
 import { createProveedorQuick } from '../proveedores/actions'
 
 export default async function GastosPage() {
@@ -83,6 +83,9 @@ export default async function GastosPage() {
         onSetComprobante={setComprobanteGasto}
         onRemoveComprobante={removeComprobanteGasto}
         onCreateProveedorQuick={createProveedorQuick}
+        onBulkAprobar={bulkAprobarGastos}
+        onBulkRechazar={bulkRechazarGastos}
+        onBulkDelete={bulkDeleteGastos}
       />
     </div>
   )
