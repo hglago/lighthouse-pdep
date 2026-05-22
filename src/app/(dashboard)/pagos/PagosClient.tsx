@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useMemo } from 'react'
 import type { UserRole, PagoEstado, PagoTipo, ObligacionPendiente, ObligacionTipo } from '@/types'
 import type { PagoPayload } from './actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
+import { useSortable } from '@/lib/useSortable'
+import SortableHeader from '@/components/SortableHeader'
 
 export interface PagoRow {
   id: string
@@ -633,7 +635,7 @@ export default function PagosClient({
   }
 
   const q = search.trim().toLowerCase()
-  const filteredPagos = q
+  const filteredPagosBase = q
     ? pagos.filter(
         p =>
           p.concepto.toLowerCase().includes(q) ||
@@ -641,6 +643,19 @@ export default function PagosClient({
           (p.proveedores?.nombre ?? '').toLowerCase().includes(q)
       )
     : pagos
+
+  const pagosAccessors = useMemo(() => ({
+    nro: (p: PagoRow) => p.nro_pago,
+    fecha: (p: PagoRow) => p.fecha_pago,
+    concepto: (p: PagoRow) => p.concepto,
+    tipo: (p: PagoRow) => p.tipo,
+    fondo: (p: PagoRow) => p.fondos?.nombre ?? '',
+    proveedor: (p: PagoRow) => p.proveedores?.nombre ?? '',
+    monto: (p: PagoRow) => p.monto,
+    estado: (p: PagoRow) => p.estado,
+  }), [])
+  const { sorted: filteredPagos, sortKey: pSortKey, sortDir: pSortDir, onSort: onPagoSort } =
+    useSortable(filteredPagosBase, pagosAccessors, { key: 'fecha', dir: 'desc' })
 
   const visibleBorradores = filteredPagos.filter(p => p.estado === 'borrador')
   const selectedVisibleBorradores = visibleBorradores.filter(p => selectedPagoIds.has(p.id))
@@ -897,14 +912,14 @@ export default function PagosClient({
                         />
                       </th>
                     )}
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">Nro</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Concepto</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">Tipo</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Fondo</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Proveedor</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Monto</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 lg:table-cell">Estado</th>
+                    <SortableHeader label="Nro" sortKey="nro" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
+                    <SortableHeader label="Fecha" sortKey="fecha" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
+                    <SortableHeader label="Concepto" sortKey="concepto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
+                    <SortableHeader label="Tipo" sortKey="tipo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
+                    <SortableHeader label="Fondo" sortKey="fondo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden md:table-cell" />
+                    <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden md:table-cell" />
+                    <SortableHeader label="Monto" sortKey="monto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} align="right" />
+                    <SortableHeader label="Estado" sortKey="estado" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden lg:table-cell" />
                     {(canWrite || isAdmin) && (
                       <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
                     )}

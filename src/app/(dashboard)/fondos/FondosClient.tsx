@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useTransition, useRef } from 'react'
+import { useState, useTransition, useRef, useMemo } from 'react'
 import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo } from '@/types'
 import type { AportePayload } from './actions'
+import { useSortable } from '@/lib/useSortable'
+import SortableHeader from '@/components/SortableHeader'
 
 export interface AporteFondoRow extends AporteFondo {
   fondos: { nombre: string } | null
@@ -150,6 +152,16 @@ export default function FondosClient({
   const fondoMap = new Map(fondos.map((f) => [f.id, f]))
   const activeFondos = fondos.filter((f) => f.estado === 'activo')
 
+  const fondosAccessors = useMemo(() => ({
+    nombre: (f: Fondo) => f.nombre,
+    moneda: (f: Fondo) => f.moneda,
+    monto_inicial: (f: Fondo) => f.monto_inicial,
+    saldo_actual: (f: Fondo) => f.saldo_actual,
+    estado: (f: Fondo) => f.estado,
+  }), [])
+  const { sorted: sortedFondos, sortKey: fSortKey, sortDir: fSortDir, onSort: onFondoSort } =
+    useSortable(fondos, fondosAccessors, { key: 'nombre', dir: 'asc' })
+
   const filteredAportes = aportes.filter((a) => {
     if (filterFondoId && a.fondo_id !== filterFondoId) return false
     if (filterTipo && a.tipo_aporte !== filterTipo) return false
@@ -160,6 +172,17 @@ export default function FondosClient({
   })
 
   const hasFilters = !!(filterFondoId || filterTipo || filterFechaDesde || filterFechaHasta || filterAportante)
+
+  const aportesAccessors = useMemo(() => ({
+    fecha: (a: AporteFondoRow) => a.fecha_aporte,
+    fondo: (a: AporteFondoRow) => a.fondos?.nombre ?? '',
+    tipo: (a: AporteFondoRow) => a.tipo_aporte,
+    concepto: (a: AporteFondoRow) => a.concepto,
+    aportante: (a: AporteFondoRow) => a.aportante ?? '',
+    monto: (a: AporteFondoRow) => a.monto,
+  }), [])
+  const { sorted: sortedAportes, sortKey: aSortKey, sortDir: aSortDir, onSort: onAporteSort } =
+    useSortable(filteredAportes, aportesAccessors, { key: 'fecha', dir: 'desc' })
 
   // ─── Modal openers ────────────────────────────────────────────────────────
 
@@ -326,16 +349,16 @@ export default function FondosClient({
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Nombre</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Moneda</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Monto inicial</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Saldo actual</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Estado</th>
+                    <SortableHeader label="Nombre" sortKey="nombre" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} />
+                    <SortableHeader label="Moneda" sortKey="moneda" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} />
+                    <SortableHeader label="Monto inicial" sortKey="monto_inicial" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} align="right" />
+                    <SortableHeader label="Saldo actual" sortKey="saldo_actual" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} align="right" />
+                    <SortableHeader label="Estado" sortKey="estado" activeKey={fSortKey} dir={fSortDir} onSort={onFondoSort} />
                     <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {fondos.map((fondo) => (
+                  {sortedFondos.map((fondo) => (
                     <tr key={fondo.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 text-sm font-medium text-gray-900">{fondo.nombre}</td>
                       <td className="px-4 py-3 text-sm text-gray-500">{fondo.moneda}</td>
@@ -484,16 +507,16 @@ export default function FondosClient({
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fondo</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Tipo</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Concepto</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Aportante</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Monto</th>
+                    <SortableHeader label="Fecha" sortKey="fecha" activeKey={aSortKey} dir={aSortDir} onSort={onAporteSort} />
+                    <SortableHeader label="Fondo" sortKey="fondo" activeKey={aSortKey} dir={aSortDir} onSort={onAporteSort} />
+                    <SortableHeader label="Tipo" sortKey="tipo" activeKey={aSortKey} dir={aSortDir} onSort={onAporteSort} />
+                    <SortableHeader label="Concepto" sortKey="concepto" activeKey={aSortKey} dir={aSortDir} onSort={onAporteSort} />
+                    <SortableHeader label="Aportante" sortKey="aportante" activeKey={aSortKey} dir={aSortDir} onSort={onAporteSort} />
+                    <SortableHeader label="Monto" sortKey="monto" activeKey={aSortKey} dir={aSortDir} onSort={onAporteSort} align="right" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredAportes.map((a) => (
+                  {sortedAportes.map((a) => (
                     <tr key={a.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 text-sm tabular-nums text-gray-500">{a.fecha_aporte}</td>
                       <td className="px-4 py-3 text-sm text-gray-700">

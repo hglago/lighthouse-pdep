@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useMemo } from 'react'
 import type { Fondo, Proveedor, UserRole, GastoEstado, PagoEstado, PagoTipo } from '@/types'
 import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult } from './actions'
 import type { ProveedorQuickResult } from '../proveedores/actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
+import { useSortable } from '@/lib/useSortable'
+import SortableHeader from '@/components/SortableHeader'
 
 // ─── Row types ───────────────────────────────────────────────────────────────
 
@@ -288,7 +290,7 @@ export default function GastosClient({
   const canApprove = role === 'admin' || role === 'revisor'
 
   const qg = searchGastos.trim().toLowerCase()
-  const filteredGastos = qg
+  const filteredGastosBase = qg
     ? gastos.filter(
         (g) =>
           g.descripcion.toLowerCase().includes(qg) ||
@@ -297,8 +299,36 @@ export default function GastosClient({
       )
     : gastos
 
+  const gastosAccessors = useMemo(() => ({
+    fecha: (g: GastoRow) => g.fecha_gasto,
+    descripcion: (g: GastoRow) => g.descripcion,
+    fondo: (g: GastoRow) => g.fondos?.nombre ?? '',
+    proveedor: (g: GastoRow) => g.proveedores?.nombre ?? '',
+    monto: (g: GastoRow) => g.monto,
+    estado: (g: GastoRow) => g.estado,
+  }), [])
+  const { sorted: filteredGastos, sortKey: gSortKey, sortDir: gSortDir, onSort: onGastoSort } =
+    useSortable(filteredGastosBase, gastosAccessors, { key: 'fecha', dir: 'desc' })
+
+  // Selección de gastos (mismo patrón que pagos: Set<string> + header select-all visible)
+  const [selectedGastoIds, setSelectedGastoIds] = useState<Set<string>>(new Set())
+  const allVisibleGastosSelected =
+    filteredGastos.length > 0 && filteredGastos.every(g => selectedGastoIds.has(g.id))
+  function toggleSelectGasto(id: string) {
+    setSelectedGastoIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  function toggleSelectAllGastos() {
+    if (allVisibleGastosSelected) setSelectedGastoIds(new Set())
+    else setSelectedGastoIds(new Set(filteredGastos.map(g => g.id)))
+  }
+
   const qr = searchRecurrentes.trim().toLowerCase()
-  const filteredRecurrentes = qr
+  const filteredRecurrentesBase = qr
     ? recurrentes.filter(
         (r) =>
           r.concepto.toLowerCase().includes(qr) ||
@@ -307,6 +337,17 @@ export default function GastosClient({
           (r.categoria ?? '').toLowerCase().includes(qr)
       )
     : recurrentes
+
+  const recurrentesAccessors = useMemo(() => ({
+    concepto: (r: GastoRecurrenteRow) => r.concepto,
+    fondo: (r: GastoRecurrenteRow) => r.fondos?.nombre ?? '',
+    proveedor: (r: GastoRecurrenteRow) => r.proveedores?.nombre ?? '',
+    dia: (r: GastoRecurrenteRow) => r.dia_vencimiento,
+    monto: (r: GastoRecurrenteRow) => r.monto,
+    estado: (r: GastoRecurrenteRow) => (r.activo ? 'activo' : 'inactivo'),
+  }), [])
+  const { sorted: filteredRecurrentes, sortKey: rSortKey, sortDir: rSortDir, onSort: onRecurrenteSort } =
+    useSortable(filteredRecurrentesBase, recurrentesAccessors, { key: 'concepto', dir: 'asc' })
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -832,12 +873,24 @@ export default function GastosClient({
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Concepto</th>
-                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">Fondo</th>
-                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Proveedor</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Monto</th>
-                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 lg:table-cell">Estado</th>
+                      {canWrite && (
+                        <th className="w-10 px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={allVisibleGastosSelected}
+                            onChange={toggleSelectAllGastos}
+                            disabled={filteredGastos.length === 0}
+                            className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500 disabled:opacity-40"
+                            aria-label="Seleccionar todos los gastos visibles"
+                          />
+                        </th>
+                      )}
+                      <SortableHeader label="Fecha" sortKey="fecha" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
+                      <SortableHeader label="Concepto" sortKey="descripcion" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
+                      <SortableHeader label="Fondo" sortKey="fondo" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} className="hidden sm:table-cell" />
+                      <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} className="hidden md:table-cell" />
+                      <SortableHeader label="Monto" sortKey="monto" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} align="right" />
+                      <SortableHeader label="Estado" sortKey="estado" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} className="hidden lg:table-cell" />
                       {(canWrite || canApprove) && (
                         <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
                       )}
@@ -845,7 +898,18 @@ export default function GastosClient({
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {filteredGastos.map((g) => (
-                      <tr key={g.id} className="hover:bg-gray-50 transition-colors">
+                      <tr key={g.id} className={`transition-colors ${selectedGastoIds.has(g.id) ? 'bg-emerald-50' : 'hover:bg-gray-50'}`}>
+                        {canWrite && (
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedGastoIds.has(g.id)}
+                              onChange={() => toggleSelectGasto(g.id)}
+                              className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
+                              aria-label={`Seleccionar gasto ${g.descripcion}`}
+                            />
+                          </td>
+                        )}
                         <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{g.fecha_gasto}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5 max-w-xs">
@@ -987,12 +1051,12 @@ export default function GastosClient({
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Concepto</th>
-                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">Fondo</th>
-                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Proveedor</th>
-                      <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Día</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Monto</th>
-                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 lg:table-cell">Estado</th>
+                      <SortableHeader label="Concepto" sortKey="concepto" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} />
+                      <SortableHeader label="Fondo" sortKey="fondo" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} className="hidden sm:table-cell" />
+                      <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} className="hidden md:table-cell" />
+                      <SortableHeader label="Día" sortKey="dia" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} align="center" />
+                      <SortableHeader label="Monto" sortKey="monto" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} align="right" />
+                      <SortableHeader label="Estado" sortKey="estado" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} className="hidden lg:table-cell" />
                       {(canWrite || canDelete) && (
                         <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
                       )}

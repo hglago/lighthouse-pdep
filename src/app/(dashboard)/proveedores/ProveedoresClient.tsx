@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useMemo } from 'react'
 import type { Proveedor, UserRole } from '@/types'
 import { createProveedor, updateProveedor, deleteProveedor } from './actions'
+import { useSortable } from '@/lib/useSortable'
+import SortableHeader from '@/components/SortableHeader'
 
 interface Props {
   proveedores: Proveedor[]
@@ -43,13 +45,22 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
   const canDelete = role === 'admin'
 
   const q = search.trim().toLowerCase()
-  const filtered = q
+  const filteredBase = q
     ? proveedores.filter(
         (p) =>
           p.nombre.toLowerCase().includes(q) ||
           (p.cuit ?? '').toLowerCase().includes(q)
       )
     : proveedores
+
+  const provAccessors = useMemo(() => ({
+    nombre: (p: Proveedor) => p.nombre,
+    cuit: (p: Proveedor) => p.cuit ?? '',
+    email: (p: Proveedor) => p.email ?? '',
+    telefono: (p: Proveedor) => p.telefono ?? '',
+  }), [])
+  const { sorted: filtered, sortKey: pvSortKey, sortDir: pvSortDir, onSort: onProvSort } =
+    useSortable(filteredBase, provAccessors, { key: 'nombre', dir: 'asc' })
 
   function openNew() {
     setEditing(null)
@@ -161,10 +172,10 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Nombre</th>
-                  <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">CUIT</th>
-                  <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Email</th>
-                  <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 lg:table-cell">Teléfono</th>
+                  <SortableHeader label="Nombre" sortKey="nombre" activeKey={pvSortKey} dir={pvSortDir} onSort={onProvSort} />
+                  <SortableHeader label="CUIT" sortKey="cuit" activeKey={pvSortKey} dir={pvSortDir} onSort={onProvSort} className="hidden sm:table-cell" />
+                  <SortableHeader label="Email" sortKey="email" activeKey={pvSortKey} dir={pvSortDir} onSort={onProvSort} className="hidden md:table-cell" />
+                  <SortableHeader label="Teléfono" sortKey="telefono" activeKey={pvSortKey} dir={pvSortDir} onSort={onProvSort} className="hidden lg:table-cell" />
                   {canWrite && (
                     <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
                   )}
