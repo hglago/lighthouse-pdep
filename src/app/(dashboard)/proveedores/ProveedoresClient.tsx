@@ -166,10 +166,9 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
   function handleDelete(id: string, nombre: string) {
     if (!confirm(`¿Eliminar el proveedor "${nombre}"?`)) return
     startTransition(async () => {
-      try {
-        await deleteProveedor(id)
-      } catch (err: unknown) {
-        alert(err instanceof Error ? err.message : 'Error al eliminar.')
+      const result = await deleteProveedor(id)
+      if (!result.ok) {
+        alert(`No se pudo eliminar: ${result.error}`)
       }
     })
   }
@@ -207,6 +206,7 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
         rowActions={canWrite ? (p) => (
           <>
             <button
+              type="button"
               onClick={() => openEdit(p)}
               disabled={isPending}
               className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
@@ -215,6 +215,7 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
             </button>
             {canDelete && (
               <button
+                type="button"
                 onClick={() => handleDelete(p.id, p.nombre)}
                 disabled={isPending}
                 className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"

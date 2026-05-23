@@ -187,13 +187,48 @@ export async function createProveedorQuick(data: {
   }
 }
 
-export async function deleteProveedor(id: string) {
-  const supabase = createClient()
-  const { error } = await supabase
-    .from('proveedores')
-    .update({ deleted_at: new Date().toISOString() })
-    .eq('id', id)
-    .is('deleted_at', null)
-  if (error) throw new Error(error.message)
-  revalidatePath('/proveedores')
+export async function deleteProveedor(id: string): Promise<ProveedorActionResult> {
+  try {
+    const supabase = createClient()
+    const auth = await supabase.auth.getUser()
+    if (!auth.data?.user) return { ok: false, error: 'No autenticado' }
+
+    // Logs temporales de diagnóstico RLS
+    console.log("ELIMINAR PROVEEDOR ID:", id)
+    console.log("AUTH UID:", auth.data.user.id)
+
+    // Estado actual del proveedor antes del soft-delete
+    const { data: target } = await supabase
+      .from('proveedores')
+      .select('id, nombre, created_by, deleted_at')
+      .eq('id', id)
+      .maybeSingle()
+    console.log("PROVEEDOR ACTUAL:", target)
+
+    // Rol del usuario actual (la policy UPDATE puede chequearlo)
+    const roleResult = await supabase.rpc('get_my_role')
+    console.log("GET_MY_ROLE result:", roleResult.data, "error:", roleResult.error?.message)
+
+    const { data: rows, error } = await supabase
+      .from('proveedores')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', id)
+      .is('deleted_at', null)
+      .select('id')
+
+    console.log("UPDATE RESULT rows:", rows, "error:", error ? {
+      code: error.code, message: error.message, details: error.details, hint: error.hint
+    } : null)
+
+    if (error) return { ok: false, error: error.message }
+    if (!rows || rows.length === 0) {
+      return { ok: false, error: 'Sin permiso para eliminar este proveedor o ya estaba eliminado.' }
+    }
+
+    revalidatePath('/proveedores')
+    return { ok: true }
+  } catch (err) {
+    console.error('[deleteProveedor] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
 }
