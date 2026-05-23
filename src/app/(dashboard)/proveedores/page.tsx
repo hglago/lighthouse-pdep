@@ -25,22 +25,48 @@ export default async function ProveedoresPage() {
       .order('nombre', { ascending: true }),
   ])
 
-  // Intentamos enriquecer con columnas uplift en una query separada. Si las
-  // columnas todavía no existen en DB (ALTER pendiente), simplemente ignoramos
-  // y hidratamos defaults — el listado funciona igual.
-  const upliftMap = new Map<string, { tiene_uplift: boolean; porcentaje_uplift: number }>()
-  if (proveedoresResult.data && proveedoresResult.data.length > 0) {
-    const upliftResult = await supabase
+  // Intentamos enriquecer con columnas opcionales (uplift + servicios por hora)
+  // en una query separada. Si las columnas todavía no existen en DB (ALTER
+  // pendiente), simplemente ignoramos y hidratamos defaults — el listado
+  // funciona igual.
+  type ProveedorOpcional = {
+    tiene_uplift: boolean
+    porcentaje_uplift: number
+    permite_horas_servicio: boolean
+    valor_hora: number
+  }
+  const opcionalMap = new Map<string, ProveedorOpcional>()
+
+  async function fetchOpcional(columnas: string) {
+    return supabase
       .from('proveedores')
-      .select('id, tiene_uplift, porcentaje_uplift')
+      .select('id, ' + columnas)
       .is('deleted_at', null)
-    if (upliftResult.error) {
-      console.warn('[proveedores] columnas uplift no disponibles:', upliftResult.error.message)
-    } else if (upliftResult.data) {
-      for (const u of upliftResult.data as Array<{ id: string; tiene_uplift: boolean | null; porcentaje_uplift: number | null }>) {
-        upliftMap.set(u.id, {
+  }
+
+  if (proveedoresResult.data && proveedoresResult.data.length > 0) {
+    // Intento 1: las 4 columnas opcionales (post-P1).
+    let opcionalResult = await fetchOpcional('tiene_uplift, porcentaje_uplift, permite_horas_servicio, valor_hora')
+    // Intento 2 (fallback): solo uplift, por si P1 no se aplicó pero sí la migración uplift previa.
+    if (opcionalResult.error?.code === '42703') {
+      console.warn('[proveedores] columnas P1 no disponibles, fallback a solo uplift:', opcionalResult.error.message)
+      opcionalResult = await fetchOpcional('tiene_uplift, porcentaje_uplift')
+    }
+    if (opcionalResult.error) {
+      console.warn('[proveedores] columnas opcionales no disponibles:', opcionalResult.error.message)
+    } else if (opcionalResult.data) {
+      for (const u of opcionalResult.data as unknown as Array<{
+        id: string
+        tiene_uplift?: boolean | null
+        porcentaje_uplift?: number | null
+        permite_horas_servicio?: boolean | null
+        valor_hora?: number | null
+      }>) {
+        opcionalMap.set(u.id, {
           tiene_uplift: u.tiene_uplift === true,
           porcentaje_uplift: Number(u.porcentaje_uplift) || 0,
+          permite_horas_servicio: u.permite_horas_servicio === true,
+          valor_hora: Number(u.valor_hora) || 0,
         })
       }
     }
@@ -48,11 +74,13 @@ export default async function ProveedoresPage() {
 
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const proveedores: Proveedor[] = (proveedoresResult.data ?? []).map(p => {
-    const up = upliftMap.get(p.id)
+    const opt = opcionalMap.get(p.id)
     return {
       ...p,
-      tiene_uplift: up?.tiene_uplift ?? false,
-      porcentaje_uplift: up?.porcentaje_uplift ?? 0,
+      tiene_uplift: opt?.tiene_uplift ?? false,
+      porcentaje_uplift: opt?.porcentaje_uplift ?? 0,
+      permite_horas_servicio: opt?.permite_horas_servicio ?? false,
+      valor_hora: opt?.valor_hora ?? 0,
     } as Proveedor
   })
 

@@ -19,6 +19,9 @@ interface FormState {
   observaciones: string
   tiene_uplift: boolean
   porcentaje_uplift: string  // string en el form, se castea a number al submit
+  // P1: tipo de proveedor (servicios por hora)
+  permite_horas_servicio: boolean
+  valor_hora: string         // string en el form, se castea a number al submit
 }
 
 const EMPTY_FORM: FormState = {
@@ -30,10 +33,21 @@ const EMPTY_FORM: FormState = {
   observaciones: '',
   tiene_uplift: false,
   porcentaje_uplift: '',
+  permite_horas_servicio: false,
+  valor_hora: '',
 }
 
 function toNullable(s: string): string | null {
   return s.trim() || null
+}
+
+function formatMoneda(valor: number): string {
+  return new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(valor)
 }
 
 export default function ProveedoresClient({ proveedores, role }: Props) {
@@ -65,9 +79,19 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
     { key: 'email', label: 'Email', accessor: (p) => p.email ?? '', type: 'text', className: 'hidden md:table-cell' },
     { key: 'telefono', label: 'Teléfono', accessor: (p) => p.telefono ?? '', type: 'text', className: 'hidden lg:table-cell' },
     {
+      key: 'servicio',
+      label: 'Servicio',
+      accessor: (p) => p.permite_horas_servicio ? p.valor_hora : -1, // -1 ordena los "—" al final
+      type: 'number',
+      className: 'hidden md:table-cell',
+      render: (p) => p.permite_horas_servicio
+        ? <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 whitespace-nowrap">{`Por hora — ${formatMoneda(p.valor_hora)}`}</span>
+        : <span className="text-gray-300">—</span>,
+    },
+    {
       key: 'uplift',
       label: 'Uplift',
-      accessor: (p) => p.tiene_uplift ? p.porcentaje_uplift : -1, // -1 ordena los "sin uplift" al final
+      accessor: (p) => p.tiene_uplift ? p.porcentaje_uplift : -1,
       type: 'number',
       align: 'right',
       className: 'hidden md:table-cell',
@@ -96,6 +120,10 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
       tiene_uplift: p.tiene_uplift === true,
       porcentaje_uplift: p.tiene_uplift && p.porcentaje_uplift > 0
         ? String(p.porcentaje_uplift)
+        : '',
+      permite_horas_servicio: p.permite_horas_servicio === true,
+      valor_hora: p.permite_horas_servicio && p.valor_hora > 0
+        ? String(p.valor_hora)
         : '',
     })
     setFormError('')
@@ -135,6 +163,22 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
       porcentajeUplift = n
     }
 
+    // Validación servicios por hora: si el checkbox está activo, valor_hora >= 0
+    let valorHora = 0
+    if (form.permite_horas_servicio) {
+      const raw = form.valor_hora.trim().replace(',', '.')
+      if (raw === '') {
+        setFormError('Indicá el valor hora o desmarcá la opción.')
+        return
+      }
+      const n = parseFloat(raw)
+      if (!Number.isFinite(n) || n < 0) {
+        setFormError('El valor hora debe ser un número mayor o igual a 0.')
+        return
+      }
+      valorHora = n
+    }
+
     const payload = {
       nombre,
       cuit: toNullable(form.cuit),
@@ -144,6 +188,8 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
       observaciones: toNullable(form.observaciones),
       tiene_uplift: form.tiene_uplift,
       porcentaje_uplift: porcentajeUplift,
+      permite_horas_servicio: form.permite_horas_servicio,
+      valor_hora: valorHora,
     }
 
     startTransition(async () => {
@@ -324,9 +370,46 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
                 />
               </div>
 
-              {/* Uplift: porcentaje incremental para rendición/informes.
-                  No modifica el importe original del gasto/honorario. */}
+              {/* Tipo de proveedor: servicios por hora.
+                  Si el proveedor permite horas, el gasto activará bloque "Detalle del servicio"
+                  con descripción, período, horas y valor hora aplicado (snapshot). Ver D23. */}
+              <div className="rounded-lg border border-amber-100 bg-amber-50/40 p-3 space-y-2">
+                <p className="text-sm font-semibold text-gray-800">Tipo de proveedor</p>
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={form.permite_horas_servicio}
+                    onChange={(e) => setForm({
+                      ...form,
+                      permite_horas_servicio: e.target.checked,
+                      // Si desactivan el checkbox, limpio el valor para evitar confusión
+                      valor_hora: e.target.checked ? form.valor_hora : '',
+                    })}
+                    className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                  />
+                  Permite cargar horas de servicio
+                </label>
+                {form.permite_horas_servicio && (
+                  <div className="flex items-center gap-2 pl-6">
+                    <label className="text-sm text-gray-600">Valor hora</label>
+                    <span className="text-sm text-gray-400">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.valor_hora}
+                      onChange={(e) => setForm({ ...form, valor_hora: e.target.value })}
+                      className="w-40 rounded-lg border border-gray-300 px-3 py-1.5 text-sm tabular-nums outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                      placeholder="0.00"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Uplift para liquidación: solo informativo. No modifica gasto, pago, fondo ni deuda.
+                  Se snapshotea al gasto de servicio para futura liquidación a socios. Ver D22. */}
               <div className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-3 space-y-2">
+                <p className="text-sm font-semibold text-gray-800">Uplift para liquidación</p>
                 <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-800">
                   <input
                     type="checkbox"
@@ -334,15 +417,11 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
                     onChange={(e) => setForm({
                       ...form,
                       tiene_uplift: e.target.checked,
-                      // Si desactivan el checkbox, limpio el % para evitar confusión
                       porcentaje_uplift: e.target.checked ? form.porcentaje_uplift : '',
                     })}
                     className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                   />
                   Tiene uplift
-                  <span className="text-xs font-normal text-gray-500">
-                    (incremento para rendición — no afecta importes cargados)
-                  </span>
                 </label>
                 {form.tiene_uplift && (
                   <div className="flex items-center gap-2 pl-6">
@@ -359,6 +438,9 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
                     <span className="text-sm text-gray-400">%</span>
                   </div>
                 )}
+                <p className="text-xs text-gray-500 pt-1">
+                  El uplift no modifica el gasto ni el pago. Se usará solo para futuras liquidaciones a socios.
+                </p>
               </div>
 
               {formError && (

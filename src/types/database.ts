@@ -49,6 +49,10 @@ export interface Proveedor {
   activo: boolean
   tiene_uplift: boolean
   porcentaje_uplift: number
+  // P1 (2026-05-23): proveedor con horas de servicio.
+  // false = proveedor común; true = factura por horas, ver D22/D23.
+  permite_horas_servicio: boolean
+  valor_hora: number
   created_by: string
   created_at: string
   updated_at: string

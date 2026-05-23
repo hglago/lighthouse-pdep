@@ -12,30 +12,56 @@ export type ProveedorPayload = {
   observaciones: string | null
   tiene_uplift: boolean
   porcentaje_uplift: number
+  // P1: servicios por hora. Default false / 0 cuando no aplica.
+  permite_horas_servicio: boolean
+  valor_hora: number
 }
 
-// Si no tiene uplift, forzamos porcentaje a 0 para evitar inconsistencia.
-// Si tiene uplift, no permitimos negativos (mismo check que la DB).
-function normalizeUplift(data: ProveedorPayload): ProveedorPayload {
-  const tiene = data.tiene_uplift === true
+// Normaliza ambos bloques opcionales del proveedor:
+// - Uplift: si no tiene, fuerza porcentaje=0. Si tiene, no permite negativos.
+// - Horas de servicio: si no permite, fuerza valor_hora=0. Si permite, no permite negativos.
+// D22: el uplift es informativo y no afecta importes operativos.
+function normalizeProveedor(data: ProveedorPayload): ProveedorPayload {
+  const tieneUplift = data.tiene_uplift === true
   let pct = Number(data.porcentaje_uplift)
   if (!Number.isFinite(pct) || pct < 0) pct = 0
-  return { ...data, tiene_uplift: tiene, porcentaje_uplift: tiene ? pct : 0 }
+
+  const permiteHoras = data.permite_horas_servicio === true
+  let valor = Number(data.valor_hora)
+  if (!Number.isFinite(valor) || valor < 0) valor = 0
+
+  return {
+    ...data,
+    tiene_uplift: tieneUplift,
+    porcentaje_uplift: tieneUplift ? pct : 0,
+    permite_horas_servicio: permiteHoras,
+    valor_hora: permiteHoras ? valor : 0,
+  }
 }
 
-// Detecta error de Postgres por columna inexistente (42703) que afecta
-// específicamente a las columnas de uplift. Esto pasa si el ALTER no se aplicó.
-function isUpliftColumnMissingError(err: { code?: string; message?: string } | null): boolean {
+// Detecta error de Postgres por columna inexistente (42703) que afecta a las
+// columnas opcionales agregadas por migraciones recientes (uplift + P1 horas).
+function isOptionalColumnMissingError(err: { code?: string; message?: string } | null): boolean {
   if (!err) return false
   if (err.code === '42703') return true
   const msg = (err.message ?? '').toLowerCase()
-  return msg.includes('tiene_uplift') || msg.includes('porcentaje_uplift')
+  return (
+    msg.includes('tiene_uplift') ||
+    msg.includes('porcentaje_uplift') ||
+    msg.includes('permite_horas_servicio') ||
+    msg.includes('valor_hora')
+  )
 }
 
-// Quita las columnas de uplift del payload — para el retry cuando la DB no las tiene.
-function stripUplift<T extends { tiene_uplift?: boolean; porcentaje_uplift?: number }>(p: T): Omit<T, 'tiene_uplift' | 'porcentaje_uplift'> {
+// Quita las columnas opcionales del payload para el retry cuando la DB no las tiene.
+function stripCamposOpcionales<T extends {
+  tiene_uplift?: boolean
+  porcentaje_uplift?: number
+  permite_horas_servicio?: boolean
+  valor_hora?: number
+}>(p: T): Omit<T, 'tiene_uplift' | 'porcentaje_uplift' | 'permite_horas_servicio' | 'valor_hora'> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { tiene_uplift, porcentaje_uplift, ...rest } = p
+  const { tiene_uplift, porcentaje_uplift, permite_horas_servicio, valor_hora, ...rest } = p
   return rest
 }
 
@@ -48,7 +74,7 @@ export async function createProveedor(data: ProveedorPayload): Promise<Proveedor
     const user = authResult.data?.user
     if (!user) return { ok: false, error: 'No autenticado' }
 
-    const fullPayload = { ...normalizeUplift(data), created_by: user.id }
+    const fullPayload = { ...normalizeProveedor(data), created_by: user.id }
 
     const { error } = await supabase.from('proveedores').insert(fullPayload)
     if (!error) {
@@ -56,10 +82,10 @@ export async function createProveedor(data: ProveedorPayload): Promise<Proveedor
       return { ok: true }
     }
 
-    // Retry sin columnas de uplift si la DB todavía no las tiene
-    if (isUpliftColumnMissingError(error)) {
-      console.warn('[createProveedor] columnas uplift no disponibles, reintentando sin ellas')
-      const retry = await supabase.from('proveedores').insert(stripUplift(fullPayload))
+    // Retry sin columnas opcionales (uplift + servicios por hora) si la DB no las tiene
+    if (isOptionalColumnMissingError(error)) {
+      console.warn('[createProveedor] columnas opcionales no disponibles, reintentando sin ellas')
+      const retry = await supabase.from('proveedores').insert(stripCamposOpcionales(fullPayload))
       if (retry.error) return { ok: false, error: retry.error.message }
       revalidatePath('/proveedores')
       return { ok: true }
@@ -75,7 +101,7 @@ export async function createProveedor(data: ProveedorPayload): Promise<Proveedor
 export async function updateProveedor(id: string, data: ProveedorPayload): Promise<ProveedorActionResult> {
   try {
     const supabase = createClient()
-    const fullPayload = normalizeUplift(data)
+    const fullPayload = normalizeProveedor(data)
 
     const { error } = await supabase
       .from('proveedores')
@@ -87,11 +113,11 @@ export async function updateProveedor(id: string, data: ProveedorPayload): Promi
       return { ok: true }
     }
 
-    if (isUpliftColumnMissingError(error)) {
-      console.warn('[updateProveedor] columnas uplift no disponibles, reintentando sin ellas')
+    if (isOptionalColumnMissingError(error)) {
+      console.warn('[updateProveedor] columnas opcionales no disponibles, reintentando sin ellas')
       const retry = await supabase
         .from('proveedores')
-        .update(stripUplift(fullPayload))
+        .update(stripCamposOpcionales(fullPayload))
         .eq('id', id)
         .is('deleted_at', null)
       if (retry.error) return { ok: false, error: retry.error.message }
