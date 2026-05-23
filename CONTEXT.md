@@ -2,6 +2,12 @@
 
 Estado actual del proyecto. Lo que está hecho, lo que falta aplicar, dónde estamos.
 
+## Hito actual
+
+**v0.2.0-risa-fondos** (tag Git, 2026-05-23). Cierra: schema DB, RISA operativa, socios + financiadores + aportes con UI completa, filtros/búsqueda/sort en /fondos, D18 + D19 + D20 documentadas.
+
+Ver `RELEASES.md`.
+
 ## Decisión de modelo financiero (vigente)
 
 **Un solo fondo operativo: RISA.** Puede tener saldo negativo. Los gastos se cancelan con RISA o con un financiador externo. Aportes de socios fondean RISA o cancelan financiación pendiente con financiadores.

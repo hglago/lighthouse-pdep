@@ -300,3 +300,26 @@ const columns: Column<T>[] = [
 | Anticipos, Honorarios, Rendiciones | ⏸ Pendiente (si existen los módulos) | F5 |
 
 **Cuándo NO aplicar**: en cuentas legacy / tablas administrativas one-off donde el costo no se justifica. Documentar la excepción.
+
+---
+
+## D20. Versionado de hitos estables
+
+**Qué**: Cada punto estable funcional debe cerrarse con (a) documentación actualizada en los .md operativos, (b) commit en main, y (c) **tag Git anotado** con mensaje descriptivo. El tag permite volver al estado anterior antes de implementar etapas de mayor riesgo.
+
+**Por qué**: En refactors largos (Etapas 1, 2A–2D, F1, etc.) es difícil volver atrás si una etapa rompe algo. Los tags permiten un punto de retorno rápido. La documentación in-place asegura que cualquier futuro contributor entienda qué incluye cada hito.
+
+**Convención**: `vMAJOR.MINOR.PATCH-<scope>`. Ej: `v0.2.0-risa-fondos`, `v0.3.0-gastos`, `v0.4.0-pagos`.
+
+**Procedimiento al cerrar un hito**:
+1. Confirmar working tree limpio (`git status`)
+2. Actualizar `CONTEXT.md`, `TASK.md`, `DB.md`, `RLS_RPC.md`, `DECISIONS.md` y `TESTING.md` según corresponda
+3. Crear/actualizar entrada en `RELEASES.md` con incluido + pendiente + cómo volver
+4. Validar: `npx tsc --noEmit` + `npm run build`
+5. Commit de docs si hubo cambios
+6. Tag anotado: `git tag -a vX.Y.Z-scope -m "vX.Y.Z-scope: <hito>"`
+7. Push del commit + push del tag: `git push && git push origin vX.Y.Z-scope`
+
+**Importante**: los tags Git **no incluyen estado de Supabase**. Si se aplicaron migraciones SQL después del tag y se quiere revertir, hay que revertir esas migraciones manualmente. La sección "SQL aplicado al momento del tag" en `RELEASES.md` documenta el estado de DB al crear cada tag.
+
+**Frecuencia recomendada**: tag al cerrar cada etapa significativa o cada vez que el sistema queda en un estado funcional consistente del que vale la pena poder volver.
