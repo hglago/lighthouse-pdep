@@ -8,6 +8,10 @@ import { exportToExcel, todayForFile } from '@/lib/excel'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
+import DetalleServicioBlock from '@/components/DetalleServicioBlock'
+
+// Subconjunto del proveedor que necesita el modal: nombre + campos snapshot.
+type ProveedorParaGasto = Pick<Proveedor, 'id' | 'nombre' | 'permite_horas_servicio' | 'valor_hora' | 'tiene_uplift' | 'porcentaje_uplift'>
 
 // ─── Row types ───────────────────────────────────────────────────────────────
 
@@ -30,6 +34,15 @@ export interface GastoRow {
   condiciones_pago_notas: string | null
   fecha_vencimiento: string | null
   prioridad_pago: number
+  // P3a: snapshot de servicio por hora. NULL/0 cuando es_servicio_horas=false.
+  es_servicio_horas: boolean
+  descripcion_servicio: string | null
+  periodo_servicio_desde: string | null
+  periodo_servicio_hasta: string | null
+  horas_servicio: number | null
+  valor_hora_aplicado: number | null
+  porcentaje_uplift_snapshot: number
+  importe_base_servicio: number | null
   comprobante_path: string | null
   comprobante_nombre: string | null
   comprobante_mime: string | null
@@ -143,6 +156,12 @@ interface FormState {
   fecha_comprometida_pago_saldo: string
   condiciones_pago_notas: string
   fecha_vencimiento: string
+  // P3a: bloque "Detalle del servicio" — solo aplica cuando el proveedor tiene
+  // permite_horas_servicio=true. Si el proveedor es común, estos campos quedan vacíos.
+  descripcion_servicio: string
+  periodo_servicio_desde: string
+  periodo_servicio_hasta: string
+  horas_servicio: string
   // recurrente-only
   categoria: string
   dia_vencimiento: string
@@ -168,6 +187,10 @@ const EMPTY_FORM: FormState = {
   fecha_comprometida_pago_saldo: '',
   condiciones_pago_notas: '',
   fecha_vencimiento: '',
+  descripcion_servicio: '',
+  periodo_servicio_desde: '',
+  periodo_servicio_hasta: '',
+  horas_servicio: '',
   categoria: '',
   dia_vencimiento: '1',
   fecha_inicio: '',
@@ -182,7 +205,7 @@ interface Props {
   gastos: GastoRow[]
   recurrentes: GastoRecurrenteRow[]
   fondos: Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
-  proveedores: Pick<Proveedor, 'id' | 'nombre'>[]
+  proveedores: ProveedorParaGasto[]
   pagosDeGastos: PagoDeGasto[]
   role: UserRole
   onCreateGasto: (
@@ -246,7 +269,7 @@ export default function GastosClient({
   const [pendingComprobante, setPendingComprobante] = useState<File | null>(null)
 
   // ── Quick crear proveedor (desde modal de gasto) ───────────────────────────
-  const [localExtraProveedores, setLocalExtraProveedores] = useState<{ id: string; nombre: string }[]>([])
+  const [localExtraProveedores, setLocalExtraProveedores] = useState<ProveedorParaGasto[]>([])
   const [quickProvOpen, setQuickProvOpen] = useState(false)
   const [qpNombre, setQpNombre] = useState('')
   const [qpCuit, setQpCuit] = useState('')
@@ -276,9 +299,18 @@ export default function GastosClient({
     })
     setQpSubmitting(false)
     if (!result.ok) { setQpError(result.error); return }
-    // Append a la lista local + autoseleccionar en el form de gasto
+    // Append a la lista local + autoseleccionar en el form de gasto.
+    // Los proveedores creados desde quick-create son comunes (sin horas, sin uplift).
+    // Si se necesita servicio por hora, se edita el proveedor desde /proveedores.
     setLocalExtraProveedores(prev =>
-      prev.some(p => p.id === result.id) ? prev : [...prev, { id: result.id, nombre: result.nombre }]
+      prev.some(p => p.id === result.id) ? prev : [...prev, {
+        id: result.id,
+        nombre: result.nombre,
+        permite_horas_servicio: false,
+        valor_hora: 0,
+        tiene_uplift: false,
+        porcentaje_uplift: 0,
+      }]
     )
     setForm(prev => ({ ...prev, proveedor_id: result.id }))
     setQuickProvOpen(false)
@@ -286,8 +318,8 @@ export default function GastosClient({
 
   // Lista efectiva de proveedores: props + locales (deduplicado por id), ordenado
   const effectiveProveedores = (() => {
-    const map = new Map<string, { id: string; nombre: string }>()
-    proveedores.forEach(p => map.set(p.id, { id: p.id, nombre: p.nombre }))
+    const map = new Map<string, ProveedorParaGasto>()
+    proveedores.forEach(p => map.set(p.id, p))
     localExtraProveedores.forEach(p => { if (!map.has(p.id)) map.set(p.id, p) })
     return Array.from(map.values()).sort((a, b) => a.nombre.localeCompare(b.nombre))
   })()
@@ -304,7 +336,8 @@ export default function GastosClient({
           g.descripcion.toLowerCase().includes(qg) ||
           (g.fondos?.nombre ?? '').toLowerCase().includes(qg) ||
           (g.proveedores?.nombre ?? '').toLowerCase().includes(qg) ||
-          (g.notas ?? '').toLowerCase().includes(qg)
+          (g.notas ?? '').toLowerCase().includes(qg) ||
+          (g.descripcion_servicio ?? '').toLowerCase().includes(qg)
       )
     : gastos
 
@@ -471,6 +504,11 @@ export default function GastosClient({
       fecha_comprometida_pago_saldo: g.fecha_comprometida_pago_saldo ?? '',
       condiciones_pago_notas: g.condiciones_pago_notas ?? '',
       fecha_vencimiento: g.fecha_vencimiento ?? '',
+      // P3a: snapshot servicio (si el gasto era de servicio)
+      descripcion_servicio: g.descripcion_servicio ?? '',
+      periodo_servicio_desde: g.periodo_servicio_desde ?? '',
+      periodo_servicio_hasta: g.periodo_servicio_hasta ?? '',
+      horas_servicio: g.horas_servicio != null ? String(g.horas_servicio) : '',
       categoria: '',
       dia_vencimiento: '1',
       fecha_inicio: todayIso(),
@@ -500,6 +538,11 @@ export default function GastosClient({
       fecha_comprometida_pago_saldo: '',
       condiciones_pago_notas: '',
       fecha_vencimiento: '',
+      // P3a: campos servicio quedan vacíos para recurrentes (P3b los implementa).
+      descripcion_servicio: '',
+      periodo_servicio_desde: '',
+      periodo_servicio_hasta: '',
+      horas_servicio: '',
       categoria: r.categoria ?? '',
       dia_vencimiento: String(r.dia_vencimiento),
       fecha_inicio: r.fecha_inicio,
@@ -565,9 +608,71 @@ export default function GastosClient({
     } else {
       if (!form.fondo_id) { setFormError('Seleccioná un fondo.'); return }
       if (!form.descripcion.trim()) { setFormError('El concepto es requerido.'); return }
-      const monto = parseFloat(form.monto)
-      if (!form.monto || isNaN(monto) || monto <= 0) { setFormError('El monto debe ser mayor a 0.'); return }
       if (!form.fecha_gasto) { setFormError('La fecha es requerida.'); return }
+
+      // P3a: si el proveedor seleccionado tiene permite_horas_servicio, este gasto es de servicio.
+      // El monto se calcula como horas × valor_hora_aplicado (snapshot del proveedor).
+      const provSel = form.proveedor_id ? effectiveProveedores.find(p => p.id === form.proveedor_id) : null
+      const esServicioHoras = !!provSel?.permite_horas_servicio
+
+      let monto: number
+      let snapshotServicio: {
+        descripcion_servicio: string
+        periodo_servicio_desde: string
+        periodo_servicio_hasta: string
+        horas_servicio: number
+        valor_hora_aplicado: number
+        porcentaje_uplift_snapshot: number
+        importe_base_servicio: number
+      } | null = null
+
+      if (esServicioHoras) {
+        if (!form.descripcion_servicio.trim()) {
+          setFormError('La descripción del servicio es requerida.')
+          return
+        }
+        if (!form.periodo_servicio_desde) {
+          setFormError('Indicá el período desde del servicio.')
+          return
+        }
+        if (!form.periodo_servicio_hasta) {
+          setFormError('Indicá el período hasta del servicio.')
+          return
+        }
+        if (form.periodo_servicio_desde > form.periodo_servicio_hasta) {
+          setFormError('"Período desde" debe ser anterior o igual a "Período hasta".')
+          return
+        }
+        const horas = parseFloat(form.horas_servicio.replace(',', '.'))
+        if (!form.horas_servicio || isNaN(horas) || horas <= 0) {
+          setFormError('Las horas deben ser mayor a 0.')
+          return
+        }
+        const valorHora = Number(provSel!.valor_hora) || 0
+        if (valorHora < 0) {
+          setFormError('El valor hora del proveedor no puede ser negativo.')
+          return
+        }
+        const importeBase = Math.round(horas * valorHora * 100) / 100
+        const upliftSnap = provSel!.tiene_uplift ? (Number(provSel!.porcentaje_uplift) || 0) : 0
+
+        monto = importeBase
+        snapshotServicio = {
+          descripcion_servicio: form.descripcion_servicio.trim(),
+          periodo_servicio_desde: form.periodo_servicio_desde,
+          periodo_servicio_hasta: form.periodo_servicio_hasta,
+          horas_servicio: horas,
+          valor_hora_aplicado: valorHora,
+          porcentaje_uplift_snapshot: upliftSnap,
+          importe_base_servicio: importeBase,
+        }
+      } else {
+        monto = parseFloat(form.monto)
+        if (!form.monto || isNaN(monto) || monto <= 0) {
+          setFormError('El monto debe ser mayor a 0.')
+          return
+        }
+      }
 
       let monto_anticipo: number | null = null
       let porcentaje_anticipo: number | null = null
@@ -600,6 +705,14 @@ export default function GastosClient({
         condiciones_pago_notas: form.condiciones_pago_notas.trim() || null,
         fecha_vencimiento: form.fecha_vencimiento || null,
         prioridad_pago: parseInt(form.prioridad_pago) || 3,
+        es_servicio_horas: esServicioHoras,
+        descripcion_servicio: snapshotServicio?.descripcion_servicio ?? null,
+        periodo_servicio_desde: snapshotServicio?.periodo_servicio_desde ?? null,
+        periodo_servicio_hasta: snapshotServicio?.periodo_servicio_hasta ?? null,
+        horas_servicio: snapshotServicio?.horas_servicio ?? null,
+        valor_hora_aplicado: snapshotServicio?.valor_hora_aplicado ?? null,
+        porcentaje_uplift_snapshot: snapshotServicio?.porcentaje_uplift_snapshot ?? 0,
+        importe_base_servicio: snapshotServicio?.importe_base_servicio ?? null,
       }
 
       startTransition(async () => {
@@ -846,6 +959,27 @@ export default function GastosClient({
   const inputCls =
     'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20'
 
+  // Proveedor actualmente seleccionado en el form (memoizado para evitar re-cómputo).
+  // Necesario para decidir si el modal muestra el bloque "Detalle del servicio"
+  // y para snapshotear valor_hora/uplift al guardar.
+  const proveedorEnForm: ProveedorParaGasto | null = useMemo(() => {
+    if (!form.proveedor_id) return null
+    return effectiveProveedores.find(p => p.id === form.proveedor_id) ?? null
+  }, [form.proveedor_id, effectiveProveedores])
+
+  // Bloque "Detalle del servicio" visible solo en modo Gasto (no recurrente)
+  // y cuando el proveedor seleccionado tiene horas habilitadas.
+  const mostrarBloqueServicio = !isRecurrenteMode && !!proveedorEnForm?.permite_horas_servicio
+
+  // Monto calculado en vivo cuando es servicio por hora.
+  const montoCalculadoServicio: number = useMemo(() => {
+    if (!mostrarBloqueServicio || !proveedorEnForm) return 0
+    const horas = parseFloat(form.horas_servicio.replace(',', '.'))
+    if (!Number.isFinite(horas) || horas <= 0) return 0
+    const valor = Number(proveedorEnForm.valor_hora) || 0
+    return Math.round(horas * valor * 100) / 100
+  }, [mostrarBloqueServicio, proveedorEnForm, form.horas_servicio])
+
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -1055,7 +1189,19 @@ export default function GastosClient({
                               </button>
                             )}
                           </div>
-                          <div className="flex gap-1 mt-0.5 items-center">
+                          <div className="flex gap-1 mt-0.5 items-center flex-wrap">
+                            {g.es_servicio_horas && (
+                              <span
+                                title={
+                                  g.horas_servicio != null && g.valor_hora_aplicado != null
+                                    ? `Servicio por hora — ${g.horas_servicio}h × ${formatMonto(g.valor_hora_aplicado, g.moneda)}`
+                                    : 'Servicio por hora'
+                                }
+                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-800"
+                              >
+                                Servicio por hora
+                              </span>
+                            )}
                             {g.recurrente_id && (
                               <span
                                 title={`Generado automáticamente desde recurrente${g.periodo ? ` — período ${g.periodo}` : ''}`}
@@ -1341,7 +1487,21 @@ export default function GastosClient({
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Monto <span className="text-red-500">*</span>
                   </label>
-                  <input type="number" min="0.01" step="0.01" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })} className={inputCls} placeholder="0.00" />
+                  {mostrarBloqueServicio ? (
+                    <input
+                      type="text"
+                      value={montoCalculadoServicio > 0
+                        ? new Intl.NumberFormat('es-AR', { style: 'currency', currency: form.moneda === 'USD' ? 'USD' : 'ARS', minimumFractionDigits: 2 }).format(montoCalculadoServicio)
+                        : '—'
+                      }
+                      readOnly
+                      tabIndex={-1}
+                      className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm tabular-nums text-gray-700 cursor-default"
+                      title="Calculado en vivo: horas × valor hora"
+                    />
+                  ) : (
+                    <input type="number" min="0.01" step="0.01" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })} className={inputCls} placeholder="0.00" />
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Moneda</label>
@@ -1429,6 +1589,26 @@ export default function GastosClient({
                       </div>
                     )
                   })()}
+
+                  {/* P3a: bloque "Detalle del servicio" solo si el proveedor permite horas */}
+                  {mostrarBloqueServicio && proveedorEnForm && (
+                    <DetalleServicioBlock
+                      mode="gasto"
+                      valorHoraProveedor={Number(proveedorEnForm.valor_hora) || 0}
+                      porcentajeUpliftProveedor={proveedorEnForm.tiene_uplift ? Number(proveedorEnForm.porcentaje_uplift) || 0 : 0}
+                      descripcion={form.descripcion_servicio}
+                      horas={form.horas_servicio}
+                      periodoDesde={form.periodo_servicio_desde}
+                      periodoHasta={form.periodo_servicio_hasta}
+                      onChange={(partial) => setForm(prev => ({
+                        ...prev,
+                        ...(partial.descripcion !== undefined && { descripcion_servicio: partial.descripcion }),
+                        ...(partial.horas !== undefined && { horas_servicio: partial.horas }),
+                        ...(partial.periodoDesde !== undefined && { periodo_servicio_desde: partial.periodoDesde }),
+                        ...(partial.periodoHasta !== undefined && { periodo_servicio_hasta: partial.periodoHasta }),
+                      }))}
+                    />
+                  )}
 
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>

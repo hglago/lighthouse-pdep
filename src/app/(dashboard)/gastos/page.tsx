@@ -24,7 +24,7 @@ export default async function GastosPage() {
       .single(),
     supabase
       .from('gastos')
-      .select('id, codigo, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
+      .select('id, codigo, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta, horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
       .is('deleted_at', null)
       .order('fecha_gasto', { ascending: false }),
     supabase
@@ -35,7 +35,7 @@ export default async function GastosPage() {
       .order('nombre', { ascending: true }),
     supabase
       .from('proveedores')
-      .select('id, nombre')
+      .select('id, nombre, permite_horas_servicio, valor_hora, tiene_uplift, porcentaje_uplift')
       .is('deleted_at', null)
       .order('nombre', { ascending: true }),
     supabase
@@ -50,23 +50,61 @@ export default async function GastosPage() {
       .order('fecha_pago', { ascending: true }),
   ])
 
-  // Tolerancia: si la migración de codigo no se aplicó, retry sin codigo
-  // y hidratar como null. El listado funciona igual.
+  // Tolerancia: si alguna columna nueva no se aplicó todavía, retry sin ellas
+  // e hidratar defaults. El listado funciona siempre.
+  // Cubre: codigo (commit 9872748) y campos snapshot servicio P1 (2026-05-23).
   let gastosData = gastosResult.data
-  if (gastosResult.error?.code === '42703' && (gastosResult.error.message ?? '').includes('codigo')) {
-    console.warn('[gastos] columna codigo no disponible aún; retry sin ella')
+  if (
+    gastosResult.error?.code === '42703' &&
+    /codigo|es_servicio_horas|descripcion_servicio|periodo_servicio|horas_servicio|valor_hora_aplicado|porcentaje_uplift_snapshot|importe_base_servicio/.test(gastosResult.error.message ?? '')
+  ) {
+    console.warn('[gastos] columna nueva no disponible aún; retry con SELECT base:', gastosResult.error.message)
     const fallback = await supabase
       .from('gastos')
       .select('id, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
       .is('deleted_at', null)
       .order('fecha_gasto', { ascending: false })
-    gastosData = (fallback.data ?? []).map(g => ({ ...g, codigo: null }))
+    gastosData = (fallback.data ?? []).map(g => ({
+      ...g,
+      codigo: null,
+      es_servicio_horas: false,
+      descripcion_servicio: null,
+      periodo_servicio_desde: null,
+      periodo_servicio_hasta: null,
+      horas_servicio: null,
+      valor_hora_aplicado: null,
+      porcentaje_uplift_snapshot: 0,
+      importe_base_servicio: null,
+    })) as unknown as typeof gastosResult.data
+  }
+
+  // Tolerancia proveedores: si columnas permite_horas_servicio/valor_hora/uplift no están aplicadas
+  // todavía (post-P1), retry con SELECT base e hidrato defaults — el modal de gasto sigue funcionando
+  // tratando a todo proveedor como común.
+  let proveedoresData = proveedoresResult.data
+  if (
+    proveedoresResult.error?.code === '42703' &&
+    /permite_horas_servicio|valor_hora|tiene_uplift|porcentaje_uplift/.test(proveedoresResult.error.message ?? '')
+  ) {
+    console.warn('[gastos] columnas proveedor servicio/uplift no disponibles; retry base:', proveedoresResult.error.message)
+    const fallback = await supabase
+      .from('proveedores')
+      .select('id, nombre')
+      .is('deleted_at', null)
+      .order('nombre', { ascending: true })
+    proveedoresData = (fallback.data ?? []).map(p => ({
+      ...p,
+      permite_horas_servicio: false,
+      valor_hora: 0,
+      tiene_uplift: false,
+      porcentaje_uplift: 0,
+    })) as unknown as typeof proveedoresResult.data
   }
 
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const gastos: GastoRow[] = (gastosData ?? []) as unknown as GastoRow[]
   const fondos = (fondosResult.data ?? []) as Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
-  const proveedores = (proveedoresResult.data ?? []) as Pick<Proveedor, 'id' | 'nombre'>[]
+  const proveedores = (proveedoresData ?? []) as unknown as Pick<Proveedor, 'id' | 'nombre' | 'permite_horas_servicio' | 'valor_hora' | 'tiene_uplift' | 'porcentaje_uplift'>[]
   const recurrentes: GastoRecurrenteRow[] = (recurrentesResult.data ?? []) as unknown as GastoRecurrenteRow[]
   const pagosDeGastos: PagoDeGasto[] = (pagosDeGastosResult.data ?? []) as PagoDeGasto[]
 

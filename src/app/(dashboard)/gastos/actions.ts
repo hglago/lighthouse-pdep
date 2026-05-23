@@ -19,6 +19,65 @@ export type GastoPayload = {
   condiciones_pago_notas: string | null
   fecha_vencimiento: string | null
   prioridad_pago: number
+  // P3a: snapshot servicio por hora. Si es_servicio_horas=false, los campos quedan null/0.
+  // D22/D23: porcentaje_uplift_snapshot es informativo, no modifica monto.
+  es_servicio_horas: boolean
+  descripcion_servicio: string | null
+  periodo_servicio_desde: string | null
+  periodo_servicio_hasta: string | null
+  horas_servicio: number | null
+  valor_hora_aplicado: number | null
+  porcentaje_uplift_snapshot: number
+  importe_base_servicio: number | null
+}
+
+// Normaliza el payload del gasto:
+// - Si es_servicio_horas=false: limpia los campos snapshot.
+// - Si es_servicio_horas=true: deja los valores tal cual (la validación cliente + CHECK DB
+//   garantizan coherencia entre horas × valor_hora_aplicado = importe_base_servicio = monto).
+function normalizeGasto(data: GastoPayload): GastoPayload {
+  if (data.es_servicio_horas === true) {
+    return data
+  }
+  return {
+    ...data,
+    es_servicio_horas: false,
+    descripcion_servicio: null,
+    periodo_servicio_desde: null,
+    periodo_servicio_hasta: null,
+    horas_servicio: null,
+    valor_hora_aplicado: null,
+    porcentaje_uplift_snapshot: 0,
+    importe_base_servicio: null,
+  }
+}
+
+// Detecta error 42703 sobre columnas snapshot (DB sin migración P1 aplicada).
+function isServicioColumnMissingError(err: { code?: string; message?: string } | null | undefined): boolean {
+  if (!err) return false
+  if (err.code !== '42703') return false
+  const msg = (err.message ?? '').toLowerCase()
+  return (
+    msg.includes('es_servicio_horas') ||
+    msg.includes('descripcion_servicio') ||
+    msg.includes('periodo_servicio') ||
+    msg.includes('horas_servicio') ||
+    msg.includes('valor_hora_aplicado') ||
+    msg.includes('porcentaje_uplift_snapshot') ||
+    msg.includes('importe_base_servicio')
+  )
+}
+
+// Quita las columnas snapshot del payload para retry si la migración P1 no se aplicó.
+function stripCamposServicio<T extends Record<string, unknown>>(p: T): Record<string, unknown> {
+  const {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio,
+    ...rest
+  } = p
+  return rest
 }
 
 export async function createGasto(
@@ -30,9 +89,10 @@ export async function createGasto(
   const user = authResult.data?.user
   if (!user) throw new Error('No autenticado')
 
+  const normalized = normalizeGasto(data)
   const insert: Record<string, unknown> = {
-    ...data,
-    proveedor_id: data.proveedor_id || null,
+    ...normalized,
+    proveedor_id: normalized.proveedor_id || null,
     estado: 'enviado',  // alta directa a pendiente de aprobación (sin paso por borrador)
     created_by: user.id,
   }
@@ -49,23 +109,63 @@ export async function createGasto(
   }
 
   const { error } = await supabase.from('gastos').insert(insert)
-  if (error) throw new Error(error.message)
-  revalidatePath('/gastos')
+  if (!error) {
+    revalidatePath('/gastos')
+    return
+  }
+
+  // Retry sin columnas snapshot servicio si la migración P1 no está aplicada en DB.
+  if (isServicioColumnMissingError(error)) {
+    console.warn('[createGasto] columnas servicio no disponibles, reintentando sin ellas')
+    const retry = await supabase.from('gastos').insert(stripCamposServicio(insert))
+    if (retry.error) throw new Error(retry.error.message)
+    revalidatePath('/gastos')
+    return
+  }
+
+  throw new Error(error.message)
 }
 
 export async function updateGasto(id: string, data: GastoPayload) {
   const supabase = createClient()
+  const normalized = normalizeGasto(data)
+  const update: Record<string, unknown> = {
+    ...normalized,
+    proveedor_id: normalized.proveedor_id || null,
+  }
+
   const result = await supabase
     .from('gastos')
-    .update({ ...data, proveedor_id: data.proveedor_id || null })
+    .update(update)
     .eq('id', id)
     .in('estado', ['borrador', 'enviado'])  // editable mientras no esté aprobado/pagado
     .is('deleted_at', null)
     .select('id')
-  if (result.error) throw new Error(result.error.message)
-  if (!result.data || result.data.length === 0)
-    throw new Error('Sin permiso para editar este gasto o ya fue aprobado/pagado.')
-  revalidatePath('/gastos')
+
+  if (!result.error) {
+    if (!result.data || result.data.length === 0)
+      throw new Error('Sin permiso para editar este gasto o ya fue aprobado/pagado.')
+    revalidatePath('/gastos')
+    return
+  }
+
+  if (isServicioColumnMissingError(result.error)) {
+    console.warn('[updateGasto] columnas servicio no disponibles, reintentando sin ellas')
+    const retry = await supabase
+      .from('gastos')
+      .update(stripCamposServicio(update))
+      .eq('id', id)
+      .in('estado', ['borrador', 'enviado'])
+      .is('deleted_at', null)
+      .select('id')
+    if (retry.error) throw new Error(retry.error.message)
+    if (!retry.data || retry.data.length === 0)
+      throw new Error('Sin permiso para editar este gasto o ya fue aprobado/pagado.')
+    revalidatePath('/gastos')
+    return
+  }
+
+  throw new Error(result.error.message)
 }
 
 export async function deleteGasto(id: string) {

@@ -79,6 +79,17 @@ export interface Gasto {
   condiciones_pago_notas: string | null
   fecha_vencimiento: string | null
   prioridad_pago: number
+  // P1/P3a (2026-05-23): snapshot de servicio por hora. NULL en gastos comunes.
+  // Coherencia exigida por CHECK gastos_servicio_horas_coherente (ver DB.md).
+  // D22: porcentaje_uplift_snapshot es informativo, no modifica monto/pago/fondo.
+  es_servicio_horas: boolean
+  descripcion_servicio: string | null
+  periodo_servicio_desde: string | null
+  periodo_servicio_hasta: string | null
+  horas_servicio: number | null
+  valor_hora_aplicado: number | null
+  porcentaje_uplift_snapshot: number
+  importe_base_servicio: number | null
   created_by: string
   aprobado_por: string | null
   aprobado_en: string | null
