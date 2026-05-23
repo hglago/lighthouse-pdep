@@ -116,3 +116,22 @@ Solo cuando:
 - Querés verificar que un cambio compila para prod (tsc es suficiente para 95% de los casos)
 
 **Antes**: matar `npm run dev`. **Después**: recordar reiniciar dev si la sesión sigue activa.
+
+## Versión del sistema visible en UI
+
+El sidebar muestra al pie una línea con `tag · commit · env` (ej. `v0.2.0-risa-fondos · 193f478 · development`). Hover sobre la línea muestra el `buildTime` en tooltip.
+
+**Cómo se genera**: `scripts/write-version.mjs` lee del repo Git y escribe `src/lib/version.ts` con tag (último anotado), commit corto y buildTime ISO. Tolerante: si no hay tags muestra `"sin tag"`; si no hay repo Git muestra `"dev"`.
+
+**Cuándo se regenera**:
+- Automáticamente vía hooks `predev` y `prebuild` en `package.json`.
+- Manualmente: `npm run version:write`.
+
+**Consultas manuales equivalentes**:
+```powershell
+git describe --tags --abbrev=0   # tag actual
+git rev-parse --short HEAD       # commit corto
+git status --short               # uncommitted (informativo)
+```
+
+**Si el sidebar muestra info desactualizada**: correr `npm run version:write` y refrescar el browser. El archivo `src/lib/version.ts` se commitea (es source-of-truth para deploys); puede aparecer modificado localmente cuando `buildTime` cambia tras un dev/build — incluir en el próximo commit o resetearlo según convenga.

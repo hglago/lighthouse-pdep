@@ -131,6 +131,7 @@ Reset operativo aplicado 2026-05-23. Borrados: fondos, gastos, pagos, movimiento
 - **D21**: Honorarios deprecado operativamente. Todo honorario se carga como Gasto con proveedor `permite_horas_servicio=true`. Página `/honorarios` queda como informativa (P4).
 - **D22**: Uplift es **informativo**, NO modifica importes operativos (gasto/pago/fondo/deuda). Solo snapshot en gasto/recurrente para futura liquidación a socios.
 - **D23**: Recurrentes con servicio por hora deben copiar snapshot al gasto generado, no leer en vivo del proveedor. Función `fn_generar_gastos_recurrentes` se actualiza en P3.
+- **Versión en UI**: el sidebar muestra `tag · commit · env` al pie. Lo genera `scripts/write-version.mjs` → `src/lib/version.ts` automáticamente vía hooks predev/prebuild. Manual: `npm run version:write`. Ver `TESTING.md` sección "Versión del sistema visible en UI".
 
 ## Notas para refactor activo (Proveedores servicios por hora)
 

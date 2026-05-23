@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/icons'
 import { ROLE_LABELS } from '@/types'
 import type { SessionUser } from '@/types'
+import { APP_VERSION } from '@/lib/version'
 
 interface SidebarProps {
   open: boolean
@@ -137,6 +138,16 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
               <p className="truncate text-xs text-slate-400">{ROLE_LABELS[user.role] ?? user.role}</p>
             </div>
           </div>
+        </div>
+
+        {/* Versión del sistema — generada por scripts/write-version.mjs */}
+        <div
+          className="border-t border-slate-800 px-4 py-2"
+          title={`Build: ${APP_VERSION.buildTime}`}
+        >
+          <p className="truncate text-[10px] font-mono tabular-nums text-slate-500">
+            {APP_VERSION.tag} · {APP_VERSION.commit} · {APP_VERSION.env}
+          </p>
         </div>
       </aside>
     </>
