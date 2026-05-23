@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import type { Proveedor, UserRole } from '@/types'
-import { createProveedor, updateProveedor, deleteProveedor } from './actions'
+import { createProveedor, updateProveedor, deleteProveedor, getProveedorDependencies } from './actions'
 import DataTable, { type Column } from '@/components/DataTable'
 
 interface Props {
@@ -163,12 +163,31 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
     })
   }
 
+  // Dar de baja: NO es eliminación física. Marca deleted_at, preserva historia.
+  // Antes del confirm consultamos cantidad de dependencias para informar al user.
   function handleDelete(id: string, nombre: string) {
-    if (!confirm(`¿Eliminar el proveedor "${nombre}"?`)) return
     startTransition(async () => {
+      const deps = await getProveedorDependencies(id)
+      if (!deps.ok) {
+        alert(`No se pudieron verificar dependencias: ${deps.error}`)
+        return
+      }
+
+      const partes: string[] = []
+      if (deps.gastos > 0) partes.push(`${deps.gastos} gasto${deps.gastos !== 1 ? 's' : ''}`)
+      if (deps.pagos > 0)  partes.push(`${deps.pagos} pago${deps.pagos !== 1 ? 's' : ''}`)
+
+      const ctx = partes.length > 0
+        ? `Este proveedor tiene ${partes.join(' y ')} asociados. No se borrará la historia: ` +
+          `el proveedor solo será dado de baja y no estará disponible para nuevas cargas.`
+        : `Este proveedor no tiene gastos ni pagos asociados. Se dará de baja para que no ` +
+          `aparezca en nuevas cargas. La historia queda intacta.`
+
+      if (!confirm(`${ctx}\n\n¿Dar de baja "${nombre}"?`)) return
+
       const result = await deleteProveedor(id)
       if (!result.ok) {
-        alert(`No se pudo eliminar: ${result.error}`)
+        alert(`No se pudo dar de baja: ${result.error}`)
       }
     })
   }
@@ -218,9 +237,10 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
                 type="button"
                 onClick={() => handleDelete(p.id, p.nombre)}
                 disabled={isPending}
-                className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                className="rounded px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50"
+                title="No elimina físicamente — marca el proveedor como inactivo para nuevas cargas"
               >
-                Eliminar
+                Dar de baja
               </button>
             )}
           </>

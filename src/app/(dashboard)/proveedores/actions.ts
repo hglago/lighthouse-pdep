@@ -187,44 +187,51 @@ export async function createProveedorQuick(data: {
   }
 }
 
+// Cuenta gastos activos y pagos asociados a un proveedor. Solo lectura.
+// Se usa antes del confirm de "Dar de baja" para informar al usuario que la
+// historia queda intacta. NO modifica nada.
+export type ProveedorDepsResult =
+  | { ok: true; gastos: number; pagos: number }
+  | { ok: false; error: string }
+
+export async function getProveedorDependencies(id: string): Promise<ProveedorDepsResult> {
+  try {
+    const supabase = createClient()
+    const [g, p] = await Promise.all([
+      supabase
+        .from('gastos')
+        .select('id', { count: 'exact', head: true })
+        .eq('proveedor_id', id)
+        .is('deleted_at', null),
+      supabase
+        .from('pagos')
+        .select('id', { count: 'exact', head: true })
+        .eq('proveedor_id', id),
+    ])
+    if (g.error) return { ok: false, error: g.error.message }
+    if (p.error) return { ok: false, error: p.error.message }
+    return { ok: true, gastos: g.count ?? 0, pagos: p.count ?? 0 }
+  } catch (err) {
+    console.error('[getProveedorDependencies] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
+}
+
+// Soft delete vía RPC SECURITY DEFINER. La policy directa UPDATE sobre la tabla
+// queda intacta; este camino es el operativo. La función SQL (public.soft_delete_proveedor)
+// valida auth.uid() y corre con los privilegios del owner, evitando interferencias
+// de policies/triggers que hayan generado falsos rechazos en el path directo.
+//
+// NOTA DE NEGOCIO: esto es BAJA LÓGICA, no eliminación física. Gastos, pagos y
+// movimientos asociados quedan intactos para preservar trazabilidad histórica.
 export async function deleteProveedor(id: string): Promise<ProveedorActionResult> {
   try {
     const supabase = createClient()
-    const auth = await supabase.auth.getUser()
-    if (!auth.data?.user) return { ok: false, error: 'No autenticado' }
-
-    // Logs temporales de diagnóstico RLS
-    console.log("ELIMINAR PROVEEDOR ID:", id)
-    console.log("AUTH UID:", auth.data.user.id)
-
-    // Estado actual del proveedor antes del soft-delete
-    const { data: target } = await supabase
-      .from('proveedores')
-      .select('id, nombre, created_by, deleted_at')
-      .eq('id', id)
-      .maybeSingle()
-    console.log("PROVEEDOR ACTUAL:", target)
-
-    // Rol del usuario actual (la policy UPDATE puede chequearlo)
-    const roleResult = await supabase.rpc('get_my_role')
-    console.log("GET_MY_ROLE result:", roleResult.data, "error:", roleResult.error?.message)
-
-    const { data: rows, error } = await supabase
-      .from('proveedores')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', id)
-      .is('deleted_at', null)
-      .select('id')
-
-    console.log("UPDATE RESULT rows:", rows, "error:", error ? {
-      code: error.code, message: error.message, details: error.details, hint: error.hint
-    } : null)
-
-    if (error) return { ok: false, error: error.message }
-    if (!rows || rows.length === 0) {
-      return { ok: false, error: 'Sin permiso para eliminar este proveedor o ya estaba eliminado.' }
+    const { error } = await supabase.rpc('soft_delete_proveedor', { proveedor_id: id })
+    if (error) {
+      console.error('[deleteProveedor] RPC error:', { code: error.code, message: error.message })
+      return { ok: false, error: error.message }
     }
-
     revalidatePath('/proveedores')
     return { ok: true }
   } catch (err) {
