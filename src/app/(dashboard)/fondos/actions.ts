@@ -18,13 +18,42 @@ export async function createFondo(data: {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('No autenticado')
 
-  const { error } = await supabase.from('fondos').insert({
+  const payload = {
     nombre: data.nombre,
     moneda: data.moneda,
     monto_inicial: data.monto_inicial,
     descripcion: data.descripcion,
     created_by: user.id,
-  })
+  }
+
+  // ─── Diagnóstico RLS (logs temporales) ─────────────────────────────────────
+  console.log("AUTH USER:", user)
+  console.log("USER ID:", user?.id)
+  console.log("PAYLOAD FONDO:", payload)
+  console.log("CREATED_BY:", payload.created_by)
+
+  // Confirma rol según sesión actual (la misma que evaluará la policy)
+  const roleResult = await supabase.rpc('get_my_role')
+  console.log("GET_MY_ROLE result:", roleResult.data, "error:", roleResult.error?.message)
+
+  // Verifica que la sesión del SQL ve al usuario: si SELECT sobre profiles
+  // devuelve la fila propia, auth.uid() está seteado en la sesión SQL.
+  const profileCheck = await supabase
+    .from('profiles')
+    .select('id, role, email')
+    .eq('id', user.id)
+    .maybeSingle()
+  console.log("PROFILE SELF-CHECK:", profileCheck.data, "error:", profileCheck.error?.message)
+
+  // INSERT con .select() para obtener data si pasa, y detalle si rebota
+  const { data: inserted, error } = await supabase
+    .from('fondos')
+    .insert(payload)
+    .select()
+
+  console.log("INSERT DATA:", inserted)
+  console.log("INSERT ERROR:", error ? { code: error.code, message: error.message, details: error.details, hint: error.hint } : null)
+
   if (error) throw new Error(cleanDbError(error.message))
   revalidatePath('/fondos')
 }
@@ -43,15 +72,93 @@ export async function updateFondo(
   revalidatePath('/fondos')
 }
 
-export async function deleteFondo(id: string) {
-  const supabase = createClient()
-  const { error } = await supabase
-    .from('fondos')
-    .update({ deleted_at: new Date().toISOString() })
-    .eq('id', id)
-    .is('deleted_at', null)
-  if (error) throw new Error(cleanDbError(error.message))
-  revalidatePath('/fondos')
+export type FondoActionResult = { ok: true } | { ok: false; error: string }
+
+// Conteos + saldo del fondo, antes de mostrar el confirm de baja.
+// Read-only.
+export type FondoDepsResult =
+  | {
+      ok: true
+      nombre: string
+      moneda: string
+      saldo_actual: number
+      gastos: number
+      pagos: number
+      aportes: number
+      movimientos: number
+    }
+  | { ok: false; error: string }
+
+export async function getFondoDependencies(id: string): Promise<FondoDepsResult> {
+  try {
+    const supabase = createClient()
+
+    const [fondoRes, gastos, pagos, aportes, movimientos] = await Promise.all([
+      supabase
+        .from('fondos')
+        .select('nombre, moneda, saldo_actual')
+        .eq('id', id)
+        .maybeSingle(),
+      supabase
+        .from('gastos')
+        .select('id', { count: 'exact', head: true })
+        .eq('fondo_id', id),
+      supabase
+        .from('pagos')
+        .select('id', { count: 'exact', head: true })
+        .eq('fondo_id', id),
+      supabase
+        .from('aportes_fondo')
+        .select('id', { count: 'exact', head: true })
+        .eq('fondo_id', id),
+      supabase
+        .from('movimientos_fondo')
+        .select('id', { count: 'exact', head: true })
+        .eq('fondo_id', id),
+    ])
+
+    if (fondoRes.error) return { ok: false, error: fondoRes.error.message }
+    if (!fondoRes.data) return { ok: false, error: 'Fondo no encontrado' }
+
+    return {
+      ok: true,
+      nombre: fondoRes.data.nombre,
+      moneda: fondoRes.data.moneda,
+      saldo_actual: Number(fondoRes.data.saldo_actual),
+      gastos: gastos.count ?? 0,
+      pagos: pagos.count ?? 0,
+      aportes: aportes.count ?? 0,
+      movimientos: movimientos.count ?? 0,
+    }
+  } catch (err) {
+    console.error('[getFondoDependencies] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
+}
+
+// Soft delete vía RPC SECURITY DEFINER. La función SQL public.soft_delete_fondo
+// valida auth.uid() y saldo_actual = 0 antes del UPDATE. Si saldo != 0, RAISE
+// EXCEPTION con mensaje legible; lo capturamos como ActionResult.
+//
+// BAJA LÓGICA: no borra movimientos, gastos, pagos ni aportes. El fondo
+// solo deja de estar disponible para nuevas operaciones.
+export async function deleteFondo(id: string, motivo?: string | null): Promise<FondoActionResult> {
+  try {
+    const supabase = createClient()
+    const { error } = await supabase.rpc('soft_delete_fondo', {
+      fondo_id: id,
+      motivo: motivo ?? null,
+    })
+    if (error) {
+      console.error('[deleteFondo] RPC error:', { code: error.code, message: error.message })
+      return { ok: false, error: cleanDbError(error.message) }
+    }
+    revalidatePath('/fondos')
+    return { ok: true }
+  } catch (err) {
+    console.error('[deleteFondo] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
 }
 
 export type AportePayload = {

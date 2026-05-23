@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import FondosClient, { type AporteFondoRow } from './FondosClient'
 import type { Fondo, UserRole } from '@/types'
-import { createFondo, updateFondo, deleteFondo, registrarAporte } from './actions'
+import { createFondo, updateFondo, deleteFondo, registrarAporte, getFondoDependencies } from './actions'
 
 export default async function FondosPage() {
   const supabase = createClient()
@@ -49,6 +49,7 @@ export default async function FondosPage() {
         onCreateFondo={createFondo}
         onUpdateFondo={updateFondo}
         onDeleteFondo={deleteFondo}
+        onGetFondoDependencies={getFondoDependencies}
         onRegistrarAporte={registrarAporte}
       />
     </div>

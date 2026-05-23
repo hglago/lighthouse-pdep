@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useRef, useMemo } from 'react'
 import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo } from '@/types'
-import type { AportePayload } from './actions'
+import type { AportePayload, FondoActionResult, FondoDepsResult } from './actions'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
 import DataTable, { type Column } from '@/components/DataTable'
@@ -116,7 +116,8 @@ interface Props {
   role: UserRole
   onCreateFondo: (data: { nombre: string; moneda: string; monto_inicial: number; descripcion: string | null }) => Promise<void>
   onUpdateFondo: (id: string, data: { nombre: string; descripcion: string | null; estado: FondoEstado }) => Promise<void>
-  onDeleteFondo: (id: string) => Promise<void>
+  onDeleteFondo: (id: string, motivo?: string | null) => Promise<FondoActionResult>
+  onGetFondoDependencies: (id: string) => Promise<FondoDepsResult>
   onRegistrarAporte: (data: AportePayload) => Promise<void>
 }
 
@@ -129,6 +130,7 @@ export default function FondosClient({
   onCreateFondo,
   onUpdateFondo,
   onDeleteFondo,
+  onGetFondoDependencies,
   onRegistrarAporte,
 }: Props) {
   const [modal, setModal] = useState<ModalType>('none')
@@ -330,13 +332,46 @@ export default function FondosClient({
     })
   }
 
+  // Dar de baja fondo: BAJA LÓGICA. La RPC valida saldo=0 en el SQL.
+  // Antes del confirm consultamos conteos + saldo para mostrar contexto.
   function handleDeleteFondo(id: string, nombre: string) {
-    if (!confirm(`¿Eliminar el fondo "${nombre}"? Esta acción no se puede deshacer.`)) return
     startTransition(async () => {
-      try {
-        await onDeleteFondo(id)
-      } catch (err: unknown) {
-        alert(err instanceof Error ? err.message : 'Error al eliminar el fondo.')
+      const deps = await onGetFondoDependencies(id)
+      if (!deps.ok) {
+        alert(`No se pudieron verificar dependencias: ${deps.error}`)
+        return
+      }
+
+      const saldoStr = `${deps.moneda} ${fmt(deps.saldo_actual)}`
+
+      // Bloqueo de saldo distinto de cero (UX antes de invocar RPC; el RPC también bloquea)
+      if (Math.abs(deps.saldo_actual) > 0.001) {
+        alert(
+          `No se puede dar de baja el fondo "${nombre}".\n\n` +
+          `Saldo actual: ${saldoStr}\n\n` +
+          `Primero transferí ese saldo a otra caja o regularizalo. ` +
+          `Cuando el saldo sea 0, podrás darlo de baja.`
+        )
+        return
+      }
+
+      const partes: string[] = []
+      if (deps.gastos      > 0) partes.push(`${deps.gastos} gasto${deps.gastos !== 1 ? 's' : ''}`)
+      if (deps.pagos       > 0) partes.push(`${deps.pagos} pago${deps.pagos !== 1 ? 's' : ''}`)
+      if (deps.aportes     > 0) partes.push(`${deps.aportes} aporte${deps.aportes !== 1 ? 's' : ''}`)
+      if (deps.movimientos > 0) partes.push(`${deps.movimientos} movimiento${deps.movimientos !== 1 ? 's' : ''}`)
+
+      const ctx = partes.length > 0
+        ? `Este fondo tiene ${partes.join(', ')} asociados. La historia se conservará intacta; ` +
+          `el fondo solo dejará de estar disponible para nuevas operaciones.`
+        : `Este fondo no tiene movimientos registrados. Se dará de baja para que no aparezca en nuevas operaciones.`
+
+      const msg = `${ctx}\n\nSaldo: ${saldoStr} (= 0 ✓)\n\n¿Dar de baja "${nombre}"?`
+      if (!confirm(msg)) return
+
+      const result = await onDeleteFondo(id)
+      if (!result.ok) {
+        alert(`No se pudo dar de baja: ${result.error}`)
       }
     })
   }
@@ -401,11 +436,13 @@ export default function FondosClient({
               </button>
               {canDelete && (
                 <button
+                  type="button"
                   onClick={() => handleDeleteFondo(fondo.id, fondo.nombre)}
                   disabled={isPending}
-                  className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                  className="rounded px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50"
+                  title="No elimina físicamente — marca el fondo como inactivo. Requiere saldo = 0."
                 >
-                  Eliminar
+                  Dar de baja
                 </button>
               )}
             </>
