@@ -30,7 +30,12 @@ El modelo anterior de "cuenta corriente entre fondos" (varios fondos internos co
 | Soft-delete Proveedores | ✅ funcional vía RPC SECURITY DEFINER | ✅ aplicado |
 | Soft-delete Fondos | ✅ código | ⚠️ SQL pendiente (RPC + columnas) ¹ |
 | **Nuevo modelo financiero RISA único — schema** | — | ✅ **Etapa 1 APLICADA Y VALIDADA** |
-| **UI Fondos rediseñada (resumen RISA, aportes, financiadores)** | ❌ no implementada | — (Etapa 2 pendiente) |
+| **UI Fondos rediseñada read-only (resumen RISA, aportes, financiadores)** | ✅ Etapa 2A implementada | — |
+| **socios.codigo + sequence + trigger + UNIQUE** | — | ✅ **Etapa 2B-SQL APLICADA** |
+| **UI Fondos: 3 botones (Nuevo aporte / socio / financiador) + 3 modales** | ✅ Etapa 2B+2C implementada | — |
+| **Crear socio con codigo SOC-### desde UI** | ✅ funcional | ✅ aplicado |
+| **Crear financiador con codigo FIN-### desde UI** | ✅ funcional | ✅ aplicado |
+| **Registrar aporte de socio (RPC `registrar_aporte_socio`)** | ✅ código listo | ⚠️ **SQL pendiente** (entregado en chat, no aplicado) |
 | **`forma_cancelacion` en UI Gastos** | ❌ no implementada | — (Etapa 3 pendiente) |
 | **UI Pagos con rama RISA vs financiador** | ❌ no implementada | — (Etapa 4 pendiente) |
 
@@ -48,6 +53,8 @@ Reset operativo aplicado 2026-05-23. Borrados: fondos, gastos, pagos, movimiento
 |---|---|---|
 | Soft-delete Proveedores | RPC SECURITY DEFINER `soft_delete_proveedor` | ✅ aplicado |
 | **Etapa 1 nuevo modelo** | Tablas nuevas + columnas + sequences + triggers + RLS policies + RISA inicial + drop constraint saldo>=0 | ✅ **APLICADA 2026-05-23** |
+| **Etapa 2B SQL** | `socios.codigo` + `socios_codigo_seq` + `fn_set_socio_codigo` + `trg_set_socio_codigo` + backfill + UNIQUE + NOT NULL | ✅ **APLICADA** |
+| **Etapa 2C SQL** | RPC `registrar_aporte_socio` SECURITY DEFINER (transaccional para destino RISA o financiación) | ⚠️ **PENDIENTE de aplicar** (entregado en chat) |
 
 ## SQL pendientes (decisión deferida)
 

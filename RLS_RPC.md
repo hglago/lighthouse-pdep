@@ -113,14 +113,29 @@ GRANT EXECUTE ON FUNCTION public.<accion>_<entidad>(<arg_types>) TO authenticate
 - `fn_generar_gastos_recurrentes()` — auto-gen mensual.
 - `fn_set_fondo_codigo()`, `fn_set_aporte_codigo()`, `fn_set_financiador_codigo()` — triggers BEFORE INSERT que asignan codigos FON/APO/FIN si vienen NULL (Etapa 1).
 
-## RPCs planeadas para Etapas 2-4 (NO existen aún)
+## RPCs creadas en Etapas 2B / 2C
+
+### `registrar_aporte_socio(date, uuid, numeric, text, text, uuid, text)` — Etapa 2C
+**SQL pendiente de aplicar** en producción (commit `4a0788c`). SECURITY DEFINER. Hace en una transacción:
+- Valida `auth.uid()`, `importe > 0`, `destino_aporte` válido, socio activo
+- Busca RISA por `codigo='FON-001'`
+- Si `destino='risa'`: INSERT aporte + INSERT movimiento_fondo (`credito`) + UPDATE fondos.saldo_actual. Lock con `FOR UPDATE`
+- Si `destino='cancelacion_financiacion'`: valida saldo_pendiente del financiador, INSERT aporte + INSERT movimientos_financiacion (`cancelacion_por_aporte`). NO toca saldo RISA. Bloquea si `importe > saldo_pendiente`
+
+Invocada desde `registrarAporteSocio` action en `fondos/actions.ts`.
+
+### Triggers creados en Etapa 2B (aplicados)
+
+- `fn_set_socio_codigo()` + `trg_set_socio_codigo` BEFORE INSERT en `socios`. Asigna `SOC-###`.
+- `socios_codigo_seq` (sequence).
+- `socios_codigo_unique` UNIQUE constraint.
+
+## RPCs planeadas para Etapas 3-4 (NO existen aún)
 
 Solo plan. Se crean cuando arranquen las etapas correspondientes. Patrón: SECURITY DEFINER si RLS bloquea.
 
-- `crear_socio(payload)` — INSERT en socios (puede usar policy directa si no bloquea)
-- `crear_financiador(payload)` — INSERT en financiadores
-- `crear_aporte_socio_risa(payload)` — INSERT aporte + INSERT movimiento_fondo + UPDATE fondos.saldo_actual (transaccional)
-- `cancelar_financiacion_con_aporte(payload)` — INSERT aporte (destino='cancelacion_financiacion') + INSERT movimientos_financiacion (tipo='cancelacion_por_aporte'). Validar importe ≤ saldo_pendiente_financiador.
+- `crear_socio(payload)` — INSERT en socios (hoy se hace via INSERT directo + policy; no requiere RPC)
+- `crear_financiador(payload)` — idem
 - `confirmar_pago_con_risa(p_pago_id)` — extiende `fn_confirmar_pago` para rama RISA (genera movimiento_fondo).
 - `confirmar_pago_con_financiador(p_pago_id)` — INSERT movimiento_financiacion (tipo='deuda_generada') sin tocar saldo RISA. Update pago.estado = 'pagado'.
 - `anular_pago_con_financiador(p_pago_id)` — INSERT movimiento_financiacion (tipo='reversa') + update pago.estado = 'anulado'.

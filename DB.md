@@ -103,17 +103,16 @@ Ledger de movimientos de saldo por fondo. Actualizado por `fn_confirmar_pago`, `
 ### `movimientos_entre_fondos` (DEPRECADA — D14, NO USAR)
 Existe en código tolerante de pagos/page.tsx pero no se aplica.
 
-### `socios` — Etapa 1
+### `socios` — Etapa 1 (extendido en Etapa 2B)
 Aportantes que pueden depositar en RISA o cancelar financiación.
 
 - `id uuid PK`
+- `codigo text UNIQUE NOT NULL` (SOC-### asignado por trigger `trg_set_socio_codigo`) — **Etapa 2B**
 - `nombre text NOT NULL`
 - `cuit, email, telefono, observaciones text`
 - `deleted_at timestamptz` (soft-delete)
 - `created_by uuid REFERENCES auth.users(id)`
 - `created_at, updated_at timestamptz`
-
-**Nota**: no tiene `codigo`. Se identifica por id + nombre.
 
 ### `financiadores` — Etapa 1
 Terceros externos que cancelan gastos por cuenta de RISA.
@@ -177,6 +176,7 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 | **`trg_set_fondo_codigo`** | fondos | BEFORE INSERT | `fn_set_fondo_codigo` | Asigna `FON-###` si NEW.codigo es NULL — Etapa 1 |
 | **`trg_set_aporte_codigo`** | aportes_fondo | BEFORE INSERT | `fn_set_aporte_codigo` | Asigna `APO-###` — Etapa 1 |
 | **`trg_set_financiador_codigo`** | financiadores | BEFORE INSERT | `fn_set_financiador_codigo` | Asigna `FIN-###` — Etapa 1 |
+| **`trg_set_socio_codigo`** | socios | BEFORE INSERT | `fn_set_socio_codigo` | Asigna `SOC-###` — Etapa 2B |
 | `trg_set_pago_codigo` (SQL pendiente) | pagos | BEFORE INSERT | Asigna `P######` |
 | `trg_set_gasto_codigo` (SQL pendiente) | gastos | BEFORE INSERT | Asigna `G######` |
 | `trg_set_pago_genera_deuda` (deprecada D14) | pagos | BEFORE INSERT OR UPDATE | Setea flag genera_deuda_interna |
@@ -190,6 +190,7 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 | **`fondos_codigo_seq`** | FON-### | `fn_set_fondo_codigo` | next = 2 (FON-001 ocupado por RISA) |
 | **`aportes_codigo_seq`** | APO-### | `fn_set_aporte_codigo` | next = 1 (APO-001) |
 | **`financiadores_codigo_seq`** | FIN-### | `fn_set_financiador_codigo` | next = 1 (FIN-001) |
+| **`socios_codigo_seq`** | SOC-### | `fn_set_socio_codigo` | next depende del backfill (1 si la tabla estaba vacía) — Etapa 2B |
 | `gastos_codigo_seq` (SQL pendiente) | G###### | — | — |
 | `pagos_codigo_seq` (SQL pendiente) | P###### | — | — |
 
@@ -235,4 +236,21 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 - Functions: `fn_<accion>` o `<accion>_<entidad>` (RPC públicas con nombre directo)
 - Sequences: `<tabla>_<columna>_seq`
 - Indices: `idx_<tabla>_<columna>`
-- Codigos visibles: `<PREFIJO>-###` (3 dígitos con dash) para FON/APO/FIN; `<PREFIJO>######` (6 dígitos sin dash) para G/P
+- Codigos visibles: `<PREFIJO>-###` (3 dígitos con dash) para FON/APO/FIN/SOC; `<PREFIJO>######` (6 dígitos sin dash) para G/P
+
+## Códigos funcionales consolidados (referencia rápida)
+
+| Entidad | Tabla | Columna | Formato | Sequence | Trigger | Estado |
+|---|---|---|---|---|---|---|
+| Fondo | `fondos` | `codigo` | `FON-001`, `FON-002`, … | `fondos_codigo_seq` | `trg_set_fondo_codigo` | ✅ Etapa 1 aplicada |
+| Aporte | `aportes_fondo` | `codigo` | `APO-001`, `APO-002`, … | `aportes_codigo_seq` | `trg_set_aporte_codigo` | ✅ Etapa 1 aplicada |
+| Financiador | `financiadores` | `codigo` | `FIN-001`, `FIN-002`, … | `financiadores_codigo_seq` | `trg_set_financiador_codigo` | ✅ Etapa 1 aplicada |
+| Socio | `socios` | `codigo` | `SOC-001`, `SOC-002`, … | `socios_codigo_seq` | `trg_set_socio_codigo` | ✅ Etapa 2B aplicada |
+| Gasto | `gastos` | `codigo` | `G000001`, `G000002`, … | `gastos_codigo_seq` | `trg_set_gasto_codigo` | ⚠️ SQL pendiente (commit `9872748`) |
+| Pago | `pagos` | `codigo` | `P000001`, `P000002`, … | `pagos_codigo_seq` | `trg_set_pago_codigo` | ⚠️ SQL pendiente (commit `9872748`) |
+
+**Convención**:
+- El codigo lo asigna el trigger BEFORE INSERT al ver `NEW.codigo IS NULL`. El frontend nunca lo calcula ni lo envía.
+- El UUID interno (`id`) sigue siendo PK. El codigo es identificador funcional/visual, UNIQUE.
+- Backfills crónológicos por `created_at, id` cuando se aplica el SQL retroactivo.
+- `setval(seq, MAX+1, false)` mantiene la próxima asignación correcta.
