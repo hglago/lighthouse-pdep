@@ -156,8 +156,10 @@ interface FormState {
   fecha_comprometida_pago_saldo: string
   condiciones_pago_notas: string
   fecha_vencimiento: string
-  // P3a: bloque "Detalle del servicio" — solo aplica cuando el proveedor tiene
-  // permite_horas_servicio=true. Si el proveedor es común, estos campos quedan vacíos.
+  // P3a: bloque "Detalle del servicio" — opt-in por gasto.
+  // El proveedor puede permitir horas, pero el usuario decide gasto por gasto
+  // si lo carga como servicio por hora o como gasto común.
+  usar_servicio_horas: boolean
   descripcion_servicio: string
   periodo_servicio_desde: string
   periodo_servicio_hasta: string
@@ -187,6 +189,7 @@ const EMPTY_FORM: FormState = {
   fecha_comprometida_pago_saldo: '',
   condiciones_pago_notas: '',
   fecha_vencimiento: '',
+  usar_servicio_horas: false,
   descripcion_servicio: '',
   periodo_servicio_desde: '',
   periodo_servicio_hasta: '',
@@ -504,7 +507,8 @@ export default function GastosClient({
       fecha_comprometida_pago_saldo: g.fecha_comprometida_pago_saldo ?? '',
       condiciones_pago_notas: g.condiciones_pago_notas ?? '',
       fecha_vencimiento: g.fecha_vencimiento ?? '',
-      // P3a: snapshot servicio (si el gasto era de servicio)
+      // P3a: si el gasto era de servicio, hidratar el toggle + snapshot.
+      usar_servicio_horas: g.es_servicio_horas === true,
       descripcion_servicio: g.descripcion_servicio ?? '',
       periodo_servicio_desde: g.periodo_servicio_desde ?? '',
       periodo_servicio_hasta: g.periodo_servicio_hasta ?? '',
@@ -539,6 +543,7 @@ export default function GastosClient({
       condiciones_pago_notas: '',
       fecha_vencimiento: '',
       // P3a: campos servicio quedan vacíos para recurrentes (P3b los implementa).
+      usar_servicio_horas: false,
       descripcion_servicio: '',
       periodo_servicio_desde: '',
       periodo_servicio_hasta: '',
@@ -610,10 +615,12 @@ export default function GastosClient({
       if (!form.descripcion.trim()) { setFormError('El concepto es requerido.'); return }
       if (!form.fecha_gasto) { setFormError('La fecha es requerida.'); return }
 
-      // P3a: si el proveedor seleccionado tiene permite_horas_servicio, este gasto es de servicio.
+      // P3a: el gasto es de servicio por hora SOLO si:
+      //   (a) el proveedor permite horas, Y
+      //   (b) el usuario activó el checkbox opt-in en este gasto.
       // El monto se calcula como horas × valor_hora_aplicado (snapshot del proveedor).
       const provSel = form.proveedor_id ? effectiveProveedores.find(p => p.id === form.proveedor_id) : null
-      const esServicioHoras = !!provSel?.permite_horas_servicio
+      const esServicioHoras = !!provSel?.permite_horas_servicio && form.usar_servicio_horas === true
 
       let monto: number
       let snapshotServicio: {
@@ -960,16 +967,43 @@ export default function GastosClient({
     'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20'
 
   // Proveedor actualmente seleccionado en el form (memoizado para evitar re-cómputo).
-  // Necesario para decidir si el modal muestra el bloque "Detalle del servicio"
-  // y para snapshotear valor_hora/uplift al guardar.
+  // Necesario para decidir si el modal muestra el checkbox "Cargar como servicio
+  // por hora" y para snapshotear valor_hora/uplift al guardar.
   const proveedorEnForm: ProveedorParaGasto | null = useMemo(() => {
     if (!form.proveedor_id) return null
     return effectiveProveedores.find(p => p.id === form.proveedor_id) ?? null
   }, [form.proveedor_id, effectiveProveedores])
 
-  // Bloque "Detalle del servicio" visible solo en modo Gasto (no recurrente)
-  // y cuando el proveedor seleccionado tiene horas habilitadas.
-  const mostrarBloqueServicio = !isRecurrenteMode && !!proveedorEnForm?.permite_horas_servicio
+  // El proveedor permite horas: condición para mostrar el checkbox opt-in.
+  const proveedorPermiteHoras = !!proveedorEnForm?.permite_horas_servicio
+
+  // Checkbox visible solo en modo Gasto y cuando el proveedor permite horas.
+  // El usuario decide por cada gasto si lo carga como servicio o como gasto común.
+  const mostrarCheckboxServicio = !isRecurrenteMode && proveedorPermiteHoras
+
+  // Bloque "Detalle del servicio" visible solo si el checkbox está activo.
+  const mostrarBloqueServicio = mostrarCheckboxServicio && form.usar_servicio_horas
+
+  // Cambio de proveedor: si el nuevo no permite horas, limpiar el toggle y los
+  // campos snapshot (evita inconsistencias al guardar). Si permite horas pero
+  // antes había marcado el toggle con otro proveedor, conservamos el toggle.
+  function handleProveedorChange(nuevoId: string) {
+    const nuevo = nuevoId ? effectiveProveedores.find(p => p.id === nuevoId) : null
+    const nuevoPermiteHoras = !!nuevo?.permite_horas_servicio
+    setForm(prev => ({
+      ...prev,
+      proveedor_id: nuevoId,
+      ...(nuevoPermiteHoras
+        ? {}
+        : {
+            usar_servicio_horas: false,
+            descripcion_servicio: '',
+            periodo_servicio_desde: '',
+            periodo_servicio_hasta: '',
+            horas_servicio: '',
+          }),
+    }))
+  }
 
   // Monto calculado en vivo cuando es servicio por hora.
   const montoCalculadoServicio: number = useMemo(() => {
@@ -1448,7 +1482,7 @@ export default function GastosClient({
                   <div className="flex gap-2">
                     <select
                       value={form.proveedor_id}
-                      onChange={(e) => setForm({ ...form, proveedor_id: e.target.value })}
+                      onChange={(e) => handleProveedorChange(e.target.value)}
                       className={`${inputCls} flex-1`}
                     >
                       <option value="">Sin proveedor</option>
@@ -1590,7 +1624,38 @@ export default function GastosClient({
                     )
                   })()}
 
-                  {/* P3a: bloque "Detalle del servicio" solo si el proveedor permite horas */}
+                  {/* P3a: checkbox opt-in solo si el proveedor permite horas.
+                       El usuario decide gasto por gasto si lo carga como servicio. */}
+                  {mostrarCheckboxServicio && (
+                    <div className="rounded-lg border border-amber-100 bg-amber-50/30 p-3 space-y-1">
+                      <label className="flex cursor-pointer items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={form.usar_servicio_horas}
+                          onChange={(e) => setForm(prev => ({
+                            ...prev,
+                            usar_servicio_horas: e.target.checked,
+                            // Si desactiva, limpiar campos para evitar enviar valores residuales.
+                            ...(e.target.checked ? {} : {
+                              descripcion_servicio: '',
+                              periodo_servicio_desde: '',
+                              periodo_servicio_hasta: '',
+                              horas_servicio: '',
+                            }),
+                          }))}
+                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                        />
+                        <span>
+                          <span className="font-medium text-gray-800">Cargar este gasto como servicio por hora</span>
+                          <span className="block text-xs text-gray-500">
+                            Este proveedor permite carga por horas. Activá esta opción solo si este gasto corresponde a horas de servicio.
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* P3a: bloque "Detalle del servicio" solo si el checkbox está activo */}
                   {mostrarBloqueServicio && proveedorEnForm && (
                     <DetalleServicioBlock
                       mode="gasto"

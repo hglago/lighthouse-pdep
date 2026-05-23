@@ -117,15 +117,15 @@ export default function DetalleServicioBlock({
             Horas <span className="text-red-500">*</span>
           </label>
           <input
-            type="number"
-            min="0.01"
-            step="0.25"
+            type="text"
+            inputMode="decimal"
             value={horas}
             onChange={e => onChange({ horas: e.target.value })}
             disabled={disabled}
             className={inputCls}
             placeholder="0"
           />
+          <p className="mt-0.5 text-xs text-gray-400">Acepta enteros (10) o decimales (10.5 / 10,5).</p>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">
