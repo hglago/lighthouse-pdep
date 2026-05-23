@@ -246,6 +246,7 @@ export interface AporteFondo {
 
 export interface Socio {
   id: string
+  codigo: string | null  // SOC-### (Etapa 2B). Null si la migración no se aplicó.
   nombre: string
   cuit: string | null
   email: string | null

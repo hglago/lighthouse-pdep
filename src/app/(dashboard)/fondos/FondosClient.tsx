@@ -2,7 +2,12 @@
 
 import { useState, useTransition, useRef, useMemo } from 'react'
 import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo, Socio, Financiador, SaldoFinanciadorRow, MovimientoTipo, DestinoAporte } from '@/types'
-import type { AportePayload, FondoActionResult, FondoDepsResult } from './actions'
+import type {
+  AportePayload, FondoActionResult, FondoDepsResult,
+  SocioPayload, SocioActionResult,
+  FinanciadorPayload, FinanciadorActionResult,
+  AporteSocioPayload, AporteSocioActionResult,
+} from './actions'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
 import DataTable, { type Column } from '@/components/DataTable'
@@ -146,6 +151,10 @@ interface Props {
   onDeleteFondo: (id: string, motivo?: string | null) => Promise<FondoActionResult>
   onGetFondoDependencies: (id: string) => Promise<FondoDepsResult>
   onRegistrarAporte: (data: AportePayload) => Promise<void>
+  // Etapa 2B/2C
+  onCrearSocio: (data: SocioPayload) => Promise<SocioActionResult>
+  onCrearFinanciador: (data: FinanciadorPayload) => Promise<FinanciadorActionResult>
+  onRegistrarAporteSocio: (data: AporteSocioPayload) => Promise<AporteSocioActionResult>
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -163,6 +172,9 @@ export default function FondosClient({
   onDeleteFondo,
   onGetFondoDependencies,
   onRegistrarAporte,
+  onCrearSocio,
+  onCrearFinanciador,
+  onRegistrarAporteSocio,
 }: Props) {
   const [modal, setModal] = useState<ModalType>('none')
   const [editingFondo, setEditingFondo] = useState<Fondo | null>(null)
@@ -428,6 +440,153 @@ export default function FondosClient({
   const destinoLabel = (d: DestinoAporte): string =>
     d === 'risa' ? 'RISA' : 'Cancelación de financiación'
 
+  // ─── Etapa 2B/2C: state + handlers para los nuevos modales ─────────────────
+
+  type NuevoModal = 'none' | 'newSocio' | 'newFinanciador' | 'newAporte'
+  const [nuevoModal, setNuevoModal] = useState<NuevoModal>('none')
+  const [nuevoError, setNuevoError] = useState<string>('')
+
+  // Socio
+  const [socioForm, setSocioForm] = useState({ nombre: '', cuit: '', email: '', telefono: '', observaciones: '' })
+  function resetSocioForm() {
+    setSocioForm({ nombre: '', cuit: '', email: '', telefono: '', observaciones: '' })
+  }
+
+  // Financiador
+  const [finForm, setFinForm] = useState({ nombre: '', cuit: '', email: '', telefono: '', observaciones: '' })
+  function resetFinForm() {
+    setFinForm({ nombre: '', cuit: '', email: '', telefono: '', observaciones: '' })
+  }
+
+  // Aporte
+  const [aporteSocioForm, setAporteSocioForm] = useState({
+    fecha:           todayIso(),
+    socio_id:        '',
+    importe:         '',
+    moneda:          'ARS',
+    destino_aporte:  'risa' as DestinoAporte,
+    financiador_id:  '',
+    observaciones:   '',
+  })
+  function resetAporteSocioForm() {
+    setAporteSocioForm({
+      fecha:           todayIso(),
+      socio_id:        '',
+      importe:         '',
+      moneda:          'ARS',
+      destino_aporte:  'risa',
+      financiador_id:  '',
+      observaciones:   '',
+    })
+  }
+
+  function openModal(m: NuevoModal) {
+    setNuevoError('')
+    if (m === 'newSocio') resetSocioForm()
+    if (m === 'newFinanciador') resetFinForm()
+    if (m === 'newAporte') resetAporteSocioForm()
+    setNuevoModal(m)
+  }
+  function closeNuevoModal() {
+    setNuevoModal('none')
+    setNuevoError('')
+  }
+
+  function handleCrearSocio(e: React.FormEvent) {
+    e.preventDefault()
+    setNuevoError('')
+    if (!socioForm.nombre.trim()) {
+      setNuevoError('El nombre es requerido.')
+      return
+    }
+    startTransition(async () => {
+      const result = await onCrearSocio({
+        nombre:        socioForm.nombre.trim(),
+        cuit:          socioForm.cuit.trim() || null,
+        email:         socioForm.email.trim() || null,
+        telefono:      socioForm.telefono.trim() || null,
+        observaciones: socioForm.observaciones.trim() || null,
+      })
+      if (!result.ok) {
+        setNuevoError(result.error)
+        return
+      }
+      closeNuevoModal()
+    })
+  }
+
+  function handleCrearFinanciador(e: React.FormEvent) {
+    e.preventDefault()
+    setNuevoError('')
+    if (!finForm.nombre.trim()) {
+      setNuevoError('El nombre es requerido.')
+      return
+    }
+    startTransition(async () => {
+      const result = await onCrearFinanciador({
+        nombre:        finForm.nombre.trim(),
+        cuit:          finForm.cuit.trim() || null,
+        email:         finForm.email.trim() || null,
+        telefono:      finForm.telefono.trim() || null,
+        observaciones: finForm.observaciones.trim() || null,
+      })
+      if (!result.ok) {
+        setNuevoError(result.error)
+        return
+      }
+      closeNuevoModal()
+    })
+  }
+
+  function handleRegistrarAporteSocio(e: React.FormEvent) {
+    e.preventDefault()
+    setNuevoError('')
+    const importe = parseFloat(aporteSocioForm.importe.replace(',', '.'))
+    if (!aporteSocioForm.socio_id) {
+      setNuevoError('Seleccioná un socio.')
+      return
+    }
+    if (!Number.isFinite(importe) || importe <= 0) {
+      setNuevoError('El importe debe ser mayor a 0.')
+      return
+    }
+    if (aporteSocioForm.destino_aporte === 'cancelacion_financiacion' && !aporteSocioForm.financiador_id) {
+      setNuevoError('Seleccioná un financiador para cancelar financiación.')
+      return
+    }
+    startTransition(async () => {
+      const result = await onRegistrarAporteSocio({
+        fecha:           aporteSocioForm.fecha,
+        socio_id:        aporteSocioForm.socio_id,
+        importe,
+        moneda:          aporteSocioForm.moneda,
+        destino_aporte:  aporteSocioForm.destino_aporte,
+        financiador_id:  aporteSocioForm.destino_aporte === 'cancelacion_financiacion' ? aporteSocioForm.financiador_id : null,
+        observaciones:   aporteSocioForm.observaciones.trim() || null,
+      })
+      if (!result.ok) {
+        setNuevoError(result.error)
+        return
+      }
+      closeNuevoModal()
+    })
+  }
+
+  // Datos auxiliares para selectores y validaciones del modal Aporte
+  const sociosActivos = useMemo(() => socios.filter(s => !s.deleted_at), [socios])
+  const financiadoresActivos = useMemo(() => financiadores.filter(f => !f.deleted_at), [financiadores])
+  const financiadoresConDeuda = useMemo(
+    () => saldosFinanciadores.filter(s => s.saldo_pendiente > 0 && !s.financiador_deleted_at),
+    [saldosFinanciadores]
+  )
+  const saldoPendienteSeleccionado = useMemo(() => {
+    if (aporteSocioForm.destino_aporte !== 'cancelacion_financiacion') return null
+    const f = financiadoresConDeuda.find(
+      x => x.financiador_id === aporteSocioForm.financiador_id && x.moneda === aporteSocioForm.moneda
+    )
+    return f?.saldo_pendiente ?? null
+  }, [aporteSocioForm, financiadoresConDeuda])
+
   return (
     <div className="space-y-8">
 
@@ -464,6 +623,37 @@ export default function FondosClient({
               <p className="mt-0.5 text-[11px] text-gray-400">El saldo puede ser negativo.</p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Acciones principales (Etapa 2B/2C) ────────────────────────────── */}
+      {canWrite && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Acciones</span>
+          <button
+            type="button"
+            onClick={() => openModal('newAporte')}
+            disabled={isPending}
+            className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
+          >
+            + Nuevo aporte
+          </button>
+          <button
+            type="button"
+            onClick={() => openModal('newSocio')}
+            disabled={isPending}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50"
+          >
+            + Nuevo socio
+          </button>
+          <button
+            type="button"
+            onClick={() => openModal('newFinanciador')}
+            disabled={isPending}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50"
+          >
+            + Nuevo financiador
+          </button>
         </div>
       )}
 
@@ -589,12 +779,19 @@ export default function FondosClient({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {aportes.map(a => (
+                  {aportes.map(a => {
+                    const socioCodigo = socios.find(s => s.id === a.socio_id)?.codigo ?? null
+                    const socioLabel = a.socios?.nombre ?? a.aportante ?? null
+                    return (
                     <tr key={a.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 text-xs font-mono text-slate-600">{a.codigo ?? '—'}</td>
                       <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{a.fecha_aporte}</td>
                       <td className="px-4 py-3 text-sm text-gray-900">
-                        {a.socios?.nombre ?? a.aportante ?? <span className="text-gray-300">—</span>}
+                        {socioLabel
+                          ? (socioCodigo
+                              ? <span><span className="font-mono text-xs text-slate-500">{socioCodigo}</span> — {socioLabel}</span>
+                              : socioLabel)
+                          : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-4 py-3 text-xs">
                         <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${a.destino_aporte === 'risa' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'}`}>
@@ -612,7 +809,7 @@ export default function FondosClient({
                         {a.observaciones ?? <span className="text-gray-300">—</span>}
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
@@ -633,6 +830,7 @@ export default function FondosClient({
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Código</th>
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Nombre</th>
                     <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">CUIT</th>
                     <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Email</th>
@@ -642,6 +840,7 @@ export default function FondosClient({
                 <tbody className="divide-y divide-gray-100">
                   {socios.map(s => (
                     <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.codigo ?? <span className="text-gray-300">—</span>}</td>
                       <td className="px-4 py-3 text-sm font-medium text-gray-900">{s.nombre}</td>
                       <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">{s.cuit ?? <span className="text-gray-300">—</span>}</td>
                       <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">{s.email ?? <span className="text-gray-300">—</span>}</td>
@@ -890,6 +1089,259 @@ export default function FondosClient({
       </div>
 
       </>)}
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          Etapa 2B/2C — Modales nuevos
+          ═══════════════════════════════════════════════════════════════════════ */}
+
+      {/* ── Modal: Nuevo socio ──────────────────────────────────────────────── */}
+      {nuevoModal === 'newSocio' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <h2 className="mb-5 text-lg font-semibold text-gray-900">Nuevo socio</h2>
+            <form onSubmit={handleCrearSocio} className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Nombre <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={socioForm.nombre}
+                  onChange={e => setSocioForm({ ...socioForm, nombre: e.target.value })}
+                  className={inputCls}
+                  placeholder="Juan Pérez"
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">CUIT</label>
+                  <input type="text" value={socioForm.cuit} onChange={e => setSocioForm({ ...socioForm, cuit: e.target.value })} className={inputCls} placeholder="20-12345678-9" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
+                  <input type="email" value={socioForm.email} onChange={e => setSocioForm({ ...socioForm, email: e.target.value })} className={inputCls} placeholder="socio@email.com" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Teléfono</label>
+                  <input type="text" value={socioForm.telefono} onChange={e => setSocioForm({ ...socioForm, telefono: e.target.value })} className={inputCls} placeholder="+54 11 1234-5678" />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Observaciones</label>
+                <textarea value={socioForm.observaciones} onChange={e => setSocioForm({ ...socioForm, observaciones: e.target.value })} rows={2} className={`${inputCls} resize-none`} />
+              </div>
+              {nuevoError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{nuevoError}</div>}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={closeNuevoModal} disabled={isPending} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50">Cancelar</button>
+                <button type="submit" disabled={isPending} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50">{isPending ? 'Guardando…' : 'Crear socio'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Nuevo financiador ─────────────────────────────────────────── */}
+      {nuevoModal === 'newFinanciador' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <h2 className="mb-5 text-lg font-semibold text-gray-900">Nuevo financiador</h2>
+            <form onSubmit={handleCrearFinanciador} className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Nombre <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={finForm.nombre}
+                  onChange={e => setFinForm({ ...finForm, nombre: e.target.value })}
+                  className={inputCls}
+                  placeholder="Juan Gómez"
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">CUIT</label>
+                  <input type="text" value={finForm.cuit} onChange={e => setFinForm({ ...finForm, cuit: e.target.value })} className={inputCls} placeholder="20-12345678-9" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
+                  <input type="email" value={finForm.email} onChange={e => setFinForm({ ...finForm, email: e.target.value })} className={inputCls} placeholder="financiador@email.com" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Teléfono</label>
+                  <input type="text" value={finForm.telefono} onChange={e => setFinForm({ ...finForm, telefono: e.target.value })} className={inputCls} placeholder="+54 11 1234-5678" />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Observaciones</label>
+                <textarea value={finForm.observaciones} onChange={e => setFinForm({ ...finForm, observaciones: e.target.value })} rows={2} className={`${inputCls} resize-none`} />
+              </div>
+              {nuevoError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{nuevoError}</div>}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={closeNuevoModal} disabled={isPending} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50">Cancelar</button>
+                <button type="submit" disabled={isPending} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50">{isPending ? 'Guardando…' : 'Crear financiador'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Nuevo aporte ─────────────────────────────────────────────── */}
+      {nuevoModal === 'newAporte' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <h2 className="mb-5 text-lg font-semibold text-gray-900">Registrar nuevo aporte</h2>
+            <form onSubmit={handleRegistrarAporteSocio} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Fecha</label>
+                  <input
+                    type="date"
+                    value={aporteSocioForm.fecha}
+                    onChange={e => setAporteSocioForm({ ...aporteSocioForm, fecha: e.target.value })}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Moneda</label>
+                  <select
+                    value={aporteSocioForm.moneda}
+                    onChange={e => setAporteSocioForm({ ...aporteSocioForm, moneda: e.target.value })}
+                    className={inputCls}
+                  >
+                    {MONEDAS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Socio <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={aporteSocioForm.socio_id}
+                  onChange={e => setAporteSocioForm({ ...aporteSocioForm, socio_id: e.target.value })}
+                  className={inputCls}
+                >
+                  <option value="">— Seleccionar socio —</option>
+                  {sociosActivos.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {(s.codigo ?? 'Sin código') + ' — ' + s.nombre}
+                    </option>
+                  ))}
+                </select>
+                {sociosActivos.length === 0 && (
+                  <p className="mt-1 text-xs text-amber-700">No hay socios. Creá uno con &quot;+ Nuevo socio&quot; primero.</p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Importe <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={aporteSocioForm.importe}
+                  onChange={e => setAporteSocioForm({ ...aporteSocioForm, importe: e.target.value })}
+                  className={`${inputCls} tabular-nums`}
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Destino del aporte</label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                    aporteSocioForm.destino_aporte === 'risa'
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="destino"
+                      value="risa"
+                      checked={aporteSocioForm.destino_aporte === 'risa'}
+                      onChange={() => setAporteSocioForm({ ...aporteSocioForm, destino_aporte: 'risa', financiador_id: '' })}
+                      className="sr-only"
+                    />
+                    Aportar a RISA
+                  </label>
+                  <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                    aporteSocioForm.destino_aporte === 'cancelacion_financiacion'
+                      ? 'border-indigo-700 bg-indigo-700 text-white'
+                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="destino"
+                      value="cancelacion_financiacion"
+                      checked={aporteSocioForm.destino_aporte === 'cancelacion_financiacion'}
+                      onChange={() => setAporteSocioForm({ ...aporteSocioForm, destino_aporte: 'cancelacion_financiacion' })}
+                      className="sr-only"
+                    />
+                    Cancelar financiación
+                  </label>
+                </div>
+              </div>
+
+              {aporteSocioForm.destino_aporte === 'cancelacion_financiacion' && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Financiador <span className="text-red-500">*</span>
+                  </label>
+                  {financiadoresConDeuda.length === 0 ? (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      No hay financiación pendiente para cancelar.
+                    </p>
+                  ) : (
+                    <>
+                      <select
+                        value={aporteSocioForm.financiador_id}
+                        onChange={e => setAporteSocioForm({ ...aporteSocioForm, financiador_id: e.target.value })}
+                        className={inputCls}
+                      >
+                        <option value="">— Seleccionar financiador —</option>
+                        {financiadoresConDeuda
+                          .filter(f => f.moneda === aporteSocioForm.moneda)
+                          .map(f => (
+                            <option key={`${f.financiador_id}-${f.moneda}`} value={f.financiador_id}>
+                              {(f.financiador_codigo ?? 'Sin código') + ' — ' + f.financiador_nombre + ' · saldo pendiente ' + f.moneda + ' ' + fmt(f.saldo_pendiente)}
+                            </option>
+                          ))}
+                      </select>
+                      {saldoPendienteSeleccionado !== null && (
+                        <p className="mt-1 text-xs text-gray-500">
+                          Saldo pendiente con este financiador: <span className="font-medium tabular-nums">{aporteSocioForm.moneda} {fmt(saldoPendienteSeleccionado)}</span>
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Observaciones</label>
+                <textarea
+                  value={aporteSocioForm.observaciones}
+                  onChange={e => setAporteSocioForm({ ...aporteSocioForm, observaciones: e.target.value })}
+                  rows={2}
+                  className={`${inputCls} resize-none`}
+                />
+              </div>
+
+              {nuevoError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{nuevoError}</div>}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={closeNuevoModal} disabled={isPending} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50">Cancelar</button>
+                <button type="submit" disabled={isPending} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50">{isPending ? 'Guardando…' : 'Registrar aporte'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ─── Modal: Nuevo / Editar fondo ───────────────────────────────────── */}
       {(modal === 'newFondo' || modal === 'editFondo') && (

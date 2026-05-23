@@ -187,3 +187,149 @@ export async function registrarAporte(data: AportePayload) {
   if (error) throw new Error(cleanDbError(error.message))
   revalidatePath('/fondos')
 }
+
+// ─── Etapa 2B: crear socio ───────────────────────────────────────────────────
+
+export type SocioPayload = {
+  nombre:        string
+  cuit:          string | null
+  email:         string | null
+  telefono:      string | null
+  observaciones: string | null
+}
+
+export type SocioActionResult =
+  | { ok: true; id: string; codigo: string | null; nombre: string }
+  | { ok: false; error: string }
+
+export async function crearSocio(data: SocioPayload): Promise<SocioActionResult> {
+  try {
+    const supabase = createClient()
+    const auth = await supabase.auth.getUser()
+    if (!auth.data?.user) return { ok: false, error: 'No autenticado' }
+
+    const nombre = data.nombre.trim()
+    if (!nombre) return { ok: false, error: 'El nombre es requerido.' }
+
+    const payload = {
+      nombre,
+      cuit:          data.cuit?.trim() || null,
+      email:         data.email?.trim() || null,
+      telefono:      data.telefono?.trim() || null,
+      observaciones: data.observaciones?.trim() || null,
+      created_by:    auth.data.user.id,
+    }
+
+    const { data: inserted, error } = await supabase
+      .from('socios')
+      .insert(payload)
+      .select('id, codigo, nombre')
+      .single()
+
+    if (error) {
+      console.error('[crearSocio] insert error:', { code: error.code, message: error.message })
+      return { ok: false, error: cleanDbError(error.message) }
+    }
+    if (!inserted) return { ok: false, error: 'No se pudo crear el socio.' }
+
+    revalidatePath('/fondos')
+    return { ok: true, id: inserted.id, codigo: inserted.codigo, nombre: inserted.nombre }
+  } catch (err) {
+    console.error('[crearSocio] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
+}
+
+// ─── Etapa 2B: crear financiador ─────────────────────────────────────────────
+
+export type FinanciadorPayload = SocioPayload
+
+export type FinanciadorActionResult =
+  | { ok: true; id: string; codigo: string | null; nombre: string }
+  | { ok: false; error: string }
+
+export async function crearFinanciador(data: FinanciadorPayload): Promise<FinanciadorActionResult> {
+  try {
+    const supabase = createClient()
+    const auth = await supabase.auth.getUser()
+    if (!auth.data?.user) return { ok: false, error: 'No autenticado' }
+
+    const nombre = data.nombre.trim()
+    if (!nombre) return { ok: false, error: 'El nombre es requerido.' }
+
+    const payload = {
+      nombre,
+      cuit:          data.cuit?.trim() || null,
+      email:         data.email?.trim() || null,
+      telefono:      data.telefono?.trim() || null,
+      observaciones: data.observaciones?.trim() || null,
+      created_by:    auth.data.user.id,
+    }
+
+    const { data: inserted, error } = await supabase
+      .from('financiadores')
+      .insert(payload)
+      .select('id, codigo, nombre')
+      .single()
+
+    if (error) {
+      console.error('[crearFinanciador] insert error:', { code: error.code, message: error.message })
+      return { ok: false, error: cleanDbError(error.message) }
+    }
+    if (!inserted) return { ok: false, error: 'No se pudo crear el financiador.' }
+
+    revalidatePath('/fondos')
+    return { ok: true, id: inserted.id, codigo: inserted.codigo, nombre: inserted.nombre }
+  } catch (err) {
+    console.error('[crearFinanciador] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
+}
+
+// ─── Etapa 2C: registrar aporte de socio (transaccional vía RPC SECURITY DEFINER)
+
+export type AporteSocioPayload = {
+  fecha:           string                                                  // ISO date YYYY-MM-DD
+  socio_id:        string
+  importe:         number
+  moneda:          string
+  destino_aporte:  'risa' | 'cancelacion_financiacion'
+  financiador_id:  string | null                                           // requerido si destino = 'cancelacion_financiacion'
+  observaciones:   string | null
+}
+
+export type AporteSocioActionResult =
+  | { ok: true; aporte_id: string }
+  | { ok: false; error: string }
+
+export async function registrarAporteSocio(data: AporteSocioPayload): Promise<AporteSocioActionResult> {
+  try {
+    if (!Number.isFinite(data.importe) || data.importe <= 0) {
+      return { ok: false, error: 'El importe debe ser mayor a 0.' }
+    }
+    if (data.destino_aporte === 'cancelacion_financiacion' && !data.financiador_id) {
+      return { ok: false, error: 'El financiador es obligatorio cuando el destino es cancelar financiación.' }
+    }
+
+    const supabase = createClient()
+    const { data: result, error } = await supabase.rpc('registrar_aporte_socio', {
+      p_fecha:          data.fecha,
+      p_socio_id:       data.socio_id,
+      p_importe:        data.importe,
+      p_moneda:         data.moneda,
+      p_destino_aporte: data.destino_aporte,
+      p_financiador_id: data.financiador_id,
+      p_observaciones:  data.observaciones,
+    })
+    if (error) {
+      console.error('[registrarAporteSocio] RPC error:', { code: error.code, message: error.message })
+      return { ok: false, error: cleanDbError(error.message) }
+    }
+
+    revalidatePath('/fondos')
+    return { ok: true, aporte_id: result as string }
+  } catch (err) {
+    console.error('[registrarAporteSocio] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
+}

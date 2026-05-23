@@ -2,7 +2,10 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import FondosClient, { type AporteFondoRow, type MovimientoFondoRow } from './FondosClient'
 import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole } from '@/types'
-import { createFondo, updateFondo, deleteFondo, registrarAporte, getFondoDependencies } from './actions'
+import {
+  createFondo, updateFondo, deleteFondo, registrarAporte, getFondoDependencies,
+  crearSocio, crearFinanciador, registrarAporteSocio,
+} from './actions'
 
 export default async function FondosPage() {
   const supabase = createClient()
@@ -40,10 +43,11 @@ export default async function FondosPage() {
       .is('deleted_at', null)
       .order('fecha_aporte', { ascending: false }),
 
-    // Etapa 1: tabla socios
+    // Etapa 2B: SELECT con codigo. Si la migración de socios.codigo no se aplicó,
+    // el SELECT falla con 42703; en ese caso retry sin codigo (hidratado a null).
     supabase
       .from('socios')
-      .select('id, nombre, cuit, email, telefono, observaciones, deleted_at, created_by, created_at, updated_at')
+      .select('id, codigo, nombre, cuit, email, telefono, observaciones, deleted_at, created_by, created_at, updated_at')
       .is('deleted_at', null)
       .order('nombre'),
 
@@ -67,10 +71,27 @@ export default async function FondosPage() {
       .order('created_at', { ascending: false }),
   ])
 
+  // Tolerancia: si socios.codigo aún no existe (Etapa 2B SQL pendiente), retry
+  // sin codigo. Esto permite que el listado siga funcionando hasta que el
+  // usuario aplique la migración.
+  let sociosData = sociosResult.data
+  if (
+    sociosResult.error?.code === '42703' &&
+    (sociosResult.error.message ?? '').includes('codigo')
+  ) {
+    console.warn('[fondos] socios.codigo no disponible aún; retry sin codigo')
+    const fb = await supabase
+      .from('socios')
+      .select('id, nombre, cuit, email, telefono, observaciones, deleted_at, created_by, created_at, updated_at')
+      .is('deleted_at', null)
+      .order('nombre')
+    sociosData = (fb.data ?? []).map(s => ({ ...s, codigo: null }))
+  }
+
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const fondos: Fondo[] = (fondosResult.data ?? []) as Fondo[]
   const aportes = (aportesResult.data ?? []) as unknown as AporteFondoRow[]
-  const socios = (sociosResult.data ?? []) as Socio[]
+  const socios = (sociosData ?? []) as Socio[]
   const financiadores = (financiadoresResult.data ?? []) as Financiador[]
   const saldosFinanciadores = (saldosFinResult.data ?? []) as SaldoFinanciadorRow[]
   const movimientos = (movimientosResult.data ?? []) as MovimientoFondoRow[]
@@ -97,6 +118,9 @@ export default async function FondosPage() {
         onDeleteFondo={deleteFondo}
         onGetFondoDependencies={getFondoDependencies}
         onRegistrarAporte={registrarAporte}
+        onCrearSocio={crearSocio}
+        onCrearFinanciador={crearFinanciador}
+        onRegistrarAporteSocio={registrarAporteSocio}
       />
     </div>
   )
