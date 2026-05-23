@@ -151,3 +151,51 @@ Reintegro genera otro registro con tipo='cancelacion'.
 **Qué**: Si la spec impacta > 2 archivos o introduce SQL no trivial, **preguntar con AskUserQuestion** antes de meter mano. Ofrecer etapas A/B/C.
 
 **Por qué**: Sesiones largas consumen contexto. Mejor entregar etapa estable que dejar 3 etapas a medias.
+
+---
+
+## D14. Deprecación del modelo de cuenta corriente entre fondos
+
+**Qué**: El modelo de "varios fondos internos con deudas entre sí" introducido en commit `f66325b` (`fondo_pagador_id`, `fondo_responsable_id`, `genera_deuda_interna`, `deuda_interna_id`, tabla `movimientos_entre_fondos`, view `v_cuenta_corriente_fondos`) queda **deprecado y NO se debe aplicar**.
+
+**Por qué**: La realidad funcional es que **hay un solo fondo operativo (RISA)** y las deudas son con **terceros externos** (financiadores), no entre fondos internos. El modelo nuevo (D15+) cubre esto correctamente.
+
+**Cuándo aplicar**:
+- ❌ No aplicar la SQL de la migración `f66325b`
+- ✅ El código TS tolerante existente queda inerte si la columna no está en DB
+- ✅ Si en el futuro vuelve a existir un caso de múltiples fondos internos, retomar como punto de partida
+
+---
+
+## D15. socio_id como FK principal en aportes_fondo, aportante text legacy
+
+**Qué**: La columna `aportes_fondo.aportante` (text libre) se conserva como legacy. La nueva relación es `aportes_fondo.socio_id` que apunta a `socios(id)`. La UI nueva usa `socio_id`. El text `aportante` puede dejarse en `null` o como display name secundario.
+
+**Por qué**:
+- Trazabilidad: poder agrupar aportes por socio (mismo `socio_id` para múltiples aportes)
+- Soft-delete de socio sin perder historia
+- Si el aporte se hace con propósito de cancelar financiación, vincular al financiador via `financiador_id`
+
+**Cuándo aplicar**:
+- Reset operativo de 2026-05-23 ya borró aportes históricos, así que no hay backfill destructivo
+- UI nueva siempre debe crear o seleccionar un socio
+- No remover `aportante` text en esta sesión; puede deprecarse en una iteración futura
+
+---
+
+## D16. RISA único + financiadores externos como modelo financiero
+
+**Qué**: Hay un único fondo operativo (RISA, `codigo='FON-001'`). Los gastos se cancelan con RISA (afecta saldo) o con un financiador (genera deuda en `movimientos_financiacion`). Los aportes de socios fondean RISA o cancelan financiación pendiente con un financiador específico.
+
+**Por qué**: Modelo realista para el caso operativo actual. Más simple que múltiples fondos, más expresivo que un solo fondo plano.
+
+**Reglas**:
+- RISA puede tener saldo negativo. No hay validación SQL ni frontend de "saldo >= 0".
+- Cancelación con RISA: baja el saldo de RISA, genera movimiento en `movimientos_fondo`.
+- Cancelación con financiador: NO baja saldo RISA, genera `movimientos_financiacion` tipo `'deuda_generada'`.
+- Aporte a RISA: sube saldo RISA, genera movimiento en `movimientos_fondo`.
+- Aporte para cancelar financiación: NO toca RISA, genera `movimientos_financiacion` tipo `'cancelacion_por_aporte'`.
+
+**Terminología obligatoria en UI**:
+- ✅ "Financiador", "Fuente de financiación", "Cancelado por financiador", "Cuenta corriente de financiación", "Financiación pendiente"
+- ❌ NO usar "Prestamista", "Préstamo" en UI (puede aparecer en comentarios internos)
