@@ -111,6 +111,7 @@ Reset operativo aplicado 2026-05-23. Borrados: fondos, gastos, pagos, movimiento
 - Códigos: G/P (6 dígitos sin dash) para gastos/pagos; FON/APO/FIN/SOC (3 dígitos con dash) para fondos/aportes/financiadores/socios
 - Triggers BEFORE INSERT asignan codigo automáticamente; setval sincroniza para que el próximo INSERT empiece desde MAX+1
 - **D18**: Todo listado muestra "Código" (entidades maestras) o "N° transacción" (operaciones). Nunca UUID como identificador visible principal. Ver `DECISIONS.md` para detalle.
+- **D19**: Todos los listados deben tener búsqueda general, filtros por columna, ordenamiento, botón "Limpiar filtros" y empty states diferenciados. Usar `DataTable` componente reusable (ya en `src/components/`).
 
 ## Notas para Etapa 2
 

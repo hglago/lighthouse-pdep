@@ -451,43 +451,197 @@ export default function FondosClient({
     return m
   }, [aportes])
 
-  // Sorters para cada tabla (Etapa 2D — orden por código/N° transacción)
-  // Nota: aportesAccessors ya existe arriba como legacy. Usamos sufijo Nuevo.
-  const aportesNuevoAccessors = useMemo(() => ({
-    codigo: (a: AporteFondoRow) => a.codigo ?? '',
-    fecha:  (a: AporteFondoRow) => a.fecha_aporte,
-    socio:  (a: AporteFondoRow) => a.socios?.nombre ?? a.aportante ?? '',
-    destino:(a: AporteFondoRow) => a.destino_aporte,
-    importe:(a: AporteFondoRow) => a.monto,
-  }), [])
-  const aportesSort = useSortable(aportes, aportesNuevoAccessors, { key: 'codigo', dir: 'desc' })
+  // ─── Etapa F1: búsqueda local por tabla ────────────────────────────────────
+  const [searchAportes, setSearchAportes] = useState('')
+  const [searchMovimientos, setSearchMovimientos] = useState('')
+  const [searchSocios, setSearchSocios] = useState('')
+  const [searchFinanciadores, setSearchFinanciadores] = useState('')
+  const [searchFinPendiente, setSearchFinPendiente] = useState('')
 
-  const movimientosAccessors = useMemo(() => ({
-    nro_tx:  (m: MovimientoFondoRow) => (m.aporte_id ? (aporteCodigoPorId.get(m.aporte_id) ?? '') : ''),
-    fecha:   (m: MovimientoFondoRow) => m.fecha,
-    tipo:    (m: MovimientoFondoRow) => m.tipo,
-    concepto:(m: MovimientoFondoRow) => m.concepto,
-    monto:   (m: MovimientoFondoRow) => m.monto,
-  }), [aporteCodigoPorId])
-  const movimientosSort = useSortable(movimientosRisa, movimientosAccessors, { key: 'fecha', dir: 'desc' })
+  // ─── Etapa F1: columnas DataTable por tabla ────────────────────────────────
 
-  const sociosAccessors = useMemo(() => ({
-    codigo:   (s: Socio) => s.codigo ?? '',
-    nombre:   (s: Socio) => s.nombre,
-    cuit:     (s: Socio) => s.cuit ?? '',
-    email:    (s: Socio) => s.email ?? '',
-    telefono: (s: Socio) => s.telefono ?? '',
-  }), [])
-  const sociosSort = useSortable(socios, sociosAccessors, { key: 'codigo', dir: 'asc' })
+  // Aportes
+  const aportesColumns: Column<AporteFondoRow>[] = [
+    {
+      key: 'codigo', label: 'N° transacción',
+      accessor: a => a.codigo ?? '',
+      type: 'text',
+      render: a => <span className="font-mono text-xs text-slate-600">{a.codigo ?? '—'}</span>,
+    },
+    {
+      key: 'fecha_aporte', label: 'Fecha',
+      accessor: a => a.fecha_aporte,
+      type: 'date',
+      render: a => <span className="whitespace-nowrap">{a.fecha_aporte}</span>,
+    },
+    {
+      key: 'socio', label: 'Socio / aportante',
+      accessor: a => a.socios?.nombre ?? a.aportante ?? '',
+      type: 'text',
+      render: a => {
+        const codigoSocio = socios.find(s => s.id === a.socio_id)?.codigo ?? null
+        const label = a.socios?.nombre ?? a.aportante ?? null
+        if (!label) return <span className="text-gray-300">—</span>
+        return codigoSocio
+          ? <span><span className="font-mono text-xs text-slate-500">{codigoSocio}</span> — {label}</span>
+          : <>{label}</>
+      },
+    },
+    {
+      key: 'destino', label: 'Destino',
+      accessor: a => a.destino_aporte,
+      type: 'enum',
+      enumOptions: [
+        { value: 'risa', label: 'RISA' },
+        { value: 'cancelacion_financiacion', label: 'Cancelación financiación' },
+      ],
+      render: a => (
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${a.destino_aporte === 'risa' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'}`}>
+          {destinoLabel(a.destino_aporte)}
+        </span>
+      ),
+    },
+    {
+      key: 'financiador', label: 'Financiador',
+      accessor: a => a.financiadores?.nombre ?? '',
+      type: 'text',
+      render: a => a.financiadores
+        ? <span><span className="font-mono text-xs text-slate-500">{a.financiadores.codigo}</span> · {a.financiadores.nombre}</span>
+        : <span className="text-gray-300">—</span>,
+    },
+    {
+      key: 'monto', label: 'Importe',
+      accessor: a => a.monto,
+      type: 'number',
+      align: 'right',
+      render: a => <span className="font-medium tabular-nums">{fmt(a.monto)}</span>,
+    },
+    { key: 'moneda', label: 'Moneda', accessor: a => a.moneda, type: 'enum' },
+    {
+      key: 'observaciones', label: 'Observaciones',
+      accessor: a => a.observaciones ?? '',
+      type: 'text',
+      render: a => (
+        <span className="block max-w-xs truncate text-gray-500" title={a.observaciones ?? ''}>
+          {a.observaciones ?? <span className="text-gray-300">—</span>}
+        </span>
+      ),
+    },
+  ]
 
-  const financiadoresAccessors = useMemo(() => ({
-    codigo:   (f: Financiador) => f.codigo ?? '',
-    nombre:   (f: Financiador) => f.nombre,
-    cuit:     (f: Financiador) => f.cuit ?? '',
-    email:    (f: Financiador) => f.email ?? '',
-    telefono: (f: Financiador) => f.telefono ?? '',
-  }), [])
-  const financiadoresSort = useSortable(financiadores, financiadoresAccessors, { key: 'codigo', dir: 'asc' })
+  // Cuenta corriente RISA (movimientos_fondo)
+  const movimientosColumns: Column<MovimientoFondoRow>[] = [
+    {
+      key: 'nro_tx', label: 'N° transacción',
+      accessor: m => m.aporte_id ? (aporteCodigoPorId.get(m.aporte_id) ?? '') : '',
+      type: 'text',
+      render: m => {
+        const nro = m.aporte_id ? aporteCodigoPorId.get(m.aporte_id) ?? null : null
+        return nro
+          ? <span className="font-mono text-xs text-slate-600 whitespace-nowrap">{nro}</span>
+          : <span className="text-gray-300">—</span>
+      },
+    },
+    { key: 'fecha', label: 'Fecha', accessor: m => m.fecha, type: 'date' },
+    {
+      key: 'tipo', label: 'Tipo',
+      accessor: m => m.tipo,
+      type: 'enum',
+      enumOptions: [
+        { value: 'credito', label: 'Ingreso' },
+        { value: 'debito', label: 'Egreso' },
+      ],
+      render: m => {
+        const esCredito = m.tipo === 'credito'
+        return (
+          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${esCredito ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-1 ring-rose-200'}`}>
+            {esCredito ? 'Ingreso' : 'Egreso'}
+          </span>
+        )
+      },
+    },
+    { key: 'concepto', label: 'Concepto', accessor: m => m.concepto, type: 'text' },
+    {
+      key: 'ingreso', label: 'Ingreso',
+      accessor: m => m.tipo === 'credito' ? m.monto : 0,
+      type: 'number', align: 'right', filterable: false,
+      render: m => m.tipo === 'credito'
+        ? <span className="tabular-nums text-emerald-700">{fmt(m.monto)}</span>
+        : <span className="text-gray-300">—</span>,
+    },
+    {
+      key: 'egreso', label: 'Egreso',
+      accessor: m => m.tipo === 'debito' ? m.monto : 0,
+      type: 'number', align: 'right', filterable: false,
+      render: m => m.tipo === 'debito'
+        ? <span className="tabular-nums text-rose-700">{fmt(m.monto)}</span>
+        : <span className="text-gray-300">—</span>,
+    },
+    {
+      key: 'saldo_resultante', label: 'Saldo resultante',
+      accessor: m => m.saldo_resultante,
+      type: 'number', align: 'right',
+      render: m => (
+        <span className={`tabular-nums font-medium ${m.saldo_resultante < 0 ? 'text-red-700' : 'text-gray-900'}`}>
+          {fmt(m.saldo_resultante)}
+        </span>
+      ),
+    },
+  ]
+
+  // Socios
+  const sociosColumns: Column<Socio>[] = [
+    { key: 'codigo', label: 'Código', accessor: s => s.codigo ?? '', type: 'text',
+      render: s => <span className="font-mono text-xs text-slate-600">{s.codigo ?? '—'}</span> },
+    { key: 'nombre', label: 'Nombre', accessor: s => s.nombre, type: 'text' },
+    { key: 'cuit', label: 'CUIT', accessor: s => s.cuit ?? '', type: 'text', className: 'hidden sm:table-cell' },
+    { key: 'email', label: 'Email', accessor: s => s.email ?? '', type: 'text', className: 'hidden md:table-cell' },
+    { key: 'telefono', label: 'Teléfono', accessor: s => s.telefono ?? '', type: 'text', className: 'hidden lg:table-cell' },
+  ]
+
+  // Financiadores
+  const financiadoresColumns: Column<Financiador>[] = [
+    { key: 'codigo', label: 'Código', accessor: f => f.codigo ?? '', type: 'text',
+      render: f => <span className="font-mono text-xs text-slate-600">{f.codigo ?? '—'}</span> },
+    { key: 'nombre', label: 'Nombre', accessor: f => f.nombre, type: 'text' },
+    { key: 'cuit', label: 'CUIT', accessor: f => f.cuit ?? '', type: 'text', className: 'hidden sm:table-cell' },
+    { key: 'email', label: 'Email', accessor: f => f.email ?? '', type: 'text', className: 'hidden md:table-cell' },
+    { key: 'telefono', label: 'Teléfono', accessor: f => f.telefono ?? '', type: 'text', className: 'hidden lg:table-cell' },
+  ]
+
+  // Financiación pendiente (v_saldos_financiadores)
+  // Cada fila se identifica por la combinación (financiador_id, moneda)
+  type SaldoFinRow = SaldoFinanciadorRow
+  const finPendienteColumns: Column<SaldoFinRow>[] = [
+    { key: 'codigo', label: 'Código', accessor: s => s.financiador_codigo ?? '', type: 'text',
+      render: s => <span className="font-mono text-xs text-slate-600">{s.financiador_codigo ?? '—'}</span> },
+    {
+      key: 'nombre', label: 'Financiador',
+      accessor: s => s.financiador_nombre,
+      type: 'text',
+      render: s => (
+        <span>
+          {s.financiador_nombre}
+          {s.financiador_deleted_at && <span className="ml-2 text-xs text-gray-400">(dado de baja)</span>}
+        </span>
+      ),
+    },
+    { key: 'moneda', label: 'Moneda', accessor: s => s.moneda, type: 'enum' },
+    { key: 'total_deuda_generada', label: 'Deuda generada', accessor: s => s.total_deuda_generada, type: 'number', align: 'right',
+      render: s => <span className="tabular-nums text-gray-700">{fmt(s.total_deuda_generada)}</span> },
+    { key: 'total_cancelado', label: 'Cancelado con aportes', accessor: s => s.total_cancelado, type: 'number', align: 'right',
+      render: s => <span className="tabular-nums text-gray-700">{fmt(s.total_cancelado)}</span> },
+    {
+      key: 'saldo_pendiente', label: 'Saldo pendiente',
+      accessor: s => s.saldo_pendiente,
+      type: 'number', align: 'right',
+      render: s => (
+        <span className={`tabular-nums font-medium ${s.saldo_pendiente > 0 ? 'text-amber-700' : 'text-gray-900'}`}>
+          {fmt(s.saldo_pendiente)}
+        </span>
+      ),
+    },
+  ]
 
   // ─── Etapa 2B/2C: state + handlers para los nuevos modales ─────────────────
 
@@ -711,241 +865,139 @@ export default function FondosClient({
 
       {/* ── Cuenta corriente RISA ─────────────────────────────────────────── */}
       <div className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">
-          Cuenta corriente RISA{risa?.codigo ? ` — ${risa.codigo}` : ''}
-        </h3>
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          {movimientosRisa.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-400">
-              No hay movimientos en la cuenta corriente.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <SortableHeader label="N° transacción" sortKey="nro_tx" activeKey={movimientosSort.sortKey} dir={movimientosSort.sortDir} onSort={movimientosSort.onSort} />
-                    <SortableHeader label="Fecha" sortKey="fecha" activeKey={movimientosSort.sortKey} dir={movimientosSort.sortDir} onSort={movimientosSort.onSort} />
-                    <SortableHeader label="Tipo" sortKey="tipo" activeKey={movimientosSort.sortKey} dir={movimientosSort.sortDir} onSort={movimientosSort.onSort} />
-                    <SortableHeader label="Concepto" sortKey="concepto" activeKey={movimientosSort.sortKey} dir={movimientosSort.sortDir} onSort={movimientosSort.onSort} />
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Ingreso</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Egreso</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Saldo resultante</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {movimientosSort.sorted.map(m => {
-                    const esCredito = m.tipo === 'credito'
-                    const nroTx = m.aporte_id ? aporteCodigoPorId.get(m.aporte_id) ?? null : null
-                    return (
-                      <tr key={m.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3 text-xs font-mono text-slate-600 whitespace-nowrap">
-                          {nroTx ?? <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{m.fecha}</td>
-                        <td className="px-4 py-3 text-xs">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${esCredito ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-1 ring-rose-200'}`}>
-                            {esCredito ? 'Ingreso' : 'Egreso'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-700">{m.concepto}</td>
-                        <td className="px-4 py-3 text-right text-sm tabular-nums text-emerald-700">
-                          {esCredito ? fmt(m.monto) : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-4 py-3 text-right text-sm tabular-nums text-rose-700">
-                          {!esCredito ? fmt(m.monto) : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className={`px-4 py-3 text-right text-sm font-medium tabular-nums ${m.saldo_resultante < 0 ? 'text-red-700' : 'text-gray-900'}`}>
-                          {fmt(m.saldo_resultante)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-gray-900">
+            Cuenta corriente RISA{risa?.codigo ? ` — ${risa.codigo}` : ''}
+          </h3>
+          <input
+            type="text"
+            value={searchMovimientos}
+            onChange={e => setSearchMovimientos(e.target.value)}
+            placeholder="Buscar… (APO-###, concepto, tipo)"
+            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+          />
         </div>
+        <DataTable<MovimientoFondoRow>
+          rows={movimientosRisa}
+          columns={movimientosColumns}
+          getRowId={m => m.id}
+          searchTerm={searchMovimientos}
+          searchKeys={['nro_tx', 'concepto', 'tipo']}
+          initialSort={{ key: 'fecha', dir: 'desc' }}
+          emptyMessage={
+            movimientosRisa.length === 0
+              ? 'No hay movimientos en la cuenta corriente.'
+              : 'No hay movimientos que coincidan con los filtros.'
+          }
+        />
       </div>
 
       {/* ── Financiación pendiente (v_saldos_financiadores) ─────────────────── */}
       <div className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">Financiación pendiente</h3>
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          {saldosFinanciadores.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-400">
-              No hay financiación pendiente.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Código</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Financiador</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Moneda</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Deuda generada</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Cancelado con aportes</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Saldo pendiente</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {saldosFinanciadores.map(s => (
-                    <tr key={`${s.financiador_id}-${s.moneda}`} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.financiador_codigo ?? '—'}</td>
-                      <td className="px-4 py-3 text-sm text-gray-900">
-                        {s.financiador_nombre}
-                        {s.financiador_deleted_at && <span className="ml-2 text-xs text-gray-400">(dado de baja)</span>}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-500">{s.moneda}</td>
-                      <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-700">{fmt(s.total_deuda_generada)}</td>
-                      <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-700">{fmt(s.total_cancelado)}</td>
-                      <td className={`px-4 py-3 text-right text-sm font-medium tabular-nums ${s.saldo_pendiente > 0 ? 'text-amber-700' : 'text-gray-900'}`}>
-                        {fmt(s.saldo_pendiente)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-gray-900">Financiación pendiente</h3>
+          <input
+            type="text"
+            value={searchFinPendiente}
+            onChange={e => setSearchFinPendiente(e.target.value)}
+            placeholder="Buscar… (FIN-###, nombre, moneda)"
+            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+          />
         </div>
+        <DataTable<SaldoFinanciadorRow>
+          rows={saldosFinanciadores}
+          columns={finPendienteColumns}
+          getRowId={s => `${s.financiador_id}-${s.moneda}`}
+          searchTerm={searchFinPendiente}
+          searchKeys={['codigo', 'nombre', 'moneda']}
+          initialSort={{ key: 'saldo_pendiente', dir: 'desc' }}
+          emptyMessage={
+            saldosFinanciadores.length === 0
+              ? 'No hay financiación pendiente.'
+              : 'No hay financiación que coincida con los filtros.'
+          }
+        />
       </div>
 
       {/* ── Aportes de socios ─────────────────────────────────────────────── */}
       <div className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">Aportes de socios</h3>
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          {aportes.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-400">
-              No hay aportes registrados.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <SortableHeader label="N° transacción" sortKey="codigo"  activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} />
-                    <SortableHeader label="Fecha"          sortKey="fecha"   activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} />
-                    <SortableHeader label="Socio / aportante" sortKey="socio" activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} />
-                    <SortableHeader label="Destino"        sortKey="destino" activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} />
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Financiador</th>
-                    <SortableHeader label="Importe"        sortKey="importe" activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} align="right" />
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Moneda</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Observaciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {aportesSort.sorted.map(a => {
-                    const socioCodigo = socios.find(s => s.id === a.socio_id)?.codigo ?? null
-                    const socioLabel = a.socios?.nombre ?? a.aportante ?? null
-                    return (
-                    <tr key={a.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 text-xs font-mono text-slate-600">{a.codigo ?? '—'}</td>
-                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{a.fecha_aporte}</td>
-                      <td className="px-4 py-3 text-sm text-gray-900">
-                        {socioLabel
-                          ? (socioCodigo
-                              ? <span><span className="font-mono text-xs text-slate-500">{socioCodigo}</span> — {socioLabel}</span>
-                              : socioLabel)
-                          : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-xs">
-                        <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${a.destino_aporte === 'risa' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'}`}>
-                          {destinoLabel(a.destino_aporte)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-700">
-                        {a.financiadores
-                          ? <span><span className="text-xs font-mono text-slate-500">{a.financiadores.codigo}</span> · {a.financiadores.nombre}</span>
-                          : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900">{fmt(a.monto)}</td>
-                      <td className="px-4 py-3 text-sm text-gray-500">{a.moneda}</td>
-                      <td className="px-4 py-3 text-sm text-gray-500 max-w-xs truncate" title={a.observaciones ?? ''}>
-                        {a.observaciones ?? <span className="text-gray-300">—</span>}
-                      </td>
-                    </tr>
-                  )})}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-gray-900">Aportes de socios</h3>
+          <input
+            type="text"
+            value={searchAportes}
+            onChange={e => setSearchAportes(e.target.value)}
+            placeholder="Buscar… (APO-###, socio, financiador, destino)"
+            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+          />
         </div>
+        <DataTable<AporteFondoRow>
+          rows={aportes}
+          columns={aportesColumns}
+          getRowId={a => a.id}
+          searchTerm={searchAportes}
+          searchKeys={['codigo', 'socio', 'financiador', 'destino', 'observaciones', 'moneda']}
+          initialSort={{ key: 'codigo', dir: 'desc' }}
+          emptyMessage={
+            aportes.length === 0
+              ? 'No hay aportes registrados.'
+              : 'No hay aportes que coincidan con los filtros.'
+          }
+        />
       </div>
 
       {/* ── Socios ──────────────────────────────────────────────────────────── */}
       <div className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">Socios</h3>
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          {socios.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-400">
-              No hay socios registrados.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <SortableHeader label="Código"   sortKey="codigo"   activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} />
-                    <SortableHeader label="Nombre"   sortKey="nombre"   activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} />
-                    <SortableHeader label="CUIT"     sortKey="cuit"     activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} className="hidden sm:table-cell" />
-                    <SortableHeader label="Email"    sortKey="email"    activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} className="hidden md:table-cell" />
-                    <SortableHeader label="Teléfono" sortKey="telefono" activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} className="hidden lg:table-cell" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {sociosSort.sorted.map(s => (
-                    <tr key={s.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.codigo ?? <span className="text-gray-300">—</span>}</td>
-                      <td className="px-4 py-3 text-sm font-medium text-gray-900">{s.nombre}</td>
-                      <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">{s.cuit ?? <span className="text-gray-300">—</span>}</td>
-                      <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">{s.email ?? <span className="text-gray-300">—</span>}</td>
-                      <td className="hidden px-4 py-3 text-sm text-gray-500 lg:table-cell">{s.telefono ?? <span className="text-gray-300">—</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-gray-900">Socios</h3>
+          <input
+            type="text"
+            value={searchSocios}
+            onChange={e => setSearchSocios(e.target.value)}
+            placeholder="Buscar… (SOC-###, nombre, CUIT, email)"
+            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+          />
         </div>
+        <DataTable<Socio>
+          rows={socios}
+          columns={sociosColumns}
+          getRowId={s => s.id}
+          searchTerm={searchSocios}
+          searchKeys={['codigo', 'nombre', 'cuit', 'email', 'telefono']}
+          initialSort={{ key: 'codigo', dir: 'asc' }}
+          emptyMessage={
+            socios.length === 0
+              ? 'No hay socios registrados.'
+              : 'No hay socios que coincidan con los filtros.'
+          }
+        />
       </div>
 
       {/* ── Financiadores ───────────────────────────────────────────────────── */}
       <div className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">Financiadores</h3>
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          {financiadores.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-400">
-              No hay financiadores registrados.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <SortableHeader label="Código"   sortKey="codigo"   activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} />
-                    <SortableHeader label="Nombre"   sortKey="nombre"   activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} />
-                    <SortableHeader label="CUIT"     sortKey="cuit"     activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} className="hidden sm:table-cell" />
-                    <SortableHeader label="Email"    sortKey="email"    activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} className="hidden md:table-cell" />
-                    <SortableHeader label="Teléfono" sortKey="telefono" activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} className="hidden lg:table-cell" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {financiadoresSort.sorted.map(f => (
-                    <tr key={f.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 text-xs font-mono text-slate-600">{f.codigo ?? '—'}</td>
-                      <td className="px-4 py-3 text-sm font-medium text-gray-900">{f.nombre}</td>
-                      <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">{f.cuit ?? <span className="text-gray-300">—</span>}</td>
-                      <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">{f.email ?? <span className="text-gray-300">—</span>}</td>
-                      <td className="hidden px-4 py-3 text-sm text-gray-500 lg:table-cell">{f.telefono ?? <span className="text-gray-300">—</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-gray-900">Financiadores</h3>
+          <input
+            type="text"
+            value={searchFinanciadores}
+            onChange={e => setSearchFinanciadores(e.target.value)}
+            placeholder="Buscar… (FIN-###, nombre, CUIT, email)"
+            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+          />
         </div>
+        <DataTable<Financiador>
+          rows={financiadores}
+          columns={financiadoresColumns}
+          getRowId={f => f.id}
+          searchTerm={searchFinanciadores}
+          searchKeys={['codigo', 'nombre', 'cuit', 'email', 'telefono']}
+          initialSort={{ key: 'codigo', dir: 'asc' }}
+          emptyMessage={
+            financiadores.length === 0
+              ? 'No hay financiadores registrados.'
+              : 'No hay financiadores que coincidan con los filtros.'
+          }
+        />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════

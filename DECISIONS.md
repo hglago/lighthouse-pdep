@@ -243,3 +243,60 @@ Reintegro genera otro registro con tipo='cancelacion'.
 - En messages de éxito post-creación, mostrar el codigo: `"Aporte APO-001 registrado correctamente."`
 
 **Cuándo aplicar**: en cualquier nueva tabla de listado y en cualquier exportación. Aplicable inmediatamente a /fondos en Etapa 2D. A extender a /gastos en Etapa 3 y /pagos en Etapa 4.
+
+---
+
+## D19. Todos los listados deben tener búsqueda, filtros y ordenamiento
+
+**Qué**: Todo listado operativo o maestro debe incluir:
+1. **Código** o **N° transacción** como primera columna (per D18)
+2. **Input de búsqueda general** (placeholder `"Buscar…"`) que mira los campos más relevantes
+3. **Filtros por columna** (texto contiene / número rango / fecha rango / enum multi-select) accesibles vía ícono en el header
+4. **Ordenamiento** click-to-sort sobre las columnas relevantes (asc → desc → none)
+5. **Botón "Limpiar filtros"** cuando hay filtros activos
+6. **Empty states diferenciados**:
+   - Sin datos en absoluto: `"No hay X registrados."`
+   - Con datos pero filtros sin match: `"No hay X que coincidan con los filtros."`
+
+**Por qué**: Consistencia operativa entre módulos. UX predecible. Datos navegables sin tener que recordar UUIDs ni filtros externos.
+
+**Cómo aplicar**: usar el componente `src/components/DataTable.tsx` (ya existente y probado). Incluye todos los requisitos arriba. La búsqueda general se pasa externamente (`searchTerm` + `searchKeys`). Los filtros por columna se manejan internamente por DataTable.
+
+**Patrón mínimo**:
+
+```tsx
+const [search, setSearch] = useState('')
+const columns: Column<T>[] = [
+  { key: 'codigo', label: 'N° transacción', accessor: r => r.codigo ?? '', type: 'text' },
+  { key: 'fecha',  label: 'Fecha',          accessor: r => r.fecha,        type: 'date' },
+  { key: 'monto',  label: 'Importe',        accessor: r => r.monto,        type: 'number', align: 'right' },
+  // ...
+]
+
+<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar…" />
+<DataTable
+  rows={rows}
+  columns={columns}
+  getRowId={r => r.id}
+  searchTerm={search}
+  searchKeys={['codigo', 'fecha', ...]}
+  initialSort={{ key: 'codigo', dir: 'desc' }}
+  emptyMessage={
+    rows.length === 0
+      ? 'No hay X registrados.'
+      : 'No hay X que coincidan con los filtros.'
+  }
+/>
+```
+
+**Estado de aplicación por módulo**:
+
+| Módulo | Estado | Etapa |
+|---|---|---|
+| Fondos (5 tablas: aportes, cuenta corriente RISA, socios, financiadores, financiación pendiente) | ✅ Aplicado | F1 (cerrada) |
+| Proveedores | ✅ Parcial (ya usa DataTable desde el refactor previo) | F2 (pendiente revisar) |
+| Gastos | ⏸ Pendiente | F3 |
+| Pagos | ⏸ Pendiente | F4 |
+| Anticipos, Honorarios, Rendiciones | ⏸ Pendiente (si existen los módulos) | F5 |
+
+**Cuándo NO aplicar**: en cuentas legacy / tablas administrativas one-off donde el costo no se justifica. Documentar la excepción.
