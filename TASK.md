@@ -2,80 +2,113 @@
 
 Tarea actual. Solo la activa. Cuando se cierre, reemplazar contenido.
 
-## Tarea: Refactor Proveedores con servicios por hora + deprecar Honorarios — **P1 cerrada, P2 próxima**
+## Checkpoint de sesión — 2026-05-23
 
-Cambio de prioridad confirmado 2026-05-23: pausamos Etapa 3B Gastos (`forma_cancelacion`) — quedó en `stash@{0}` con mensaje "WIP Etapa 3B Gastos - forma_cancelacion" — para implementar primero el modelo unificado Proveedores/Gastos con servicio por hora y deprecar el módulo Honorarios.
+Refactor Pagos rama RISA vs Financiador (Etapa 4) **en curso**. SQL P4b entregado y pendiente de aplicar por el usuario. Resto de etapas P3 (servicio por hora) cerradas.
 
-### Decisiones funcionales cerradas (2026-05-23)
+## Próximos pasos al retomar (en orden)
 
-- Columna en proveedores: **`valor_hora`** (no `tarifa_hora`).
-- Recurrentes **SÍ** soportan servicio por hora (campos espejo en `gastos_recurrentes`, sin período — se calcula al generar).
-- Deprecación Honorarios = **Opción B**: sacar de sidebar, página con mensaje "Módulo deprecado — los honorarios ahora se cargan como Gasto con proveedor por horas. → Ir a Gastos". Middleware y permisos `honorarios:*` quedan inertes pero presentes (D21).
-- Uplift **no modifica** importes operativos. Solo snapshot informativo para futura liquidación a socios (D22).
-- Recurrentes con servicio por hora **copian snapshot** al gasto generado, no leen en vivo del proveedor (D23).
-- Stash 3B (`forma_cancelacion`) se resuelve **después de P4** — no aplicar, no descartar.
+### Paso A — Aplicar SQL P4b en Supabase
 
-### Estado de etapas del refactor activo
+El bloque idempotente ya está entregado en el chat previo. Modifica in-place:
 
-| Etapa | Scope | Estado |
+- `fn_confirmar_pago(p_pago_id uuid)` — branching por `gasto.forma_cancelacion`.
+- `fn_anular_pago(p_pago_id uuid)` — branching por `pago.forma_cancelacion`.
+
+Rama financiador: INSERT en `movimientos_financiacion` (tipo `'deuda_generada'` al confirmar, `'reversa'` al anular). NO toca `movimientos_fondo` ni saldo RISA. Setea `pagos.forma_cancelacion`, `financiador_id`, `afecta_saldo_risa=false`, `movimiento_financiacion_id`.
+
+Rama RISA: comportamiento histórico (movimientos_fondo + saldo). Setea `pagos.forma_cancelacion='risa'`, `afecta_saldo_risa=true`.
+
+Rollback disponible: los cuerpos previos están capturados en DIAG-1 y DIAG-2 del chat.
+
+### Paso B — Validar VAL-1..3 post-aplicación
+
+- VAL-1: cuerpo de `fn_confirmar_pago` contiene `v_es_financiado` y bloque "Rama financiador".
+- VAL-2: cuerpo de `fn_anular_pago` contiene `IF v_pago.forma_cancelacion = 'financiador'`.
+- VAL-3: triggers en `pagos` siguen siendo 4 (`trg_audit_pagos`, `trg_pagos_hardening`, `trg_pagos_set_nro`, `trg_pagos_updated_at`).
+
+### Paso C — Smoke test gasto RISA (regresión)
+
+Crear gasto con `forma_cancelacion='risa'`, aprobar, pagar parcial. Verificar:
+- 1 fila en `movimientos_fondo` (débito).
+- Saldo RISA bajó.
+- Al anular: 2 filas (débito + crédito), saldo vuelve.
+- 0 filas en `movimientos_financiacion`.
+
+### Paso D — Smoke test gasto financiado (cambio funcional)
+
+Crear gasto con `forma_cancelacion='financiador'` + `financiador_id=<FIN-X>`, aprobar, pagar parcial. Verificar:
+- 1 fila en `movimientos_financiacion` con `tipo='deuda_generada'`, importe = monto del pago.
+- 0 filas en `movimientos_fondo` para ese pago.
+- Saldo RISA sin cambios.
+- `v_saldos_financiadores` muestra `saldo_pendiente` = importe del pago.
+- `pagos.estado='pagado'`, `forma_cancelacion='financiador'`, `afecta_saldo_risa=false`, `movimiento_financiacion_id` poblado.
+- Al anular: 2 filas (`deuda_generada` + `reversa`), saldo_pendiente vuelve a 0.
+
+### Paso E — Si P4b OK, avanzar a P4c
+
+**P4c — UI Pagos** (próxima etapa de código, bloqueada por P4b):
+- Limpiar código zombie D14 (`fondo_pagador_id`, `fondo_responsable_id`, `genera_deuda_interna`, `deuda_interna_id`) de `pagos/page.tsx` SELECT y `PagosClient.PagoRow`.
+- Extender SELECT con join a gastos para traer `forma_cancelacion`, `financiador_id`, `financiadores(codigo, nombre)`.
+- Badge en tabla y modal: "Se cancelará con RISA" o "Se cancelará con financiador FIN-### Nombre".
+- Si financiado, mostrar texto "Este pago generará deuda pendiente con el financiador."
+- UX toggle "Pago total" / "Pago parcial". Pago total = saldo pendiente del gasto. Pago parcial = input editable con cap por saldo.
+- Validación cliente reutiliza `validarSaldoPendiente`.
+
+### Paso F — Después de P4c, P4d
+
+**P4d — UI Fondos cuenta corriente financiadores**:
+- Auditar `FondosClient.tsx` para decidir sección vs tab.
+- Resumen via `v_saldos_financiadores` (ya cargada en `/fondos/page.tsx`).
+- Detalle expandible por financiador desde `movimientos_financiacion`.
+
+## Etapas cerradas en esta sesión
+
+| Etapa | Commit | Resultado |
 |---|---|---|
-| **P1** | SQL idempotente: proveedores (+permite_horas_servicio, +valor_hora) + gastos (+8 columnas snapshot + CHECK) + gastos_recurrentes (+6 columnas espejo + CHECK). NOTIFY pgrst. | ✅ **APLICADA Y VALIDADA 2026-05-23** (VAL-1..9 OK) |
-| **P2** | UI Proveedores: types/database.ts + ProveedoresClient (checkbox + valor_hora en modal + columna "Servicio" en tabla) + actions tolerantes (extender `normalizeProveedor`, `stripCamposOpcionales`) + page.tsx tolerante. Sin tocar Gastos. | ⏸ **Próxima** — esperando confirmación |
-| **P3** | UI Gastos + UI Gastos recurrentes con bloque `DetalleServicioBlock` reusable. Extender `GastoPayload` + page.tsx. **Plus**: SQL UPDATE de `fn_generar_gastos_recurrentes` para copiar snapshot + calcular período del mes (D23). | ⏸ Pendiente |
-| **P4** | Quitar entry "Honorarios" del Sidebar. `/honorarios/page.tsx` → mensaje deprecado + link a `/gastos`. Documentar en RELEASES.md. | ⏸ Pendiente |
-| **Post-P4** | `git stash pop stash@{0}` → resolver merge con código P3 → cerrar Etapa 3B Gastos `forma_cancelacion`. | ⏸ Pendiente, bloqueada por P4 |
+| **P1** (SQL servicios por hora + snapshot uplift) | `795137f` (docs) | ✅ Aplicada y validada en Supabase |
+| **P2** (UI Proveedores) | `ea13d07` | ✅ Validada manualmente por usuario |
+| **P3a** (UI Gastos servicio por hora) | `f63635c` | ✅ Validado por usuario |
+| **P3a-fix** (input Horas + checkbox opt-in) | `382684b` | ✅ Validado por usuario |
+| **P3a-fc** (forma_cancelacion en Gasto, sin generar deuda) | `193f478` | ✅ Funcional |
+| **Versión visible en UI** | `1f347b7` | ✅ Sidebar muestra tag · commit · env |
 
-### Estado de etapas previas (referencia)
+## En curso
 
-| Etapa | Scope | Estado |
-|---|---|---|
-| 0–F1 + tag v0.2.0-risa-fondos | Modelo RISA + Socios + Financiadores + Aportes + DataTable global | ✅ Cerradas |
-| 3B Gastos (`forma_cancelacion`) | UI RISA / Financiador en modal de gastos | ⏸ stasheado en `stash@{0}`, retoma post-P4 |
-| 4 Pagos (rama RISA vs financiador) | UI Pagos | ⏸ Pendiente, post P3-P4 |
-| 5 Anulaciones / reversas | — | ⏸ Pendiente |
+| Etapa | Estado |
+|---|---|
+| **P4a** (DIAG SQL) | ✅ Diagnóstico completo. Confirmado bug en `fn_confirmar_pago` + `fn_anular_pago`. |
+| **P4b** (SQL update RPC pagos) | ⏸ SQL entregado, **pendiente de aplicar por el usuario en Supabase** |
+| **P4c** (UI Pagos) | ⏸ Bloqueada por P4b |
+| **P4d** (UI Fondos CC financiadores) | ⏸ Bloqueada por P4c |
+| **Post-P4** (recuperar stash 3B) | ⏸ `stash@{0}` intacto como referencia |
 
-### Próximo paso — P2 UI Proveedores
+## Restricciones vigentes
 
-Scope objetivo (a confirmar antes de implementar):
-
-- `src/types/database.ts`: extender interface `Proveedor` con `permite_horas_servicio: boolean` y `valor_hora: number`.
-- `src/app/(dashboard)/proveedores/actions.ts`:
-  - Extender `ProveedorPayload` con los dos campos.
-  - Renombrar `normalizeUplift` → `normalizeProveedor` y normalizar ambos bloques (uplift + horas).
-  - Renombrar `stripUplift` → `stripCamposOpcionales` y remover también los nuevos campos en el retry.
-  - Extender `isUpliftColumnMissingError` para detectar `permite_horas_servicio`/`valor_hora`.
-  - `createProveedorQuick` queda intacto (sigue creando proveedor común; el flag de horas se setea desde el modal completo).
-- `src/app/(dashboard)/proveedores/page.tsx`: extender el SELECT enriquecido (segundo SELECT tolerante) con los dos campos nuevos, hidratar defaults (`false` / `0`).
-- `src/app/(dashboard)/proveedores/ProveedoresClient.tsx`:
-  - Nuevo bloque "Tipo de proveedor" en modal: checkbox "Permite cargar horas de servicio" + input `valor_hora` (visible solo si el checkbox está activo).
-  - Validación cliente: si `permite_horas_servicio=true`, `valor_hora` debe ser numérico ≥ 0.
-  - Nueva columna "Servicio" en tabla (entre Teléfono y Uplift), badge: "Por hora — $20.000" si aplica, "—" si no.
-  - `searchKeys` no se extiende (no aporta filtrar por valor_hora).
-- Validación: `npx tsc --noEmit` + `npm run build` (con dev server apagado, D6).
-
-### Decisiones a confirmar antes de P2
-
-1. ¿Aplicar P2 + commit + push antes de pasar a P3? (sí por default — etapas shippables D13/D20)
-2. ¿Splitear P3 en P3a (UI Gastos) y P3b (UI Recurrentes + SQL `fn_generar_gastos_recurrentes`) para reducir scope por etapa?
-3. Estilo del nuevo bloque "Tipo de proveedor": ¿caja indigo igual que uplift, o caja gris neutra?
-
-### Restricciones que siguen vigentes
-
-- NO tocar Pagos / Fondos / `registrar_aporte_socio` / `fn_pagos_hardening` durante P2.
-- NO tocar `fn_generar_gastos_recurrentes` en P2. Su update entra en P3.
-- NO aplicar migración vieja de cuenta corriente entre fondos (D14).
-- NO usar service_role.
+- NO avanzar a P4c sin que P4b esté aplicado y validado.
+- NO tocar Fondos / Proveedores / Honorarios fuera del scope P4d.
+- NO aplicar migración vieja `movimientos_entre_fondos` (D14).
+- NO usar service_role en frontend.
 - NO desactivar RLS.
-- NO usar palabra "Prestamista".
-- NO recuperar `stash@{0}` hasta que se cierre P4.
-- Cierre cada hito con tag si la magnitud lo justifica (D20).
+- NO recuperar `stash@{0}` (sigue como referencia hasta cerrar P4).
+- NO usar palabra "Prestamista" en UI (D16).
+- NO mostrar UUID como identificador principal (D18).
 
-### Volver al hito si algo se rompe
+## Decisiones funcionales clave activas (chequear `DECISIONS.md`)
+
+- **D16**: RISA único + financiadores externos.
+- **D18**: Código / N° transacción en listados.
+- **D21**: Honorarios deprecado operativamente (P4d implementará UI).
+- **D22**: Uplift solo informativo.
+- **D23**: Recurrentes con servicio por hora copian snapshot.
+
+## Volver al hito si algo se rompe
 
 ```bash
-# Volver al tag estable previo:
+# Tag estable v0.2.0-risa-fondos:
 git reset --hard v0.2.0-risa-fondos
-# Si P1 ya se aplicó en DB, revertir manualmente (DROP COLUMN IF EXISTS) o aceptar el schema extendido.
 ```
 
-Las columnas de P1 son aditivas con defaults `false` / `0` / `NULL`, por lo que no rompen flujos existentes — el código actual sigue funcionando sin ellas (SELECT tolerante de proveedores ya cubre el caso).
+Para revertir P4b (si se aplica y rompe): los cuerpos originales de `fn_confirmar_pago` y `fn_anular_pago` están en DIAG-1 / DIAG-2 del chat — pegarlos como `CREATE OR REPLACE FUNCTION ...` y aplicar.
+
+Las columnas P1 son aditivas con defaults (`false` / `0` / `NULL`), no rompen flujos existentes.

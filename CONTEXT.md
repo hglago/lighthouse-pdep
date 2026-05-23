@@ -9,8 +9,17 @@ Estado actual del proyecto. Lo que está hecho, lo que falta aplicar, dónde est
 Ver `RELEASES.md`.
 
 **Trabajo en curso post-tag** (no incluido en v0.2.0):
-- **Etapa 3B Gastos (`forma_cancelacion`)**: implementación parcial **stasheada** en `stash@{0}` con mensaje "WIP Etapa 3B Gastos - forma_cancelacion". Se retoma después de P4 (decisión cambio prioridad 2026-05-23).
-- **Refactor Proveedores con servicios por hora + deprecar Honorarios**: prioridad activa. Plan P1→P4. **P1 (SQL) aplicado y validado 2026-05-23**. P2–P4 pendientes.
+- **Refactor Proveedores/Gastos con servicios por hora + forma de cancelación financiada + cuenta corriente financiadores**:
+  - **P1 SQL servicios por hora + snapshot uplift**: ✅ aplicada y validada 2026-05-23.
+  - **P2 UI Proveedores**: ✅ commit `ea13d07`, validada manualmente.
+  - **P3a UI Gastos servicio por hora**: ✅ commit `f63635c` + `382684b` (fix opt-in + input horas). Validado manualmente.
+  - **P3a-fc forma_cancelacion en Gasto (RISA/Financiador, sin generar deuda)**: ✅ commit `193f478`. Componentes `FinanciadorSelect` y `FinanciadorQuickCreateModal` extraídos del stash sin consumirlo.
+  - **Versión visible en UI** (sidebar muestra tag · commit · env): ✅ commit `1f347b7`.
+  - **P4a DIAG SQL Pagos**: ✅ diagnóstico completo. Confirmado bug en `fn_confirmar_pago` + `fn_anular_pago` (no distinguen RISA vs financiador).
+  - **P4b SQL update RPC pagos**: ⏸ SQL entregado al usuario en el chat, **pendiente de aplicar en Supabase**.
+  - **P4c UI Pagos (limpiar D14 + badge cancelación + UX pago total/parcial)**: ⏸ bloqueada por P4b.
+  - **P4d UI Fondos sección cuenta corriente financiadores**: ⏸ bloqueada por P4c.
+- **Etapa 3B Gastos (UI RISA/Financiador con radio buttons)**: stash `stash@{0}` intacto como referencia. Los 2 componentes nuevos ya están extraídos en main; el resto del stash se descartará al cerrar P4 (la spec se cumple con checkbox opt-in en `193f478`).
 
 ## Decisión de modelo financiero (vigente)
 
