@@ -4,10 +4,31 @@ Policies, RPCs, patrón SECURITY DEFINER. Comportamientos no obvios.
 
 ## Reglas generales
 
-- **RLS está activo** en todas las tablas operativas.
+- **RLS está activo** en todas las tablas operativas (incluyendo las 3 nuevas de Etapa 1: `socios`, `financiadores`, `movimientos_financiacion`).
 - **`anon` no tiene policies**. Solo `authenticated`.
 - **Service_role bypasea RLS** (no usar en frontend nunca).
 - Las policies estándar suelen ser permisivas para `authenticated`; cuando una operación falla por RLS y la policy parece correcta, el problema casi siempre es un **trigger** o una **policy RESTRICTIVE oculta**.
+
+## Policies aplicadas en Etapa 1 (sobre tablas nuevas)
+
+Mismo patrón usado en el resto del proyecto: SELECT abierto a authenticated, INSERT con `created_by = auth.uid()`, UPDATE para soft-delete sin restricción de creador. **Sin policy DELETE** (soft-delete por convención).
+
+| Tabla | Policy | Comando | USING | WITH CHECK |
+|---|---|---|---|---|
+| `socios` | `socios_select` | SELECT | true | — |
+| `socios` | `socios_insert` | INSERT | — | `created_by = auth.uid()` |
+| `socios` | `socios_update` | UPDATE | true | true |
+| `financiadores` | `financiadores_select` | SELECT | true | — |
+| `financiadores` | `financiadores_insert` | INSERT | — | `created_by = auth.uid()` |
+| `financiadores` | `financiadores_update` | UPDATE | true | true |
+| `movimientos_financiacion` | `movimientos_financiacion_select` | SELECT | true | — |
+| `movimientos_financiacion` | `movimientos_financiacion_insert` | INSERT | — | `created_by = auth.uid()` |
+
+Total: 8 policies. **No hay policies DELETE** — los movimientos no se borran físicamente; cualquier corrección va vía nuevo movimiento tipo `'reversa'` o `'ajuste'`.
+
+## Constraints eliminadas en Etapa 1
+
+- **`fondos.fondos_saldo_no_negativo`**: CHECK `(saldo_actual >= 0)` — eliminada. RISA puede quedar en saldo negativo cuando se paga sin fondos suficientes. La validación de "negative budget" pasa a ser puramente informativa en UI; el DB no bloquea.
 
 ## Patrón cuando RLS falla "inexplicablemente"
 
@@ -88,8 +109,21 @@ GRANT EXECUTE ON FUNCTION public.<accion>_<entidad>(<arg_types>) TO authenticate
 - `fn_email_by_usuario_login(p_login)` — login custom. Lee de profiles.
 - `fn_confirmar_pago(p_pago_id)` — marca pago + actualiza saldo + dispara recalc.
 - `fn_anular_pago(p_pago_id)` — anula + genera reverso de movimiento.
-- `fn_registrar_aporte(...)` — aporte + movimiento + saldo.
+- `fn_registrar_aporte(...)` — aporte + movimiento + saldo (legacy, sin socio_id).
 - `fn_generar_gastos_recurrentes()` — auto-gen mensual.
+- `fn_set_fondo_codigo()`, `fn_set_aporte_codigo()`, `fn_set_financiador_codigo()` — triggers BEFORE INSERT que asignan codigos FON/APO/FIN si vienen NULL (Etapa 1).
+
+## RPCs planeadas para Etapas 2-4 (NO existen aún)
+
+Solo plan. Se crean cuando arranquen las etapas correspondientes. Patrón: SECURITY DEFINER si RLS bloquea.
+
+- `crear_socio(payload)` — INSERT en socios (puede usar policy directa si no bloquea)
+- `crear_financiador(payload)` — INSERT en financiadores
+- `crear_aporte_socio_risa(payload)` — INSERT aporte + INSERT movimiento_fondo + UPDATE fondos.saldo_actual (transaccional)
+- `cancelar_financiacion_con_aporte(payload)` — INSERT aporte (destino='cancelacion_financiacion') + INSERT movimientos_financiacion (tipo='cancelacion_por_aporte'). Validar importe ≤ saldo_pendiente_financiador.
+- `confirmar_pago_con_risa(p_pago_id)` — extiende `fn_confirmar_pago` para rama RISA (genera movimiento_fondo).
+- `confirmar_pago_con_financiador(p_pago_id)` — INSERT movimiento_financiacion (tipo='deuda_generada') sin tocar saldo RISA. Update pago.estado = 'pagado'.
+- `anular_pago_con_financiador(p_pago_id)` — INSERT movimiento_financiacion (tipo='reversa') + update pago.estado = 'anulado'.
 
 ## Trigger `fn_pagos_hardening`
 

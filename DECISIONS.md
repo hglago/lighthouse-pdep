@@ -199,3 +199,10 @@ Reintegro genera otro registro con tipo='cancelacion'.
 **Terminología obligatoria en UI**:
 - ✅ "Financiador", "Fuente de financiación", "Cancelado por financiador", "Cuenta corriente de financiación", "Financiación pendiente"
 - ❌ NO usar "Prestamista", "Préstamo" en UI (puede aparecer en comentarios internos)
+
+**Estado de implementación**:
+- Etapa 1 (schema DB): ✅ aplicado 2026-05-23. Schema operativo del nuevo modelo en producción
+- Etapa 2 (UI Fondos): pendiente
+- Etapa 3 (UI Gastos con `forma_cancelacion`): pendiente
+- Etapa 4 (Pagos con rama RISA vs financiador): pendiente
+- Etapa 5 (anulaciones / reversas): pendiente

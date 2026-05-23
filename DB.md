@@ -1,22 +1,24 @@
 # DB.md
 
-Esquema Supabase conocido. Solo lo que se confirmó tocando el código + migraciones aplicadas.
+Esquema Supabase conocido. Solo lo confirmado tocando el código + migraciones aplicadas.
 
 ## Tablas operativas
 
 ### `fondos`
 - `id uuid PK`
+- `codigo text UNIQUE` (FON-### asignado por trigger `trg_set_fondo_codigo`) — **Etapa 1 aplicada**
 - `nombre text NOT NULL`
 - `descripcion text`
 - `monto_inicial numeric`
-- `saldo_actual numeric` (actualizado por movimientos_fondo)
+- `saldo_actual numeric` (actualizado por movimientos_fondo). **Puede ser negativo** (constraint `fondos_saldo_no_negativo` eliminada en Etapa 1)
 - `moneda text` (ARS, USD, EUR)
 - `estado FondoEstado` ('activo' | 'cerrado' | 'suspendido')
 - `responsable_id uuid`
 - `created_by uuid`
-- `created_at, updated_at, deleted_at`
-- `deleted_by uuid` (post-migración soft-delete fondo)
-- `motivo_baja text` (post-migración soft-delete fondo)
+- `created_at, updated_at`
+- `deleted_at, deleted_by uuid, motivo_baja text` (agregadas en Etapa 1)
+
+**Inicial**: `RISA` (`codigo='FON-001'`, saldo 0, ARS, activo) creada en Etapa 1.
 
 ### `proveedores`
 - `id uuid PK`
@@ -30,8 +32,11 @@ Esquema Supabase conocido. Solo lo que se confirmó tocando el código + migraci
 
 ### `gastos`
 - `id uuid PK`
-- `codigo text` (post-migración codigo, G000001…)
-- `fondo_id uuid → fondos(id)` (responsable económico)
+- `codigo text` (post-migración codigo, G######, SQL pendiente)
+- `fondo_id uuid → fondos(id)` (responsable económico legacy)
+- **`forma_cancelacion text NOT NULL DEFAULT 'risa'`** CHECK IN ('risa', 'financiador') — Etapa 1
+- **`financiador_id uuid REFERENCES financiadores(id)`** — Etapa 1
+- CHECK: si `forma='risa'` → `financiador_id IS NULL`; si `forma='financiador'` → `financiador_id IS NOT NULL`
 - `proveedor_id uuid → proveedores(id)` (nullable)
 - `descripcion text NOT NULL` (importante: NOT NULL bloquea inserts vacíos)
 - `monto numeric`, `moneda text`
@@ -49,17 +54,16 @@ Esquema Supabase conocido. Solo lo que se confirmó tocando el código + migraci
 
 ### `pagos`
 - `id uuid PK`
-- `codigo text` (post-migración codigo, P000001…)
-- `nro_pago text` (legacy, NO confundir con codigo)
+- `codigo text` (post-migración codigo, P######, SQL pendiente)
+- `nro_pago text` (legacy)
 - `fondo_id uuid → fondos(id)`
-- `fondo_pagador_id uuid → fondos(id)` (post-cuenta-corriente etapa 1)
-- `fondo_responsable_id uuid → fondos(id)` (post-cuenta-corriente etapa 1)
-- `genera_deuda_interna bool` (default false; trigger lo setea)
-- `deuda_interna_id uuid → movimientos_entre_fondos(id)` (nullable)
+- **`forma_cancelacion text NOT NULL DEFAULT 'risa'`** CHECK IN ('risa', 'financiador') — Etapa 1
+- **`financiador_id uuid REFERENCES financiadores(id)`** — Etapa 1
+- **`afecta_saldo_risa boolean NOT NULL DEFAULT true`** CHECK coherente con `forma_cancelacion` — Etapa 1
+- **`movimiento_financiacion_id uuid REFERENCES movimientos_financiacion(id)`** — Etapa 1
+- (legacy del modelo de cuenta corriente entre fondos, NO usar): `fondo_pagador_id`, `fondo_responsable_id`, `genera_deuda_interna`, `deuda_interna_id` — solo presentes si se aplicó la SQL del commit `f66325b`, que está **deprecada (D14)**
 - `proveedor_id uuid → proveedores(id)`
-- `gasto_id uuid → gastos(id)` (nullable)
-- `anticipo_id uuid → anticipos(id)` (nullable)
-- `gasto_recurrente_id uuid → gastos_recurrentes(id)` (nullable)
+- `gasto_id, anticipo_id, gasto_recurrente_id uuid` (nullable)
 - `tipo PagoTipo` ('gasto' | 'anticipo' | 'saldo_anticipo' | 'recurrente' | 'directo')
 - `concepto text`, `monto numeric`, `moneda text`
 - `fecha_pago, comprobante_url`
@@ -69,36 +73,77 @@ Esquema Supabase conocido. Solo lo que se confirmó tocando el código + migraci
 
 ### `aportes_fondo`
 - `id uuid PK`
+- **`codigo text UNIQUE`** (APO-### asignado por trigger) — Etapa 1
 - `fondo_id uuid → fondos(id)`
 - `movimiento_id uuid → movimientos_fondo(id)` (nullable)
 - `fecha_aporte date`
 - `monto numeric`, `moneda text`
 - `tipo_aporte TipoAporte` ('aporte_socios' | 'transferencia' | 'ajuste' | 'reintegro' | 'otro')
-- `aportante text`, `concepto text`
+- `aportante text` (legacy, mantener como display name secundario)
+- **`socio_id uuid REFERENCES socios(id)`** (nuevo FK principal) — Etapa 1
+- **`destino_aporte text NOT NULL DEFAULT 'risa'`** CHECK IN ('risa', 'cancelacion_financiacion') — Etapa 1
+- **`financiador_id uuid REFERENCES financiadores(id)`** — Etapa 1
+- CHECK: si `destino='risa'` → `financiador_id IS NULL`; si `destino='cancelacion_financiacion'` → `financiador_id IS NOT NULL`
+- `concepto text`
 - `comprobante_url, observaciones`
 - `created_by, created_at, updated_at, deleted_at`
 
 ### `movimientos_fondo`
-Ledger de movimientos de saldo por fondo. Actualizado por `fn_confirmar_pago` y `fn_registrar_aporte`. NO tocar directo.
+Ledger de movimientos de saldo por fondo. Actualizado por `fn_confirmar_pago`, `fn_anular_pago`, `fn_registrar_aporte`. NO tocar directo.
 
 - `id uuid PK`
 - `fondo_id uuid → fondos(id)`
 - `pago_id uuid → pagos(id)` (nullable)
 - `tipo MovimientoTipo` ('debito' | 'credito')
 - `monto numeric`
-- `saldo_anterior, saldo_resultante numeric`
+- `saldo_anterior, saldo_resultante numeric` (puede ser negativo)
 - `concepto text`, `fecha`
 - `created_by, created_at`
 
-### `movimientos_entre_fondos` (post-cuenta-corriente etapa 1)
+### `movimientos_entre_fondos` (DEPRECADA — D14, NO USAR)
+Existe en código tolerante de pagos/page.tsx pero no se aplica.
+
+### `socios` — Etapa 1
+Aportantes que pueden depositar en RISA o cancelar financiación.
+
 - `id uuid PK`
-- `fecha date`
-- `fondo_acreedor_id, fondo_deudor_id uuid → fondos(id)`
-- `pago_origen_id uuid → pagos(id)` (nullable)
-- `tipo_movimiento text` ('deuda_generada' | 'cancelacion' | 'ajuste')
-- `importe numeric(14,2)`, `moneda text`
-- `descripcion text`, `estado text` ('pendiente' | 'parcial' | 'cancelado')
-- `created_at, created_by`
+- `nombre text NOT NULL`
+- `cuit, email, telefono, observaciones text`
+- `deleted_at timestamptz` (soft-delete)
+- `created_by uuid REFERENCES auth.users(id)`
+- `created_at, updated_at timestamptz`
+
+**Nota**: no tiene `codigo`. Se identifica por id + nombre.
+
+### `financiadores` — Etapa 1
+Terceros externos que cancelan gastos por cuenta de RISA.
+
+- `id uuid PK`
+- `codigo text UNIQUE` (FIN-### asignado por trigger)
+- `nombre text NOT NULL`
+- `cuit, email, telefono, observaciones text`
+- `deleted_at timestamptz` (soft-delete)
+- `created_by uuid REFERENCES auth.users(id)`
+- `created_at, updated_at timestamptz`
+
+### `movimientos_financiacion` — Etapa 1
+Ledger de deuda entre RISA y cada financiador.
+
+- `id uuid PK`
+- `fecha date NOT NULL DEFAULT CURRENT_DATE`
+- `financiador_id uuid NOT NULL REFERENCES financiadores(id)`
+- `tipo_movimiento text` CHECK IN ('deuda_generada', 'cancelacion_por_aporte', 'ajuste', 'reversa')
+- `importe numeric(14,2)` CHECK > 0 (signo viene del tipo)
+- `moneda text NOT NULL`
+- `gasto_id uuid REFERENCES gastos(id)` (nullable)
+- `pago_id uuid REFERENCES pagos(id)` (nullable)
+- `aporte_id uuid REFERENCES aportes_fondo(id)` (nullable)
+- `socio_id uuid REFERENCES socios(id)` (nullable)
+- `descripcion text`
+- `created_by uuid REFERENCES auth.users(id)`
+- `created_at timestamptz`
+
+Indexes: financiador_id, gasto_id, pago_id, aporte_id.
 
 ### `gastos_recurrentes`
 Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
@@ -126,23 +171,35 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 
 ## Triggers conocidos
 
-- **`fn_pagos_hardening`** sobre `pagos`. Bloquea UPDATE de estado en pagos confirmados.
-  Hay que **DESACTIVAR temporalmente** en cualquier migración que toque pagos (incluyendo backfill de columnas nuevas). Ver `/safe-db-migration`.
-- **`trg_set_pago_codigo`** BEFORE INSERT en pagos. Asigna codigo si NULL.
-- **`trg_set_gasto_codigo`** BEFORE INSERT en gastos. Asigna codigo si NULL.
-- **`trg_set_pago_genera_deuda`** BEFORE INSERT OR UPDATE en pagos. Setea flag genera_deuda_interna.
-- **`fn_recalc_gasto_estado`** sobre gastos (trigger AFTER pagos cambian). Recalcula estado del gasto a pagado_parcial/pagado.
-- **`updated_at`** trigger en varias tablas. Genérico, no requiere atención especial.
+| Trigger | Tabla | Evento | Función | Qué hace |
+|---|---|---|---|---|
+| `fn_pagos_hardening` (varios triggers) | pagos | UPDATE | bloquea cambios sobre pagos confirmados (excepto a 'anulado') |
+| **`trg_set_fondo_codigo`** | fondos | BEFORE INSERT | `fn_set_fondo_codigo` | Asigna `FON-###` si NEW.codigo es NULL — Etapa 1 |
+| **`trg_set_aporte_codigo`** | aportes_fondo | BEFORE INSERT | `fn_set_aporte_codigo` | Asigna `APO-###` — Etapa 1 |
+| **`trg_set_financiador_codigo`** | financiadores | BEFORE INSERT | `fn_set_financiador_codigo` | Asigna `FIN-###` — Etapa 1 |
+| `trg_set_pago_codigo` (SQL pendiente) | pagos | BEFORE INSERT | Asigna `P######` |
+| `trg_set_gasto_codigo` (SQL pendiente) | gastos | BEFORE INSERT | Asigna `G######` |
+| `trg_set_pago_genera_deuda` (deprecada D14) | pagos | BEFORE INSERT OR UPDATE | Setea flag genera_deuda_interna |
+| `fn_recalc_gasto_estado` | gastos | AFTER pagos changes | Recalcula estado del gasto a pagado_parcial/pagado |
+| `updated_at` | varias | BEFORE UPDATE | Setea `updated_at = now()` |
 
 ## Secuencias
 
-- `gastos_codigo_seq` → siguiente G######
-- `pagos_codigo_seq` → siguiente P######
+| Sequence | Formato | Trigger asociado | Próximo valor |
+|---|---|---|---|
+| **`fondos_codigo_seq`** | FON-### | `fn_set_fondo_codigo` | next = 2 (FON-001 ocupado por RISA) |
+| **`aportes_codigo_seq`** | APO-### | `fn_set_aporte_codigo` | next = 1 (APO-001) |
+| **`financiadores_codigo_seq`** | FIN-### | `fn_set_financiador_codigo` | next = 1 (FIN-001) |
+| `gastos_codigo_seq` (SQL pendiente) | G###### | — | — |
+| `pagos_codigo_seq` (SQL pendiente) | P###### | — | — |
 
 ## Vistas
 
-- **`v_obligaciones_pendientes`**: 4-UNION sobre gastos aprobados sin pagar / con saldo. Calcula saldo como `GREATEST(0, monto - SUM(pagos confirmados))`.
-- **`v_cuenta_corriente_fondos`** (post-etapa-1): agrega `movimientos_entre_fondos` por (deudor, acreedor, moneda).
+| View | Propósito |
+|---|---|
+| `v_obligaciones_pendientes` | 4-UNION sobre gastos aprobados sin pagar / con saldo. Calcula saldo = `GREATEST(0, monto - SUM(pagos confirmados))` |
+| `v_cuenta_corriente_fondos` (deprecada D14) | Modelo viejo entre fondos, no aplicar |
+| **`v_saldos_financiadores`** — Etapa 1 | Agrega `movimientos_financiacion` por (deudor=RISA implícito, acreedor=financiador, moneda). Expone: `financiador_id, financiador_codigo, financiador_nombre, financiador_deleted_at, moneda, total_deuda_generada, total_cancelado, total_ajustes, total_reversas, saldo_pendiente`. **Sin filtro `deleted_at IS NULL`** — la UI decide si filtra activos |
 
 ## Funciones SQL importantes
 
@@ -150,12 +207,23 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 |---|---|
 | `fn_confirmar_pago(p_pago_id)` | Marca pago como pagado + INSERT movimiento_fondo + UPDATE saldo_actual + dispara recalc gasto |
 | `fn_anular_pago(p_pago_id)` | Marca pago como anulado + INSERT movimiento reverso + UPDATE saldo_actual |
-| `fn_registrar_aporte(...)` | INSERT aportes_fondo + INSERT movimiento_fondo + UPDATE saldo_actual |
+| `fn_registrar_aporte(...)` | INSERT aportes_fondo + INSERT movimiento_fondo + UPDATE saldo_actual (legacy, sin socio_id) |
 | `fn_generar_gastos_recurrentes()` | Genera gastos pendientes desde recurrentes activos. Idempotente vía UNIQUE (recurrente_id, periodo) |
 | `get_my_role()` | Devuelve role del usuario actual (`SELECT role FROM profiles WHERE id = auth.uid()`) |
 | `fn_email_by_usuario_login(p_login)` | Login custom: devuelve email para signInWithPassword |
 | `soft_delete_proveedor(uuid)` | SECURITY DEFINER. Soft-delete con validación auth.uid() |
-| `soft_delete_fondo(uuid, text)` | SECURITY DEFINER. Soft-delete validando saldo=0 |
+| `soft_delete_fondo(uuid, text)` | SECURITY DEFINER. Soft-delete validando saldo=0. SQL pendiente, no aplicado en producción todavía |
+| `fn_set_fondo_codigo()`, `fn_set_aporte_codigo()`, `fn_set_financiador_codigo()` | Generan codigos FON/APO/FIN — Etapa 1 |
+
+## Funciones SQL planeadas para etapas 2-4 (NO existen aún)
+
+- `crear_socio(payload)` — SECURITY DEFINER opcional si RLS bloquea
+- `crear_financiador(payload)` — idem
+- `crear_aporte_socio_risa(payload)` — INSERT aporte + movimiento_fondo + UPDATE saldo
+- `cancelar_financiacion_con_aporte(payload)` — INSERT aporte + movimiento_financiacion (tipo='cancelacion_por_aporte')
+- `confirmar_pago_con_risa(p_pago_id)` — extiende `fn_confirmar_pago` para rama RISA
+- `confirmar_pago_con_financiador(p_pago_id)` — INSERT movimiento_financiacion (tipo='deuda_generada') sin tocar saldo RISA
+- `anular_pago_con_financiador(p_pago_id)` — reversa movimiento_financiacion
 
 ## Convenciones de naming
 
@@ -163,7 +231,8 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 - PKs: `id uuid` con `DEFAULT gen_random_uuid()`
 - Soft delete: `deleted_at timestamptz NULL`
 - Audit: `created_at, updated_at, created_by`
-- Triggers: `trg_<accion>_<tabla>` o `<tabla>_<accion>_trigger`
+- Triggers: `trg_<accion>_<tabla>`
 - Functions: `fn_<accion>` o `<accion>_<entidad>` (RPC públicas con nombre directo)
 - Sequences: `<tabla>_<columna>_seq`
 - Indices: `idx_<tabla>_<columna>`
+- Codigos visibles: `<PREFIJO>-###` (3 dígitos con dash) para FON/APO/FIN; `<PREFIJO>######` (6 dígitos sin dash) para G/P
