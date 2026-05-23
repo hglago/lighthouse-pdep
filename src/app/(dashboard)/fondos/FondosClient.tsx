@@ -23,6 +23,7 @@ export interface MovimientoFondoRow {
   id: string
   fondo_id: string
   pago_id: string | null
+  aporte_id: string | null  // Etapa 2D: trazabilidad. Null si la migración no se aplicó.
   tipo: MovimientoTipo
   monto: number
   saldo_anterior: number
@@ -440,6 +441,54 @@ export default function FondosClient({
   const destinoLabel = (d: DestinoAporte): string =>
     d === 'risa' ? 'RISA' : 'Cancelación de financiación'
 
+  // ─── Etapa 2D: lookup aporte_id → APO-### para mostrar N° transacción
+  //              en cuenta corriente RISA
+  const aporteCodigoPorId = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const a of aportes) {
+      if (a.codigo) m.set(a.id, a.codigo)
+    }
+    return m
+  }, [aportes])
+
+  // Sorters para cada tabla (Etapa 2D — orden por código/N° transacción)
+  // Nota: aportesAccessors ya existe arriba como legacy. Usamos sufijo Nuevo.
+  const aportesNuevoAccessors = useMemo(() => ({
+    codigo: (a: AporteFondoRow) => a.codigo ?? '',
+    fecha:  (a: AporteFondoRow) => a.fecha_aporte,
+    socio:  (a: AporteFondoRow) => a.socios?.nombre ?? a.aportante ?? '',
+    destino:(a: AporteFondoRow) => a.destino_aporte,
+    importe:(a: AporteFondoRow) => a.monto,
+  }), [])
+  const aportesSort = useSortable(aportes, aportesNuevoAccessors, { key: 'codigo', dir: 'desc' })
+
+  const movimientosAccessors = useMemo(() => ({
+    nro_tx:  (m: MovimientoFondoRow) => (m.aporte_id ? (aporteCodigoPorId.get(m.aporte_id) ?? '') : ''),
+    fecha:   (m: MovimientoFondoRow) => m.fecha,
+    tipo:    (m: MovimientoFondoRow) => m.tipo,
+    concepto:(m: MovimientoFondoRow) => m.concepto,
+    monto:   (m: MovimientoFondoRow) => m.monto,
+  }), [aporteCodigoPorId])
+  const movimientosSort = useSortable(movimientosRisa, movimientosAccessors, { key: 'fecha', dir: 'desc' })
+
+  const sociosAccessors = useMemo(() => ({
+    codigo:   (s: Socio) => s.codigo ?? '',
+    nombre:   (s: Socio) => s.nombre,
+    cuit:     (s: Socio) => s.cuit ?? '',
+    email:    (s: Socio) => s.email ?? '',
+    telefono: (s: Socio) => s.telefono ?? '',
+  }), [])
+  const sociosSort = useSortable(socios, sociosAccessors, { key: 'codigo', dir: 'asc' })
+
+  const financiadoresAccessors = useMemo(() => ({
+    codigo:   (f: Financiador) => f.codigo ?? '',
+    nombre:   (f: Financiador) => f.nombre,
+    cuit:     (f: Financiador) => f.cuit ?? '',
+    email:    (f: Financiador) => f.email ?? '',
+    telefono: (f: Financiador) => f.telefono ?? '',
+  }), [])
+  const financiadoresSort = useSortable(financiadores, financiadoresAccessors, { key: 'codigo', dir: 'asc' })
+
   // ─── Etapa 2B/2C: state + handlers para los nuevos modales ─────────────────
 
   type NuevoModal = 'none' | 'newSocio' | 'newFinanciador' | 'newAporte'
@@ -568,6 +617,9 @@ export default function FondosClient({
         setNuevoError(result.error)
         return
       }
+      // Etapa 2D: mensaje de éxito con N° transacción
+      const codigo = result.aporte_codigo ?? 'APO-?'
+      alert(`Aporte ${codigo} registrado correctamente.`)
       closeNuevoModal()
     })
   }
@@ -672,19 +724,24 @@ export default function FondosClient({
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Tipo</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Concepto</th>
+                    <SortableHeader label="N° transacción" sortKey="nro_tx" activeKey={movimientosSort.sortKey} dir={movimientosSort.sortDir} onSort={movimientosSort.onSort} />
+                    <SortableHeader label="Fecha" sortKey="fecha" activeKey={movimientosSort.sortKey} dir={movimientosSort.sortDir} onSort={movimientosSort.onSort} />
+                    <SortableHeader label="Tipo" sortKey="tipo" activeKey={movimientosSort.sortKey} dir={movimientosSort.sortDir} onSort={movimientosSort.onSort} />
+                    <SortableHeader label="Concepto" sortKey="concepto" activeKey={movimientosSort.sortKey} dir={movimientosSort.sortDir} onSort={movimientosSort.onSort} />
                     <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Ingreso</th>
                     <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Egreso</th>
                     <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Saldo resultante</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {movimientosRisa.map(m => {
+                  {movimientosSort.sorted.map(m => {
                     const esCredito = m.tipo === 'credito'
+                    const nroTx = m.aporte_id ? aporteCodigoPorId.get(m.aporte_id) ?? null : null
                     return (
                       <tr key={m.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 text-xs font-mono text-slate-600 whitespace-nowrap">
+                          {nroTx ?? <span className="text-gray-300">—</span>}
+                        </td>
                         <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{m.fecha}</td>
                         <td className="px-4 py-3 text-xs">
                           <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${esCredito ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-1 ring-rose-200'}`}>
@@ -768,18 +825,18 @@ export default function FondosClient({
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Código</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Socio / aportante</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Destino</th>
+                    <SortableHeader label="N° transacción" sortKey="codigo"  activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} />
+                    <SortableHeader label="Fecha"          sortKey="fecha"   activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} />
+                    <SortableHeader label="Socio / aportante" sortKey="socio" activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} />
+                    <SortableHeader label="Destino"        sortKey="destino" activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} />
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Financiador</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Importe</th>
+                    <SortableHeader label="Importe"        sortKey="importe" activeKey={aportesSort.sortKey} dir={aportesSort.sortDir} onSort={aportesSort.onSort} align="right" />
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Moneda</th>
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Observaciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {aportes.map(a => {
+                  {aportesSort.sorted.map(a => {
                     const socioCodigo = socios.find(s => s.id === a.socio_id)?.codigo ?? null
                     const socioLabel = a.socios?.nombre ?? a.aportante ?? null
                     return (
@@ -830,15 +887,15 @@ export default function FondosClient({
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Código</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Nombre</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">CUIT</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Email</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 lg:table-cell">Teléfono</th>
+                    <SortableHeader label="Código"   sortKey="codigo"   activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} />
+                    <SortableHeader label="Nombre"   sortKey="nombre"   activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} />
+                    <SortableHeader label="CUIT"     sortKey="cuit"     activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} className="hidden sm:table-cell" />
+                    <SortableHeader label="Email"    sortKey="email"    activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} className="hidden md:table-cell" />
+                    <SortableHeader label="Teléfono" sortKey="telefono" activeKey={sociosSort.sortKey} dir={sociosSort.sortDir} onSort={sociosSort.onSort} className="hidden lg:table-cell" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {socios.map(s => (
+                  {sociosSort.sorted.map(s => (
                     <tr key={s.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.codigo ?? <span className="text-gray-300">—</span>}</td>
                       <td className="px-4 py-3 text-sm font-medium text-gray-900">{s.nombre}</td>
@@ -867,15 +924,15 @@ export default function FondosClient({
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Código</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Nombre</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">CUIT</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Email</th>
-                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 lg:table-cell">Teléfono</th>
+                    <SortableHeader label="Código"   sortKey="codigo"   activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} />
+                    <SortableHeader label="Nombre"   sortKey="nombre"   activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} />
+                    <SortableHeader label="CUIT"     sortKey="cuit"     activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} className="hidden sm:table-cell" />
+                    <SortableHeader label="Email"    sortKey="email"    activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} className="hidden md:table-cell" />
+                    <SortableHeader label="Teléfono" sortKey="telefono" activeKey={financiadoresSort.sortKey} dir={financiadoresSort.sortDir} onSort={financiadoresSort.onSort} className="hidden lg:table-cell" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {financiadores.map(f => (
+                  {financiadoresSort.sorted.map(f => (
                     <tr key={f.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 text-xs font-mono text-slate-600">{f.codigo ?? '—'}</td>
                       <td className="px-4 py-3 text-sm font-medium text-gray-900">{f.nombre}</td>

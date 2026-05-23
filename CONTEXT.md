@@ -108,8 +108,9 @@ Reset operativo aplicado 2026-05-23. Borrados: fondos, gastos, pagos, movimiento
 - SECURITY DEFINER RPC para soft-delete (Proveedores, Fondos)
 - SELECTs tolerantes en pages con columnas pendientes de migrar
 - Patrón de baja: "Dar de baja" (sin estado) / "Anular" (con reverso financiero)
-- Códigos: G/P (6 dígitos sin dash) para gastos/pagos; FON/APO/FIN (3 dígitos con dash) para fondos/aportes/financiadores
+- Códigos: G/P (6 dígitos sin dash) para gastos/pagos; FON/APO/FIN/SOC (3 dígitos con dash) para fondos/aportes/financiadores/socios
 - Triggers BEFORE INSERT asignan codigo automáticamente; setval sincroniza para que el próximo INSERT empiece desde MAX+1
+- **D18**: Todo listado muestra "Código" (entidades maestras) o "N° transacción" (operaciones). Nunca UUID como identificador visible principal. Ver `DECISIONS.md` para detalle.
 
 ## Notas para Etapa 2
 

@@ -63,10 +63,12 @@ export default async function FondosPage() {
       .from('v_saldos_financiadores')
       .select('financiador_id, financiador_codigo, financiador_nombre, financiador_deleted_at, moneda, total_deuda_generada, total_cancelado, total_ajustes, total_reversas, saldo_pendiente'),
 
-    // movimientos_fondo (todos; el cliente filtra por RISA)
+    // movimientos_fondo (todos; el cliente filtra por RISA).
+    // Etapa 2D: incluimos aporte_id para trazabilidad mov → aporte. Tolerante:
+    // si la migración no se aplicó, retry sin aporte_id.
     supabase
       .from('movimientos_fondo')
-      .select('id, fondo_id, pago_id, tipo, monto, saldo_anterior, saldo_resultante, concepto, fecha, created_by, created_at')
+      .select('id, fondo_id, pago_id, aporte_id, tipo, monto, saldo_anterior, saldo_resultante, concepto, fecha, created_by, created_at')
       .order('fecha', { ascending: false })
       .order('created_at', { ascending: false }),
   ])
@@ -88,13 +90,29 @@ export default async function FondosPage() {
     sociosData = (fb.data ?? []).map(s => ({ ...s, codigo: null }))
   }
 
+  // Tolerancia: si movimientos_fondo.aporte_id aún no existe (Etapa 2D SQL
+  // pendiente), retry sin aporte_id y hidratar null.
+  let movimientosData = movimientosResult.data
+  if (
+    movimientosResult.error?.code === '42703' &&
+    (movimientosResult.error.message ?? '').includes('aporte_id')
+  ) {
+    console.warn('[fondos] movimientos_fondo.aporte_id no disponible aún; retry sin aporte_id')
+    const fb = await supabase
+      .from('movimientos_fondo')
+      .select('id, fondo_id, pago_id, tipo, monto, saldo_anterior, saldo_resultante, concepto, fecha, created_by, created_at')
+      .order('fecha', { ascending: false })
+      .order('created_at', { ascending: false })
+    movimientosData = (fb.data ?? []).map(m => ({ ...m, aporte_id: null }))
+  }
+
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const fondos: Fondo[] = (fondosResult.data ?? []) as Fondo[]
   const aportes = (aportesResult.data ?? []) as unknown as AporteFondoRow[]
   const socios = (sociosData ?? []) as Socio[]
   const financiadores = (financiadoresResult.data ?? []) as Financiador[]
   const saldosFinanciadores = (saldosFinResult.data ?? []) as SaldoFinanciadorRow[]
-  const movimientos = (movimientosResult.data ?? []) as MovimientoFondoRow[]
+  const movimientos = (movimientosData ?? []) as MovimientoFondoRow[]
 
   return (
     <div className="space-y-6">

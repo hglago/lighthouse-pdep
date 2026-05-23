@@ -299,7 +299,7 @@ export type AporteSocioPayload = {
 }
 
 export type AporteSocioActionResult =
-  | { ok: true; aporte_id: string }
+  | { ok: true; aporte_id: string; aporte_codigo: string | null }
   | { ok: false; error: string }
 
 export async function registrarAporteSocio(data: AporteSocioPayload): Promise<AporteSocioActionResult> {
@@ -326,8 +326,20 @@ export async function registrarAporteSocio(data: AporteSocioPayload): Promise<Ap
       return { ok: false, error: cleanDbError(error.message) }
     }
 
+    const aporte_id = result as string
+
+    // Opción B: SELECT post-RPC para devolver el codigo APO-### al cliente
+    const { data: aporte, error: selErr } = await supabase
+      .from('aportes_fondo')
+      .select('codigo')
+      .eq('id', aporte_id)
+      .maybeSingle()
+    if (selErr) {
+      console.warn('[registrarAporteSocio] no se pudo leer codigo del aporte:', selErr.message)
+    }
+
     revalidatePath('/fondos')
-    return { ok: true, aporte_id: result as string }
+    return { ok: true, aporte_id, aporte_codigo: aporte?.codigo ?? null }
   } catch (err) {
     console.error('[registrarAporteSocio] unhandled:', err)
     return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }

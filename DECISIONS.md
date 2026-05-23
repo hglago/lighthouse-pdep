@@ -202,7 +202,44 @@ Reintegro genera otro registro con tipo='cancelacion'.
 
 **Estado de implementación**:
 - Etapa 1 (schema DB): ✅ aplicado 2026-05-23. Schema operativo del nuevo modelo en producción
-- Etapa 2 (UI Fondos): pendiente
+- Etapa 2 (UI Fondos): ✅ 2A, 2B, 2C cerradas. 2D en curso.
 - Etapa 3 (UI Gastos con `forma_cancelacion`): pendiente
 - Etapa 4 (Pagos con rama RISA vs financiador): pendiente
 - Etapa 5 (anulaciones / reversas): pendiente
+
+---
+
+## D18. Todo listado debe mostrar Código o N° transacción (no UUID)
+
+**Qué**: Todo registro maestro u operativo debe tener un identificador funcional visible. Las entidades maestras muestran **"Código"**. Las operaciones financieras muestran **"N° transacción"**. Los UUID quedan como identificadores internos y no deben mostrarse como referencia principal en UI, exports ni informes.
+
+**Por qué**: Los UUIDs son ilegibles para humanos y no preservan orden. Los códigos funcionales son legibles, ordenables, búsquedables, y consistentes entre UI, exports, PDFs y reportes.
+
+**Convención por entidad**:
+
+| Entidad | Tipo | Etiqueta UI | Formato | Tabla.columna |
+|---|---|---|---|---|
+| Fondo | Maestra | "Código" | `FON-001` | `fondos.codigo` |
+| Socio | Maestra | "Código" | `SOC-001` | `socios.codigo` |
+| Financiador | Maestra | "Código" | `FIN-001` | `financiadores.codigo` |
+| Proveedor (futuro) | Maestra | "Código" | `PRV-001` | `proveedores.codigo` (no implementado) |
+| Aporte | Operativa | "N° transacción" | `APO-001` | `aportes_fondo.codigo` |
+| Gasto | Operativa | "N° transacción" | `G000001` | `gastos.codigo` |
+| Pago | Operativa | "N° transacción" | `P000001` | `pagos.codigo` |
+| Anticipo (futuro) | Operativa | "N° transacción" | `ANT-001` | `anticipos.codigo` (no implementado) |
+| Honorario (futuro) | Operativa | "N° transacción" | `HON-001` | (no implementado) |
+| Rendición (futuro) | Operativa | "N° transacción" | `REN-001` | (no implementado) |
+| Ajuste (futuro) | Operativa | "N° transacción" | `AJU-001` | (no implementado) |
+
+**Reglas operativas**:
+- El código lo genera la DB via trigger `BEFORE INSERT` cuando `NEW.codigo IS NULL`. El frontend nunca calcula codigos ni envía valores manuales.
+- Toda tabla operativa debe tener como **primera columna** el código/N° transacción.
+- Toda tabla debe permitir ordenar y buscar por el código.
+- En cuenta corriente RISA, cada movimiento debe mostrar la **referencia** al N° transacción que lo generó:
+  - Movimiento por aporte → `APO-###` via `movimientos_fondo.aporte_id → aportes_fondo.codigo`
+  - Movimiento por pago → `P######` via `movimientos_fondo.pago_id → pagos.codigo` (cuando Etapa 4)
+- En `movimientos_financiacion`, idem con `aporte_id` o `pago_id`.
+- En exports/informes/PDFs, **nunca** usar UUID como referencia principal visible.
+- En messages de éxito post-creación, mostrar el codigo: `"Aporte APO-001 registrado correctamente."`
+
+**Cuándo aplicar**: en cualquier nueva tabla de listado y en cualquier exportación. Aplicable inmediatamente a /fondos en Etapa 2D. A extender a /gastos en Etapa 3 y /pagos en Etapa 4.

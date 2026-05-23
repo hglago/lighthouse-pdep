@@ -89,11 +89,12 @@ Esquema Supabase conocido. Solo lo confirmado tocando el código + migraciones a
 - `created_by, created_at, updated_at, deleted_at`
 
 ### `movimientos_fondo`
-Ledger de movimientos de saldo por fondo. Actualizado por `fn_confirmar_pago`, `fn_anular_pago`, `fn_registrar_aporte`. NO tocar directo.
+Ledger de movimientos de saldo por fondo. Actualizado por `fn_confirmar_pago`, `fn_anular_pago`, `fn_registrar_aporte`, y `registrar_aporte_socio`. NO tocar directo.
 
 - `id uuid PK`
 - `fondo_id uuid → fondos(id)`
 - `pago_id uuid → pagos(id)` (nullable)
+- `aporte_id uuid → aportes_fondo(id)` (nullable) — **Etapa 2D**: trazabilidad mov → aporte. Permite mostrar N° transacción `APO-###` en cuenta corriente RISA via JOIN.
 - `tipo MovimientoTipo` ('debito' | 'credito')
 - `monto numeric`
 - `saldo_anterior, saldo_resultante numeric` (puede ser negativo)

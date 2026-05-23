@@ -328,6 +328,7 @@ export interface MovimientoFondo {
   id: string
   fondo_id: string
   pago_id: string | null
+  aporte_id: string | null  // Etapa 2D: trazabilidad mov → aporte (referencia FK a aportes_fondo)
   tipo: MovimientoTipo
   monto: number
   saldo_anterior: number
