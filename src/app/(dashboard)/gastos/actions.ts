@@ -29,31 +29,48 @@ export type GastoPayload = {
   valor_hora_aplicado: number | null
   porcentaje_uplift_snapshot: number
   importe_base_servicio: number | null
+  // P3a-fc: forma de cancelación del gasto (RISA o financiador externo).
+  // CHECK en DB: forma='risa' ⇒ financiador_id IS NULL; forma='financiador' ⇒ financiador_id NOT NULL.
+  // Solo define cómo se cancelará. NO genera deuda ni movimientos — eso es Pagos.
+  forma_cancelacion: 'risa' | 'financiador'
+  financiador_id: string | null
 }
 
 // Normaliza el payload del gasto:
 // - Si es_servicio_horas=false: limpia los campos snapshot.
-// - Si es_servicio_horas=true: deja los valores tal cual (la validación cliente + CHECK DB
-//   garantizan coherencia entre horas × valor_hora_aplicado = importe_base_servicio = monto).
-function normalizeGasto(data: GastoPayload): GastoPayload {
-  if (data.es_servicio_horas === true) {
-    return data
+// - Si forma_cancelacion='risa': fuerza financiador_id=null.
+// - Si forma_cancelacion='financiador': exige financiador_id (devuelve error si falta).
+// Validación cliente + CHECK DB garantizan coherencia.
+function normalizeGasto(data: GastoPayload): GastoPayload | { error: string } {
+  let cleaned: GastoPayload = data.es_servicio_horas === true
+    ? data
+    : {
+        ...data,
+        es_servicio_horas: false,
+        descripcion_servicio: null,
+        periodo_servicio_desde: null,
+        periodo_servicio_hasta: null,
+        horas_servicio: null,
+        valor_hora_aplicado: null,
+        porcentaje_uplift_snapshot: 0,
+        importe_base_servicio: null,
+      }
+
+  if (cleaned.forma_cancelacion === 'risa') {
+    cleaned = { ...cleaned, financiador_id: null }
+  } else if (cleaned.forma_cancelacion === 'financiador') {
+    if (!cleaned.financiador_id) {
+      return { error: 'Cuando el gasto es financiado, seleccioná un financiador.' }
+    }
+  } else {
+    return { error: `forma_cancelacion inválida: ${cleaned.forma_cancelacion}` }
   }
-  return {
-    ...data,
-    es_servicio_horas: false,
-    descripcion_servicio: null,
-    periodo_servicio_desde: null,
-    periodo_servicio_hasta: null,
-    horas_servicio: null,
-    valor_hora_aplicado: null,
-    porcentaje_uplift_snapshot: 0,
-    importe_base_servicio: null,
-  }
+
+  return cleaned
 }
 
-// Detecta error 42703 sobre columnas snapshot (DB sin migración P1 aplicada).
-function isServicioColumnMissingError(err: { code?: string; message?: string } | null | undefined): boolean {
+// Detecta error 42703 sobre columnas snapshot servicio (P1) o forma_cancelacion (Etapa 1).
+function isOptionalColumnMissingError(err: { code?: string; message?: string } | null | undefined): boolean {
   if (!err) return false
   if (err.code !== '42703') return false
   const msg = (err.message ?? '').toLowerCase()
@@ -64,17 +81,21 @@ function isServicioColumnMissingError(err: { code?: string; message?: string } |
     msg.includes('horas_servicio') ||
     msg.includes('valor_hora_aplicado') ||
     msg.includes('porcentaje_uplift_snapshot') ||
-    msg.includes('importe_base_servicio')
+    msg.includes('importe_base_servicio') ||
+    msg.includes('forma_cancelacion') ||
+    msg.includes('financiador_id')
   )
 }
 
-// Quita las columnas snapshot del payload para retry si la migración P1 no se aplicó.
-function stripCamposServicio<T extends Record<string, unknown>>(p: T): Record<string, unknown> {
+// Quita las columnas opcionales del payload para retry si las migraciones no se aplicaron.
+function stripCamposOpcionales<T extends Record<string, unknown>>(p: T): Record<string, unknown> {
   const {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    forma_cancelacion, financiador_id,
     ...rest
   } = p
   return rest
@@ -90,6 +111,9 @@ export async function createGasto(
   if (!user) throw new Error('No autenticado')
 
   const normalized = normalizeGasto(data)
+  if ('error' in normalized) {
+    throw new Error(normalized.error)
+  }
   const insert: Record<string, unknown> = {
     ...normalized,
     proveedor_id: normalized.proveedor_id || null,
@@ -114,10 +138,10 @@ export async function createGasto(
     return
   }
 
-  // Retry sin columnas snapshot servicio si la migración P1 no está aplicada en DB.
-  if (isServicioColumnMissingError(error)) {
-    console.warn('[createGasto] columnas servicio no disponibles, reintentando sin ellas')
-    const retry = await supabase.from('gastos').insert(stripCamposServicio(insert))
+  // Retry sin columnas opcionales (snapshot servicio P1 o forma_cancelacion/financiador_id de Etapa 1).
+  if (isOptionalColumnMissingError(error)) {
+    console.warn('[createGasto] columnas opcionales no disponibles, reintentando sin ellas')
+    const retry = await supabase.from('gastos').insert(stripCamposOpcionales(insert))
     if (retry.error) throw new Error(retry.error.message)
     revalidatePath('/gastos')
     return
@@ -129,6 +153,9 @@ export async function createGasto(
 export async function updateGasto(id: string, data: GastoPayload) {
   const supabase = createClient()
   const normalized = normalizeGasto(data)
+  if ('error' in normalized) {
+    throw new Error(normalized.error)
+  }
   const update: Record<string, unknown> = {
     ...normalized,
     proveedor_id: normalized.proveedor_id || null,
@@ -149,11 +176,11 @@ export async function updateGasto(id: string, data: GastoPayload) {
     return
   }
 
-  if (isServicioColumnMissingError(result.error)) {
-    console.warn('[updateGasto] columnas servicio no disponibles, reintentando sin ellas')
+  if (isOptionalColumnMissingError(result.error)) {
+    console.warn('[updateGasto] columnas opcionales no disponibles, reintentando sin ellas')
     const retry = await supabase
       .from('gastos')
-      .update(stripCamposServicio(update))
+      .update(stripCamposOpcionales(update))
       .eq('id', id)
       .in('estado', ['borrador', 'enviado'])
       .is('deleted_at', null)

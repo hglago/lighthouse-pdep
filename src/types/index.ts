@@ -6,6 +6,8 @@ export type {
   // Etapa 1: nuevo modelo financiero
   Socio, Financiador, MovimientoFinanciacion, SaldoFinanciadorRow,
   DestinoAporte, TipoMovimientoFinanciacion,
+  // P3a-fc: forma de cancelación del gasto
+  FormaCancelacion,
 } from './database'
 
 export const ROLE_LABELS: Record<string, string> = {

@@ -1,14 +1,17 @@
 'use client'
 
 import { useState, useTransition, useMemo } from 'react'
-import type { Fondo, Proveedor, UserRole, GastoEstado, PagoEstado, PagoTipo } from '@/types'
+import type { Fondo, Proveedor, Financiador, UserRole, GastoEstado, PagoEstado, PagoTipo } from '@/types'
 import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult, BulkGastoResult } from './actions'
 import type { ProveedorQuickResult } from '../proveedores/actions'
+import type { FinanciadorPayload, FinanciadorActionResult } from '../fondos/actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
 import DetalleServicioBlock from '@/components/DetalleServicioBlock'
+import FinanciadorSelect from '@/components/FinanciadorSelect'
+import FinanciadorQuickCreateModal from '@/components/FinanciadorQuickCreateModal'
 
 // Subconjunto del proveedor que necesita el modal: nombre + campos snapshot.
 type ProveedorParaGasto = Pick<Proveedor, 'id' | 'nombre' | 'permite_horas_servicio' | 'valor_hora' | 'tiene_uplift' | 'porcentaje_uplift'>
@@ -20,6 +23,9 @@ export interface GastoRow {
   codigo: string | null  // G000001... generado por trigger DB; null si la migración no se aplicó
   fondo_id: string
   proveedor_id: string | null
+  // P3a-fc: forma de cancelación + financiador (FK opcional). Tolerante a migración no aplicada.
+  forma_cancelacion: 'risa' | 'financiador'
+  financiador_id: string | null
   descripcion: string
   monto: number
   moneda: string
@@ -55,6 +61,8 @@ export interface GastoRow {
   created_at: string
   fondos: { nombre: string; moneda: string } | null
   proveedores: { nombre: string } | null
+  // P3a-fc: financiador joined (cuando forma_cancelacion='financiador').
+  financiadores: { id: string; codigo: string | null; nombre: string } | null
 }
 
 export interface PagoDeGasto {
@@ -164,6 +172,9 @@ interface FormState {
   periodo_servicio_desde: string
   periodo_servicio_hasta: string
   horas_servicio: string
+  // P3a-fc: forma de cancelación opt-in. Si false, va a RISA.
+  es_financiado: boolean
+  financiador_id: string
   // recurrente-only
   categoria: string
   dia_vencimiento: string
@@ -194,6 +205,8 @@ const EMPTY_FORM: FormState = {
   periodo_servicio_desde: '',
   periodo_servicio_hasta: '',
   horas_servicio: '',
+  es_financiado: false,
+  financiador_id: '',
   categoria: '',
   dia_vencimiento: '1',
   fecha_inicio: '',
@@ -209,6 +222,7 @@ interface Props {
   recurrentes: GastoRecurrenteRow[]
   fondos: Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
   proveedores: ProveedorParaGasto[]
+  financiadores: Financiador[]
   pagosDeGastos: PagoDeGasto[]
   role: UserRole
   onCreateGasto: (
@@ -233,6 +247,7 @@ interface Props {
   onBulkAprobar: (ids: string[]) => Promise<BulkGastoResult>
   onBulkRechazar: (ids: string[]) => Promise<BulkGastoResult>
   onBulkDelete: (ids: string[]) => Promise<BulkGastoResult>
+  onCrearFinanciador: (data: FinanciadorPayload) => Promise<FinanciadorActionResult>
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -242,6 +257,7 @@ export default function GastosClient({
   recurrentes,
   fondos,
   proveedores,
+  financiadores,
   pagosDeGastos,
   role,
   onCreateGasto,
@@ -257,6 +273,7 @@ export default function GastosClient({
   onBulkAprobar,
   onBulkRechazar,
   onBulkDelete,
+  onCrearFinanciador,
 }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('gastos')
   const [searchGastos, setSearchGastos] = useState('')
@@ -327,6 +344,38 @@ export default function GastosClient({
     return Array.from(map.values()).sort((a, b) => a.nombre.localeCompare(b.nombre))
   })()
 
+  // ── Quick crear financiador (desde modal de gasto financiado) ──────────────
+  const [localExtraFinanciadores, setLocalExtraFinanciadores] = useState<Financiador[]>([])
+  const [quickFinanOpen, setQuickFinanOpen] = useState(false)
+
+  const effectiveFinanciadores = useMemo(() => {
+    const map = new Map<string, Financiador>()
+    financiadores.forEach(f => map.set(f.id, f))
+    localExtraFinanciadores.forEach(f => { if (!map.has(f.id)) map.set(f.id, f) })
+    return Array.from(map.values()).sort((a, b) => a.nombre.localeCompare(b.nombre))
+  }, [financiadores, localExtraFinanciadores])
+
+  function handleFinanciadorCreated(result: { id: string; codigo: string | null; nombre: string }) {
+    const stub: Financiador = {
+      id: result.id,
+      codigo: result.codigo,
+      nombre: result.nombre,
+      cuit: null,
+      email: null,
+      telefono: null,
+      observaciones: null,
+      deleted_at: null,
+      created_by: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    setLocalExtraFinanciadores(prev =>
+      prev.some(f => f.id === stub.id) ? prev : [...prev, stub]
+    )
+    setForm(prev => ({ ...prev, financiador_id: result.id }))
+    setQuickFinanOpen(false)
+  }
+
   const canWrite = role === 'admin' || role === 'contador'
   const canDelete = role === 'admin'
   const canApprove = role === 'admin' || role === 'revisor'
@@ -339,6 +388,8 @@ export default function GastosClient({
           g.descripcion.toLowerCase().includes(qg) ||
           (g.fondos?.nombre ?? '').toLowerCase().includes(qg) ||
           (g.proveedores?.nombre ?? '').toLowerCase().includes(qg) ||
+          (g.financiadores?.nombre ?? '').toLowerCase().includes(qg) ||
+          (g.financiadores?.codigo ?? '').toLowerCase().includes(qg) ||
           (g.notas ?? '').toLowerCase().includes(qg) ||
           (g.descripcion_servicio ?? '').toLowerCase().includes(qg)
       )
@@ -513,6 +564,9 @@ export default function GastosClient({
       periodo_servicio_desde: g.periodo_servicio_desde ?? '',
       periodo_servicio_hasta: g.periodo_servicio_hasta ?? '',
       horas_servicio: g.horas_servicio != null ? String(g.horas_servicio) : '',
+      // P3a-fc: si el gasto era financiado, hidratar checkbox + selector.
+      es_financiado: g.forma_cancelacion === 'financiador',
+      financiador_id: g.financiador_id ?? '',
       categoria: '',
       dia_vencimiento: '1',
       fecha_inicio: todayIso(),
@@ -548,6 +602,9 @@ export default function GastosClient({
       periodo_servicio_desde: '',
       periodo_servicio_hasta: '',
       horas_servicio: '',
+      // P3a-fc: forma_cancelacion no aplica a recurrentes en P3a (queda RISA por default).
+      es_financiado: false,
+      financiador_id: '',
       categoria: r.categoria ?? '',
       dia_vencimiento: String(r.dia_vencimiento),
       fecha_inicio: r.fecha_inicio,
@@ -614,6 +671,12 @@ export default function GastosClient({
       if (!form.fondo_id) { setFormError('Seleccioná un fondo.'); return }
       if (!form.descripcion.trim()) { setFormError('El concepto es requerido.'); return }
       if (!form.fecha_gasto) { setFormError('La fecha es requerida.'); return }
+
+      // P3a-fc: forma de cancelación. Si está marcado financiado, exige financiador_id.
+      if (form.es_financiado && !form.financiador_id) {
+        setFormError('Cuando el gasto es financiado, seleccioná un financiador.')
+        return
+      }
 
       // P3a: el gasto es de servicio por hora SOLO si:
       //   (a) el proveedor permite horas, Y
@@ -720,6 +783,9 @@ export default function GastosClient({
         valor_hora_aplicado: snapshotServicio?.valor_hora_aplicado ?? null,
         porcentaje_uplift_snapshot: snapshotServicio?.porcentaje_uplift_snapshot ?? 0,
         importe_base_servicio: snapshotServicio?.importe_base_servicio ?? null,
+        // P3a-fc: forma de cancelación
+        forma_cancelacion: form.es_financiado ? 'financiador' : 'risa',
+        financiador_id: form.es_financiado ? form.financiador_id : null,
       }
 
       startTransition(async () => {
@@ -1236,6 +1302,24 @@ export default function GastosClient({
                                 Servicio por hora
                               </span>
                             )}
+                            {/* P3a-fc: badge de forma de cancelación */}
+                            {g.forma_cancelacion === 'financiador' ? (
+                              <span
+                                title="Cancelación por financiador externo"
+                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-orange-100 text-orange-800"
+                              >
+                                {g.financiadores
+                                  ? `Financiador: ${g.financiadores.codigo ?? 'Sin código'} ${g.financiadores.nombre}`
+                                  : 'Financiador'}
+                              </span>
+                            ) : (
+                              <span
+                                title="Cancelación con fondo RISA"
+                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-slate-100 text-slate-700"
+                              >
+                                RISA
+                              </span>
+                            )}
                             {g.recurrente_id && (
                               <span
                                 title={`Generado automáticamente desde recurrente${g.periodo ? ` — período ${g.periodo}` : ''}`}
@@ -1675,6 +1759,67 @@ export default function GastosClient({
                     />
                   )}
 
+                  {/* P3a-fc: forma de cancelación — RISA por default, opcional financiado */}
+                  <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                    <p className="text-sm font-semibold text-gray-800">Forma de cancelación</p>
+                    <label className="flex cursor-pointer items-start gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={form.es_financiado}
+                        onChange={(e) => setForm(prev => ({
+                          ...prev,
+                          es_financiado: e.target.checked,
+                          // Si desactiva, limpiar financiador_id para evitar enviar valor residual.
+                          ...(e.target.checked ? {} : { financiador_id: '' }),
+                        }))}
+                        className="mt-0.5 h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
+                      />
+                      <span>
+                        <span className="font-medium text-gray-800">¿Es financiado?</span>
+                        <span className="block text-xs text-gray-500">
+                          Este gasto será cancelado por un financiador y luego quedará pendiente de reintegro.
+                        </span>
+                      </span>
+                    </label>
+
+                    {!form.es_financiado && (
+                      <p className="pl-6 text-xs text-gray-500">Se cancelará con RISA.</p>
+                    )}
+
+                    {form.es_financiado && (
+                      <div className="pl-6 space-y-1">
+                        <label className="block text-xs font-medium text-gray-700">
+                          Financiador <span className="text-red-500">*</span>
+                        </label>
+                        {effectiveFinanciadores.length === 0 ? (
+                          <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+                            No hay financiadores cargados.
+                            {canWrite && (
+                              <>
+                                {' '}
+                                <button
+                                  type="button"
+                                  onClick={() => setQuickFinanOpen(true)}
+                                  className="underline hover:no-underline font-medium"
+                                >
+                                  Crear uno
+                                </button>
+                                .
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          <FinanciadorSelect
+                            financiadores={effectiveFinanciadores}
+                            value={form.financiador_id}
+                            onChange={(id) => setForm(prev => ({ ...prev, financiador_id: id }))}
+                            onRequestCreate={canWrite ? () => setQuickFinanOpen(true) : undefined}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -1908,6 +2053,14 @@ export default function GastosClient({
           </div>
         </div>
       )}
+
+      {/* P3a-fc: Modal Quick Crear Financiador — sibling overlay sobre el modal de gasto */}
+      <FinanciadorQuickCreateModal
+        open={quickFinanOpen}
+        onClose={() => setQuickFinanOpen(false)}
+        onCreate={onCrearFinanciador}
+        onCreated={handleFinanciadorCreated}
+      />
 
       {/* Modal Quick Crear Proveedor — sibling overlay sobre el modal de gasto */}
       {quickProvOpen && (

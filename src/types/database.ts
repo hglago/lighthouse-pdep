@@ -59,11 +59,21 @@ export interface Proveedor {
   deleted_at: string | null
 }
 
+// P3a-fc (2026-05-23): cómo se cancela el gasto.
+// 'risa' = sale del saldo de RISA (default).
+// 'financiador' = lo paga un financiador externo, queda pendiente de reintegro.
+// Genera deuda/movimientos solo cuando se carga el Pago — no acá.
+export type FormaCancelacion = 'risa' | 'financiador'
+
 export interface Gasto {
   id: string
   codigo: string | null  // G000001, G000002... generado por trigger DB. Null hasta aplicar migración.
   fondo_id: string
   proveedor_id: string | null
+  // P3a-fc: forma de cancelación + financiador (FK opcional).
+  // CHECK en DB: si forma='risa' → financiador_id IS NULL; si forma='financiador' → financiador_id IS NOT NULL.
+  forma_cancelacion: FormaCancelacion
+  financiador_id: string | null
   descripcion: string
   monto: number
   moneda: string

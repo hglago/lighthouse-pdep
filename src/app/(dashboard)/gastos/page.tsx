@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import GastosClient, { type GastoRow, type GastoRecurrenteRow, type PagoDeGasto } from './GastosClient'
-import type { Fondo, Proveedor, UserRole } from '@/types'
+import type { Fondo, Proveedor, Financiador, UserRole } from '@/types'
 import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente, setComprobanteGasto, removeComprobanteGasto, generarGastosRecurrentes, bulkAprobarGastos, bulkRechazarGastos, bulkDeleteGastos } from './actions'
 import { createProveedorQuick } from '../proveedores/actions'
+import { crearFinanciador } from '../fondos/actions'
 
 export default async function GastosPage() {
   const supabase = createClient()
@@ -16,7 +17,7 @@ export default async function GastosPage() {
   // antes de leer la lista — así los recién generados aparecen en la primera carga.
   await generarGastosRecurrentes()
 
-  const [profileResult, gastosResult, fondosResult, proveedoresResult, recurrentesResult, pagosDeGastosResult] = await Promise.all([
+  const [profileResult, gastosResult, fondosResult, proveedoresResult, recurrentesResult, pagosDeGastosResult, financiadoresResult] = await Promise.all([
     supabase
       .from('profiles')
       .select('role')
@@ -24,7 +25,7 @@ export default async function GastosPage() {
       .single(),
     supabase
       .from('gastos')
-      .select('id, codigo, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta, horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
+      .select('id, codigo, fondo_id, proveedor_id, forma_cancelacion, financiador_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta, horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre), financiadores:financiador_id(id, codigo, nombre)')
       .is('deleted_at', null)
       .order('fecha_gasto', { ascending: false }),
     supabase
@@ -48,15 +49,22 @@ export default async function GastosPage() {
       .select('id, gasto_id, nro_pago, tipo, estado, monto, moneda, fecha_pago')
       .not('gasto_id', 'is', null)
       .order('fecha_pago', { ascending: true }),
+    // P3a-fc: financiadores activos para el selector del modal de gasto
+    supabase
+      .from('financiadores')
+      .select('id, codigo, nombre, cuit, email, telefono, observaciones, deleted_at, created_by, created_at, updated_at')
+      .is('deleted_at', null)
+      .order('nombre'),
   ])
 
   // Tolerancia: si alguna columna nueva no se aplicó todavía, retry sin ellas
   // e hidratar defaults. El listado funciona siempre.
-  // Cubre: codigo (commit 9872748) y campos snapshot servicio P1 (2026-05-23).
+  // Cubre: codigo (commit 9872748), snapshot servicio P1 (2026-05-23) y
+  // forma_cancelacion/financiador_id (Etapa 1).
   let gastosData = gastosResult.data
   if (
     gastosResult.error?.code === '42703' &&
-    /codigo|es_servicio_horas|descripcion_servicio|periodo_servicio|horas_servicio|valor_hora_aplicado|porcentaje_uplift_snapshot|importe_base_servicio/.test(gastosResult.error.message ?? '')
+    /codigo|es_servicio_horas|descripcion_servicio|periodo_servicio|horas_servicio|valor_hora_aplicado|porcentaje_uplift_snapshot|importe_base_servicio|forma_cancelacion|financiador_id/.test(gastosResult.error.message ?? '')
   ) {
     console.warn('[gastos] columna nueva no disponible aún; retry con SELECT base:', gastosResult.error.message)
     const fallback = await supabase
@@ -75,6 +83,9 @@ export default async function GastosPage() {
       valor_hora_aplicado: null,
       porcentaje_uplift_snapshot: 0,
       importe_base_servicio: null,
+      forma_cancelacion: 'risa' as const,
+      financiador_id: null,
+      financiadores: null,
     })) as unknown as typeof gastosResult.data
   }
 
@@ -107,6 +118,7 @@ export default async function GastosPage() {
   const proveedores = (proveedoresData ?? []) as unknown as Pick<Proveedor, 'id' | 'nombre' | 'permite_horas_servicio' | 'valor_hora' | 'tiene_uplift' | 'porcentaje_uplift'>[]
   const recurrentes: GastoRecurrenteRow[] = (recurrentesResult.data ?? []) as unknown as GastoRecurrenteRow[]
   const pagosDeGastos: PagoDeGasto[] = (pagosDeGastosResult.data ?? []) as PagoDeGasto[]
+  const financiadores: Financiador[] = (financiadoresResult.data ?? []) as Financiador[]
 
   return (
     <div className="space-y-6">
@@ -122,6 +134,7 @@ export default async function GastosPage() {
         recurrentes={recurrentes}
         fondos={fondos}
         proveedores={proveedores}
+        financiadores={financiadores}
         pagosDeGastos={pagosDeGastos}
         role={role}
         onCreateGasto={createGasto}
@@ -134,6 +147,7 @@ export default async function GastosPage() {
         onSetComprobante={setComprobanteGasto}
         onRemoveComprobante={removeComprobanteGasto}
         onCreateProveedorQuick={createProveedorQuick}
+        onCrearFinanciador={crearFinanciador}
         onBulkAprobar={bulkAprobarGastos}
         onBulkRechazar={bulkRechazarGastos}
         onBulkDelete={bulkDeleteGastos}
