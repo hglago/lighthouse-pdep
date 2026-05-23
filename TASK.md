@@ -2,7 +2,7 @@
 
 Tarea actual. Solo la activa. Cuando se cierre, reemplazar contenido.
 
-## Tarea: Refactor financiero — Etapa 2 (UI Fondos)
+## Tarea: Refactor financiero — Etapa 2 cerrada (operación de Fondos completa)
 
 ### Estado de etapas
 
@@ -11,65 +11,49 @@ Tarea actual. Solo la activa. Cuando se cierre, reemplazar contenido.
 | 0 | Diagnóstico + plan corto | ✅ Cerrada |
 | 1 | DB / Migración | ✅ Aplicada y validada |
 | 2A | UI Fondos read-only | ✅ Cerrada |
-| **2B** | **Alta de socios + financiadores (UI + actions + SQL socios.codigo)** | ✅ **SQL aplicado. Crear socio funciona con SOC-001. Crear financiador con FIN-001.** |
-| **2C** | **Registrar aporte a RISA / cancelar financiación (UI + RPC)** | 🟡 **Código pusheado. SQL del RPC `registrar_aporte_socio` PENDIENTE de aplicar.** |
-| 2D | Refinamientos visuales y validaciones extra | ⏸ pendiente |
-| 3 | UI Gastos — `forma_cancelacion` + selector financiador | ⏸ pendiente |
-| 4 | UI Pagos — confirmar con RISA vs financiador | ⏸ pendiente |
+| 2B | Alta de socios + financiadores (UI + actions + SQL socios.codigo) | ✅ Cerrada — SOC-### + FIN-### funcionales |
+| **2C** | **Registrar aporte (RPC `registrar_aporte_socio`)** | ✅ **Cerrada — destino RISA funcional. Validación de "cancelar financiación" pendiente de testeo real cuando exista deuda.** |
+| 2D | Refinamientos visuales y validaciones extra (opcional) | ⏸ pendiente |
+| 3 | UI Gastos — `forma_cancelacion` + selector financiador + alta rápida desde gasto | ⏸ pendiente |
+| 4 | UI Pagos — confirmar con RISA vs financiador + RPCs nuevas | ⏸ pendiente |
 | 5 | Anulaciones / reversas | ⏸ pendiente |
 
-### SQL pendiente inmediato (bloqueante para 2C)
+### Etapa 2C — Cierre
 
-```sql
-CREATE OR REPLACE FUNCTION public.registrar_aporte_socio(
-  p_fecha date,
-  p_socio_id uuid,
-  p_importe numeric,
-  p_moneda text,
-  p_destino_aporte text,
-  p_financiador_id uuid DEFAULT NULL,
-  p_observaciones text DEFAULT NULL
-) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$...$$;
+**Validado en producción**:
+- Crear socio → SOC-001
+- Crear financiador → FIN-001
+- Registrar aporte destino RISA → APO-001 + saldo RISA actualizado + movimiento `credito` en cuenta corriente RISA + socio vinculado correctamente.
 
-REVOKE ALL ON FUNCTION public.registrar_aporte_socio(...) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.registrar_aporte_socio(...) TO authenticated;
-NOTIFY pgrst, 'reload schema';
-```
+**Pendiente de testeo real** (no bloqueante para avanzar a Etapa 3):
+- Registrar aporte destino `cancelacion_financiacion`. Requiere que exista deuda en `movimientos_financiacion` con `tipo_movimiento='deuda_generada'`, lo cual recién va a aparecer cuando se confirme el primer pago con financiador (Etapa 4). El RPC ya tiene la rama implementada y las validaciones (saldo pendiente > 0, importe ≤ saldo pendiente).
 
-**Hasta aplicarlo, el modal "Nuevo aporte" muestra error "function does not exist". La página NO rompe (ActionResult).**
-
-El SQL completo de este RPC está en el mensaje del chat (Etapa 2 commit `4a0788c`, sección "PASO 1 — SQL → C").
-
-### Códigos funcionales activos
+### Códigos funcionales — estado
 
 | Entidad | Formato | Estado SQL | Estado UI |
 |---|---|---|---|
 | Fondos | `FON-001` | ✅ | ✅ visible en card RISA |
-| Aportes | `APO-001` | ✅ trigger listo | ⏸ visible una vez creado el primer aporte (depende del RPC pendiente) |
-| Socios | `SOC-001` | ✅ aplicado en Etapa 2B | ✅ visible en tabla Socios + selectores |
-| Financiadores | `FIN-001` | ✅ | ✅ visible en tabla Financiadores + selectores |
+| Aportes | `APO-001` | ✅ | ✅ asignado automáticamente al registrar aporte |
+| Socios | `SOC-001` | ✅ | ✅ visible en tabla + selectores |
+| Financiadores | `FIN-001` | ✅ | ✅ visible en tabla + selectores |
 | Gastos | `G000001` | ⚠️ SQL pendiente (commit `9872748`) | — |
 | Pagos | `P000001` | ⚠️ SQL pendiente (commit `9872748`) | — |
 
-### Done definition de Etapa 2C (cuando se aplique RPC)
+### Restricciones que siguen vigentes
 
-- [ ] SQL del RPC `registrar_aporte_socio` aplicado en Supabase
-- [ ] Crear aporte destino RISA → saldo sube, codigo APO-001, movimiento aparece en cuenta corriente
-- [ ] Crear aporte destino cancelación → saldo RISA no se toca, movimiento aparece en financiación pendiente con tipo `cancelacion_por_aporte`
-- [ ] Bloqueo cuando importe > saldo pendiente con financiador
-- [ ] Mensaje claro cuando no hay deuda con ningún financiador
-
-### Restricciones de scope (siguen aplicando)
-
-- NO avanzar a Gastos (Etapa 3) hasta cerrar 2C
-- NO tocar UI de gastos/pagos/proveedores
+- NO tocar Gastos / Pagos / Proveedores / profiles
+- NO aplicar migración vieja de cuenta corriente entre fondos (D14)
 - NO usar service_role
 - NO desactivar RLS
-- Commits de docs operativos permitidos
+- NO usar palabra "Prestamista"
 
-### Siguiente paso
+### Próximo paso sugerido
 
-1. **El usuario aplica el SQL del RPC `registrar_aporte_socio`** (queda en el chat)
-2. Probar modal "Nuevo aporte" → APO-001 + saldo correcto
-3. Confirmar y cerrar Etapa 2C
-4. Entonces planificar 2D o saltar a Etapa 3 (Gastos)
+**Etapa 3 — UI Gastos**. Scope objetivo:
+- Agregar selector "Forma de cancelación" en form de gasto (RISA / Financiador)
+- Si Financiador: selector FinanciadorSelect + alta rápida con FinanciadorQuickCreateModal
+- Persistir `gastos.forma_cancelacion` y `gastos.financiador_id` (columnas ya existentes en DB)
+- Tabla de gastos muestra badge "RISA" o "Financiador: [nombre]"
+- NO toca lógica de pago todavía (eso es Etapa 4)
+
+Confirmá si arrancamos Etapa 3 o si querés cerrar primero algún pendiente de 2D.

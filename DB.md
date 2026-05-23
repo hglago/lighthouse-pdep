@@ -215,6 +215,8 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 | `soft_delete_proveedor(uuid)` | SECURITY DEFINER. Soft-delete con validación auth.uid() |
 | `soft_delete_fondo(uuid, text)` | SECURITY DEFINER. Soft-delete validando saldo=0. SQL pendiente, no aplicado en producción todavía |
 | `fn_set_fondo_codigo()`, `fn_set_aporte_codigo()`, `fn_set_financiador_codigo()` | Generan codigos FON/APO/FIN — Etapa 1 |
+| `fn_set_socio_codigo()` | Genera codigo SOC — Etapa 2B |
+| **`registrar_aporte_socio(p_destino_aporte, p_fecha, p_financiador_id, p_importe, p_moneda, p_observaciones, p_socio_id)`** | **SECURITY DEFINER. Returns uuid (aporte_id).** Si `destino='risa'`: INSERT aporte + INSERT movimiento_fondo (credito) + UPDATE fondos.saldo_actual con FOR UPDATE. Si `destino='cancelacion_financiacion'`: valida saldo pendiente, INSERT aporte + INSERT movimientos_financiacion (`cancelacion_por_aporte`), NO toca saldo RISA. Etapa 2C aplicada. |
 
 ## Funciones SQL planeadas para etapas 2-4 (NO existen aún)
 

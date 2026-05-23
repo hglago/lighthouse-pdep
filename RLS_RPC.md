@@ -115,14 +115,54 @@ GRANT EXECUTE ON FUNCTION public.<accion>_<entidad>(<arg_types>) TO authenticate
 
 ## RPCs creadas en Etapas 2B / 2C
 
-### `registrar_aporte_socio(date, uuid, numeric, text, text, uuid, text)` — Etapa 2C
-**SQL pendiente de aplicar** en producción (commit `4a0788c`). SECURITY DEFINER. Hace en una transacción:
-- Valida `auth.uid()`, `importe > 0`, `destino_aporte` válido, socio activo
-- Busca RISA por `codigo='FON-001'`
-- Si `destino='risa'`: INSERT aporte + INSERT movimiento_fondo (`credito`) + UPDATE fondos.saldo_actual. Lock con `FOR UPDATE`
-- Si `destino='cancelacion_financiacion'`: valida saldo_pendiente del financiador, INSERT aporte + INSERT movimientos_financiacion (`cancelacion_por_aporte`). NO toca saldo RISA. Bloquea si `importe > saldo_pendiente`
+### `registrar_aporte_socio(text, date, uuid, numeric, text, text, uuid)` — Etapa 2C ✅ APLICADA
+
+Signature (alfabético, match con PostgREST):
+```
+p_destino_aporte text,
+p_fecha          date,
+p_financiador_id uuid,
+p_importe        numeric,
+p_moneda         text,
+p_observaciones  text,
+p_socio_id       uuid
+```
+
+**SECURITY DEFINER**, `SET search_path = public`. Returns `uuid` (aporte_id creado).
+
+Comportamiento por rama:
+
+| Validación previa común |
+|---|
+| `auth.uid()` NOT NULL |
+| `p_importe > 0` |
+| `p_destino_aporte IN ('risa', 'cancelacion_financiacion')` |
+| `p_socio_id` referencia a socio activo (`deleted_at IS NULL`) |
+| RISA existe (`fondos.codigo = 'FON-001' AND deleted_at IS NULL`) |
+
+**Rama A: `p_destino_aporte = 'risa'`**
+1. Lock `FOR UPDATE` sobre la fila de RISA (concurrencia)
+2. INSERT `aportes_fondo` (trigger asigna APO-###; `destino_aporte='risa'`, `financiador_id=NULL`)
+3. INSERT `movimientos_fondo` (`tipo='credito'`, `saldo_anterior`/`saldo_resultante` calculados)
+4. UPDATE `fondos.saldo_actual = saldo_actual + p_importe`
+5. RETURN aporte_id
+
+**Rama B: `p_destino_aporte = 'cancelacion_financiacion'`**
+1. `p_financiador_id` debe ser NOT NULL
+2. Financiador activo
+3. Leer `v_saldos_financiadores` por (financiador_id, moneda)
+4. Bloquea si `saldo_pendiente <= 0` → "No hay financiación pendiente..."
+5. Bloquea si `p_importe > saldo_pendiente` → "El importe X supera la financiación pendiente (Y)"
+6. INSERT `aportes_fondo` (destino_aporte, financiador_id seteados)
+7. INSERT `movimientos_financiacion` (`tipo_movimiento='cancelacion_por_aporte'`)
+8. NO toca saldo RISA
+9. RETURN aporte_id
 
 Invocada desde `registrarAporteSocio` action en `fondos/actions.ts`.
+
+**Estado de testeo**:
+- ✅ Rama A (destino RISA) validada en producción 2026-05-23
+- ⏸ Rama B pendiente de test real hasta que exista deuda con financiador (se generará con Etapa 4 — pago confirmado con financiador)
 
 ### Triggers creados en Etapa 2B (aplicados)
 
