@@ -323,3 +323,56 @@ const columns: Column<T>[] = [
 **Importante**: los tags Git **no incluyen estado de Supabase**. Si se aplicaron migraciones SQL después del tag y se quiere revertir, hay que revertir esas migraciones manualmente. La sección "SQL aplicado al momento del tag" en `RELEASES.md` documenta el estado de DB al crear cada tag.
 
 **Frecuencia recomendada**: tag al cerrar cada etapa significativa o cada vez que el sistema queda en un estado funcional consistente del que vale la pena poder volver.
+
+---
+
+## D21. Honorarios deprecado operativamente — todo se carga como Gasto
+
+**Qué**: El módulo "Honorarios" deja de ser operativo. Los honorarios profesionales se cargan como **Gasto** asociado a un proveedor que tenga `permite_horas_servicio = true`. La tabla `honorarios` nunca existió en DB y no se crea. La ruta `/honorarios` queda como página informativa.
+
+**Por qué**: Honorarios era un placeholder ("Módulo en desarrollo") sin schema ni lógica. Unificar bajo Gastos diferenciando por tipo de proveedor evita duplicar: alta de proveedor, ciclo de aprobación, anticipos, comprobantes, pagos, recurrentes. El "servicio por hora" es solo una variante del gasto.
+
+**Cuándo aplicar**:
+- ✅ Cargar todo honorario como Gasto con proveedor que tenga `permite_horas_servicio=true` y `valor_hora>0`.
+- ✅ La página `/honorarios` queda viva con mensaje "Módulo deprecado — los honorarios ahora se cargan como Gasto. → Ir a Gastos" (P4 a implementar).
+- ❌ NO eliminar la ruta físicamente, NO eliminar la entrada del middleware ni los permisos (`honorarios:write`/`honorarios:read`) — quedan inertes pero presentes por simetría histórica.
+- ❌ NO crear tabla `honorarios` en DB.
+
+**Estado**: schema P1 aplicado 2026-05-23 (`proveedores.permite_horas_servicio`, `proveedores.valor_hora`, snapshot en `gastos` y `gastos_recurrentes`). UI P2-P3 pendiente. P4 (deprecación visual de `/honorarios`) pendiente.
+
+---
+
+## D22. Uplift es informativo — no modifica gasto, pago, fondo ni deuda
+
+**Qué**: `proveedores.tiene_uplift` + `proveedores.porcentaje_uplift` y su snapshot por gasto (`gastos.porcentaje_uplift_snapshot`, ídem en `gastos_recurrentes`) son **datos informativos** para futura liquidación / rendición a socios. NO modifican ningún importe operativo del sistema.
+
+**Reglas explícitas**:
+- ✅ Importe del gasto = `importe_base_servicio` cuando `es_servicio_horas=true`, o `monto` directo cuando es gasto común. **Sin uplift sumado.**
+- ✅ Importe del pago = importe del gasto. **Sin uplift sumado.**
+- ✅ Saldo del fondo RISA se afecta por el importe del pago. **Sin uplift sumado.**
+- ✅ Deuda con financiador en `movimientos_financiacion` se genera por el importe del pago. **Sin uplift sumado.**
+- ✅ Liquidación futura a socios (no implementada): se calculará `importe_liquidacion = importe_base × (1 + porcentaje_uplift_snapshot / 100)` en informes / vistas dedicadas, sin modificar columnas existentes.
+
+**Por qué**: El uplift es un margen contractual para retribución a socios, no un costo del proveedor. Si se sumara al gasto se desvirtuaría el balance operativo y la trazabilidad del importe pagado realmente.
+
+**Snapshot histórico**: Al crear/editar un gasto de servicio, se snapshotea `porcentaje_uplift_snapshot` del proveedor en ese momento. Si el proveedor cambia su `porcentaje_uplift` después, los gastos viejos conservan el snapshot. Esto preserva la base de liquidación al momento en que se prestó el servicio.
+
+**Helpers existentes**: `src/lib/uplift.ts` provee `aplicarUplift()` y `desglosarUplift()` para reportes futuros — no usar en flujo operativo de gastos/pagos/fondos.
+
+---
+
+## D23. Gastos recurrentes con servicio por hora copian snapshot al gasto generado
+
+**Qué**: Cuando un `gastos_recurrentes` tiene `es_servicio_horas=true`, mantiene un snapshot completo de servicio (`descripcion_servicio`, `horas_servicio`, `valor_hora_aplicado`, `porcentaje_uplift_snapshot`, `importe_base_servicio`). La función generadora `fn_generar_gastos_recurrentes()` debe **copiar** ese snapshot al gasto del mes generado, no leer en vivo del proveedor.
+
+**Por qué**: Preservar historia. Si el proveedor cambia `valor_hora` después de marzo, el gasto recurrente generado en marzo debe conservar el `valor_hora_aplicado` que tenía marzo, no el actual. Esto es coherente con D22 (snapshot histórico).
+
+**Período del servicio**: En el template recurrente NO se guarda `periodo_servicio_desde/hasta`. La función generadora calcula período = primer/último día del mes correspondiente. Si en el futuro algún proveedor presta servicio en un rango no calendario (ej. "del 15 al 14"), se agregará un campo `offset_desde`/`offset_hasta` en el template (cambio aditivo futuro, no incluido en P1).
+
+**Estado de implementación**:
+- ✅ P1 aplicado 2026-05-23: columnas snapshot en `gastos_recurrentes` con CHECK de coherencia.
+- ⏸ P3 pendiente: extender `fn_generar_gastos_recurrentes()` para copiar snapshot + calcular período del mes. Hasta que se aplique P3, los recurrentes existentes (todos con `es_servicio_horas=false`) siguen funcionando exactamente igual.
+
+**Riesgo**: si la función generadora se actualiza mal, gastos generados con snapshot inconsistente fallarían el CHECK `gastos_servicio_horas_coherente`. P3 incluirá pruebas antes de aplicar.
+
+---

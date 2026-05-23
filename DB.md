@@ -27,8 +27,15 @@ Esquema Supabase conocido. Solo lo confirmado tocando el código + migraciones a
 - `email, telefono, direccion, observaciones`
 - `activo bool`
 - `tiene_uplift bool` (post-migración uplift, default false)
-- `porcentaje_uplift numeric(6,2)` (post-migración uplift)
+- `porcentaje_uplift numeric(6,2)` (post-migración uplift) — CHECK `porcentaje_uplift >= 0`
+- **`permite_horas_servicio boolean NOT NULL DEFAULT false`** — P1 (2026-05-23)
+- **`valor_hora numeric(14,2) NOT NULL DEFAULT 0`** — P1. CHECK `valor_hora >= 0`
 - `created_by, created_at, updated_at, deleted_at`
+
+**Reglas de servicios por hora** (validación en UI + server action, no constraint cruzado en DB):
+- Si `permite_horas_servicio = false`, `valor_hora` puede quedar en 0 (default).
+- Si `permite_horas_servicio = true`, la UI exige `valor_hora >= 0` (típicamente > 0).
+- D22: `tiene_uplift` + `porcentaje_uplift` son **informativos** (snapshot a gastos), no afectan importes operativos.
 
 ### `gastos`
 - `id uuid PK`
@@ -51,6 +58,17 @@ Esquema Supabase conocido. Solo lo confirmado tocando el código + migraciones a
 - `prioridad_pago int`
 - `created_by, aprobado_por, aprobado_en, rechazado_por, rechazado_en`
 - `created_at, updated_at, deleted_at`
+
+**Snapshot de servicio por hora** (P1, 2026-05-23):
+- **`es_servicio_horas boolean NOT NULL DEFAULT false`** — discriminador
+- **`descripcion_servicio text`** — descripción del servicio prestado (NOT NULL si `es_servicio_horas=true`)
+- **`periodo_servicio_desde date`**, **`periodo_servicio_hasta date`** — período de prestación (NOT NULL + `desde <= hasta` si `es_servicio_horas=true`)
+- **`horas_servicio numeric(10,2)`** — horas facturadas (NOT NULL > 0 si `es_servicio_horas=true`)
+- **`valor_hora_aplicado numeric(14,2)`** — snapshot del `valor_hora` del proveedor al momento de crear/editar (NOT NULL >= 0 si `es_servicio_horas=true`)
+- **`porcentaje_uplift_snapshot numeric(6,2) NOT NULL DEFAULT 0`** — snapshot del uplift del proveedor (informativo, ver D22)
+- **`importe_base_servicio numeric(14,2)`** — `horas_servicio × valor_hora_aplicado` (NOT NULL >= 0 si `es_servicio_horas=true`)
+- CHECK `gastos_servicio_horas_coherente`: si `es_servicio_horas=true`, todos los campos NOT NULL + `abs(importe_base_servicio - horas × valor_hora_aplicado) < 0.01` + `abs(monto - importe_base_servicio) < 0.01`
+- D22: `porcentaje_uplift_snapshot` NO se suma al `monto`, NO afecta pago/fondo/deuda. Solo para futura liquidación a socios.
 
 ### `pagos`
 - `id uuid PK`
@@ -153,6 +171,16 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 - `fecha_inicio, fecha_fin`
 - `activo bool`, `prioridad_pago int`
 - `observaciones, created_by`
+
+**Snapshot de servicio por hora** (P1, 2026-05-23) — campos espejo de `gastos` sin período (D23):
+- **`es_servicio_horas boolean NOT NULL DEFAULT false`**
+- **`descripcion_servicio text`** — descripción base del servicio (NOT NULL si `es_servicio_horas=true`)
+- **`horas_servicio numeric(10,2)`** — horas mensuales típicas (NOT NULL > 0 si `es_servicio_horas=true`)
+- **`valor_hora_aplicado numeric(14,2)`** — snapshot del `valor_hora` al crear el template
+- **`porcentaje_uplift_snapshot numeric(6,2) NOT NULL DEFAULT 0`** — snapshot del uplift (informativo)
+- **`importe_base_servicio numeric(14,2)`** — `horas_servicio × valor_hora_aplicado`
+- CHECK `gastos_recurrentes_servicio_horas_coherente`: idéntico al de `gastos` salvo que no exige período (se calcula al generar)
+- D23: cuando `fn_generar_gastos_recurrentes()` genere el gasto del mes (P3 pendiente), debe copiar el snapshot completo + calcular `periodo_servicio_desde = primer día del mes`, `periodo_servicio_hasta = último día del mes`. NO leer en vivo del proveedor.
 
 ### `anticipos`
 - `id, proveedor_id, fondo_id, concepto`

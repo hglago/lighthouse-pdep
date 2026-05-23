@@ -8,6 +8,10 @@ Estado actual del proyecto. Lo que está hecho, lo que falta aplicar, dónde est
 
 Ver `RELEASES.md`.
 
+**Trabajo en curso post-tag** (no incluido en v0.2.0):
+- **Etapa 3B Gastos (`forma_cancelacion`)**: implementación parcial **stasheada** en `stash@{0}` con mensaje "WIP Etapa 3B Gastos - forma_cancelacion". Se retoma después de P4 (decisión cambio prioridad 2026-05-23).
+- **Refactor Proveedores con servicios por hora + deprecar Honorarios**: prioridad activa. Plan P1→P4. **P1 (SQL) aplicado y validado 2026-05-23**. P2–P4 pendientes.
+
 ## Decisión de modelo financiero (vigente)
 
 **Un solo fondo operativo: RISA.** Puede tener saldo negativo. Los gastos se cancelan con RISA o con un financiador externo. Aportes de socios fondean RISA o cancelan financiación pendiente con financiadores.
@@ -42,8 +46,13 @@ El modelo anterior de "cuenta corriente entre fondos" (varios fondos internos co
 | **Crear socio con codigo SOC-### desde UI** | ✅ funcional | ✅ aplicado |
 | **Crear financiador con codigo FIN-### desde UI** | ✅ funcional | ✅ aplicado |
 | **Registrar aporte de socio (RPC `registrar_aporte_socio`)** | ✅ funcional | ✅ **aplicada y validada** (destino RISA confirmado; destino cancelar pendiente de testeo real) |
-| **`forma_cancelacion` en UI Gastos** | ❌ no implementada | — (Etapa 3 pendiente) |
+| **`forma_cancelacion` en UI Gastos** | ⏸ stasheado (`stash@{0}` WIP 3B) — postergado a post-P4 | ✅ columnas en DB desde Etapa 1 |
 | **UI Pagos con rama RISA vs financiador** | ❌ no implementada | — (Etapa 4 pendiente) |
+| **Proveedores: `permite_horas_servicio` + `valor_hora`** | ❌ UI no implementada (P2 pendiente) | ✅ **P1 APLICADA 2026-05-23** |
+| **Gastos: snapshot servicio por hora (8 columnas + CHECK)** | ❌ UI no implementada (P3 pendiente) | ✅ **P1 APLICADA 2026-05-23** |
+| **Gastos recurrentes: snapshot servicio por hora (6 columnas + CHECK)** | ❌ UI no implementada (P3 pendiente) | ✅ **P1 APLICADA 2026-05-23** |
+| **`fn_generar_gastos_recurrentes` propagando snapshot** | — | ⏸ Pendiente P3 (no se tocó en P1) |
+| **Deprecación visual módulo Honorarios** | ❌ no implementada (P4 pendiente) | — (no hay tabla en DB) |
 
 ¹ Las columnas `deleted_at`/`deleted_by`/`motivo_baja` en fondos fueron agregadas dentro de Etapa 1. La RPC `soft_delete_fondo` SQL antigua sigue pendiente de aplicar (no es crítica para Etapa 2).
 
@@ -61,6 +70,7 @@ Reset operativo aplicado 2026-05-23. Borrados: fondos, gastos, pagos, movimiento
 | **Etapa 1 nuevo modelo** | Tablas nuevas + columnas + sequences + triggers + RLS policies + RISA inicial + drop constraint saldo>=0 | ✅ **APLICADA 2026-05-23** |
 | **Etapa 2B SQL** | `socios.codigo` + `socios_codigo_seq` + `fn_set_socio_codigo` + `trg_set_socio_codigo` + backfill + UNIQUE + NOT NULL | ✅ **APLICADA** |
 | **Etapa 2C SQL** | RPC `registrar_aporte_socio` SECURITY DEFINER (transaccional para destino RISA o financiación) | ✅ **APLICADA Y VALIDADA** (destino RISA confirmado funcional; rama cancelar financiación pendiente de testeo con deuda real) |
+| **P1 Proveedores con horas de servicio + snapshot** | `proveedores` (+permite_horas_servicio, +valor_hora) + `gastos` (+8 columnas snapshot + CHECK) + `gastos_recurrentes` (+6 columnas espejo + CHECK) + 4 CHECK no-negativos/coherencia. NO toca pagos, fondos, `fn_generar_gastos_recurrentes`, `registrar_aporte_socio`, RLS, triggers `codigo` | ✅ **APLICADA Y VALIDADA 2026-05-23** (VAL-1..9 OK) |
 
 ## SQL pendientes (decisión deferida)
 
@@ -118,7 +128,12 @@ Reset operativo aplicado 2026-05-23. Borrados: fondos, gastos, pagos, movimiento
 - Triggers BEFORE INSERT asignan codigo automáticamente; setval sincroniza para que el próximo INSERT empiece desde MAX+1
 - **D18**: Todo listado muestra "Código" (entidades maestras) o "N° transacción" (operaciones). Nunca UUID como identificador visible principal. Ver `DECISIONS.md` para detalle.
 - **D19**: Todos los listados deben tener búsqueda general, filtros por columna, ordenamiento, botón "Limpiar filtros" y empty states diferenciados. Usar `DataTable` componente reusable (ya en `src/components/`).
+- **D21**: Honorarios deprecado operativamente. Todo honorario se carga como Gasto con proveedor `permite_horas_servicio=true`. Página `/honorarios` queda como informativa (P4).
+- **D22**: Uplift es **informativo**, NO modifica importes operativos (gasto/pago/fondo/deuda). Solo snapshot en gasto/recurrente para futura liquidación a socios.
+- **D23**: Recurrentes con servicio por hora deben copiar snapshot al gasto generado, no leer en vivo del proveedor. Función `fn_generar_gastos_recurrentes` se actualiza en P3.
 
-## Notas para Etapa 2
+## Notas para refactor activo (Proveedores servicios por hora)
 
-La UI tiene que mostrar `fondos.codigo` (especialmente RISA como `FON-001`) en cualquier listado de fondos y en el card de resumen. Ver `TASK.md` para el layout target completo.
+P1 cerrada (SQL aplicada). Siguiente: **P2 (UI Proveedores)** — agregar checkbox "Permite cargar horas de servicio" + `valor_hora` + bloque uplift en modal de proveedor; columna "Servicio" en tabla. Sin tocar Gastos, Pagos, Fondos.
+
+Post P2: P3 (UI Gastos con bloque "Detalle del servicio" + actualización SQL de `fn_generar_gastos_recurrentes`) → P4 (deprecar visualmente `/honorarios`) → recuperar `stash@{0}` para cerrar Etapa 3B Gastos.
