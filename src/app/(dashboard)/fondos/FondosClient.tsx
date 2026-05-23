@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition, useRef, useMemo } from 'react'
-import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo } from '@/types'
+import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo, Socio, Financiador, SaldoFinanciadorRow, MovimientoTipo, DestinoAporte } from '@/types'
 import type { AportePayload, FondoActionResult, FondoDepsResult } from './actions'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
@@ -9,7 +9,30 @@ import DataTable, { type Column } from '@/components/DataTable'
 
 export interface AporteFondoRow extends AporteFondo {
   fondos: { nombre: string } | null
+  socios: { nombre: string } | null
+  financiadores: { nombre: string; codigo: string | null } | null
 }
+
+// Fila de movimientos_fondo tal como la trae page.tsx
+export interface MovimientoFondoRow {
+  id: string
+  fondo_id: string
+  pago_id: string | null
+  tipo: MovimientoTipo
+  monto: number
+  saldo_anterior: number
+  saldo_resultante: number
+  concepto: string
+  fecha: string
+  created_by: string
+  created_at: string
+}
+
+// Etapa 2A: el modelo nuevo es read-only. Los modales legacy
+// (newFondo / editFondo / newAporte) se conservan en código por debajo
+// pero NO hay botones que los disparen en este layout. Próximas subetapas
+// (2B/2C) van a reemplazar progresivamente los flujos legacy.
+const SHOW_LEGACY_UI = false
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -113,6 +136,10 @@ function emptyAporteForm(defaultFondoId = ''): AporteForm {
 interface Props {
   fondos: Fondo[]
   aportes: AporteFondoRow[]
+  socios: Socio[]
+  financiadores: Financiador[]
+  saldosFinanciadores: SaldoFinanciadorRow[]
+  movimientos: MovimientoFondoRow[]
   role: UserRole
   onCreateFondo: (data: { nombre: string; moneda: string; monto_inicial: number; descripcion: string | null }) => Promise<void>
   onUpdateFondo: (id: string, data: { nombre: string; descripcion: string | null; estado: FondoEstado }) => Promise<void>
@@ -126,6 +153,10 @@ interface Props {
 export default function FondosClient({
   fondos,
   aportes,
+  socios,
+  financiadores,
+  saldosFinanciadores,
+  movimientos,
   role,
   onCreateFondo,
   onUpdateFondo,
@@ -383,8 +414,289 @@ export default function FondosClient({
   const readonlyCls =
     'w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 outline-none cursor-default'
 
+  // ─── Etapa 2A: lookup de RISA + derivados ──────────────────────────────────
+  // Buscamos RISA por codigo='FON-001' (fuente canónica). Fallback por nombre
+  // por si la migración asignó codigo distinto.
+  const risa = useMemo(
+    () => fondos.find(f => f.codigo === 'FON-001') ?? fondos.find(f => f.nombre === 'RISA') ?? null,
+    [fondos]
+  )
+  const movimientosRisa = useMemo(
+    () => (risa ? movimientos.filter(m => m.fondo_id === risa.id) : []),
+    [risa, movimientos]
+  )
+  const destinoLabel = (d: DestinoAporte): string =>
+    d === 'risa' ? 'RISA' : 'Cancelación de financiación'
+
   return (
     <div className="space-y-8">
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          Etapa 2A — Caja RISA y financiación (read-only)
+          ═══════════════════════════════════════════════════════════════════════ */}
+
+      {/* ── Card resumen RISA ─────────────────────────────────────────────── */}
+      {!risa ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          ⚠ Fondo RISA no encontrado. Verificá que la migración de Etapa 1 se haya aplicado en Supabase y que exista un fondo con código <span className="font-mono">FON-001</span>.
+        </div>
+      ) : (
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-mono uppercase tracking-wide text-slate-500">
+                {risa.codigo ?? 'Sin código'}
+              </p>
+              <h2 className="mt-1 text-xl font-semibold text-gray-900">{risa.nombre}</h2>
+              <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
+                <span>{risa.moneda}</span>
+                <span aria-hidden="true">·</span>
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${FONDO_ESTADO_COLORS[risa.estado]}`}>
+                  {FONDO_ESTADO_LABELS[risa.estado]}
+                </span>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Saldo actual</p>
+              <p className={`mt-1 text-2xl font-semibold tabular-nums ${risa.saldo_actual < 0 ? 'text-red-700' : 'text-gray-900'}`}>
+                {risa.moneda} {fmt(risa.saldo_actual)}
+              </p>
+              <p className="mt-0.5 text-[11px] text-gray-400">El saldo puede ser negativo.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cuenta corriente RISA ─────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <h3 className="text-base font-semibold text-gray-900">
+          Cuenta corriente RISA{risa?.codigo ? ` — ${risa.codigo}` : ''}
+        </h3>
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          {movimientosRisa.length === 0 ? (
+            <div className="p-8 text-center text-sm text-gray-400">
+              No hay movimientos en la cuenta corriente.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Tipo</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Concepto</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Ingreso</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Egreso</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Saldo resultante</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {movimientosRisa.map(m => {
+                    const esCredito = m.tipo === 'credito'
+                    return (
+                      <tr key={m.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{m.fecha}</td>
+                        <td className="px-4 py-3 text-xs">
+                          <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${esCredito ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-1 ring-rose-200'}`}>
+                            {esCredito ? 'Ingreso' : 'Egreso'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{m.concepto}</td>
+                        <td className="px-4 py-3 text-right text-sm tabular-nums text-emerald-700">
+                          {esCredito ? fmt(m.monto) : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm tabular-nums text-rose-700">
+                          {!esCredito ? fmt(m.monto) : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className={`px-4 py-3 text-right text-sm font-medium tabular-nums ${m.saldo_resultante < 0 ? 'text-red-700' : 'text-gray-900'}`}>
+                          {fmt(m.saldo_resultante)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Financiación pendiente (v_saldos_financiadores) ─────────────────── */}
+      <div className="space-y-3">
+        <h3 className="text-base font-semibold text-gray-900">Financiación pendiente</h3>
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          {saldosFinanciadores.length === 0 ? (
+            <div className="p-8 text-center text-sm text-gray-400">
+              No hay financiación pendiente.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Código</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Financiador</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Moneda</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Deuda generada</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Cancelado con aportes</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Saldo pendiente</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {saldosFinanciadores.map(s => (
+                    <tr key={`${s.financiador_id}-${s.moneda}`} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.financiador_codigo ?? '—'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        {s.financiador_nombre}
+                        {s.financiador_deleted_at && <span className="ml-2 text-xs text-gray-400">(dado de baja)</span>}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-500">{s.moneda}</td>
+                      <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-700">{fmt(s.total_deuda_generada)}</td>
+                      <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-700">{fmt(s.total_cancelado)}</td>
+                      <td className={`px-4 py-3 text-right text-sm font-medium tabular-nums ${s.saldo_pendiente > 0 ? 'text-amber-700' : 'text-gray-900'}`}>
+                        {fmt(s.saldo_pendiente)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Aportes de socios ─────────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <h3 className="text-base font-semibold text-gray-900">Aportes de socios</h3>
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          {aportes.length === 0 ? (
+            <div className="p-8 text-center text-sm text-gray-400">
+              No hay aportes registrados.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Código</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Fecha</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Socio / aportante</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Destino</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Financiador</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Importe</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Moneda</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Observaciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {aportes.map(a => (
+                    <tr key={a.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-xs font-mono text-slate-600">{a.codigo ?? '—'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{a.fecha_aporte}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        {a.socios?.nombre ?? a.aportante ?? <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 font-medium ${a.destino_aporte === 'risa' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'}`}>
+                          {destinoLabel(a.destino_aporte)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {a.financiadores
+                          ? <span><span className="text-xs font-mono text-slate-500">{a.financiadores.codigo}</span> · {a.financiadores.nombre}</span>
+                          : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900">{fmt(a.monto)}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500">{a.moneda}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500 max-w-xs truncate" title={a.observaciones ?? ''}>
+                        {a.observaciones ?? <span className="text-gray-300">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Socios ──────────────────────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <h3 className="text-base font-semibold text-gray-900">Socios</h3>
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          {socios.length === 0 ? (
+            <div className="p-8 text-center text-sm text-gray-400">
+              No hay socios registrados.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Nombre</th>
+                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">CUIT</th>
+                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Email</th>
+                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 lg:table-cell">Teléfono</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {socios.map(s => (
+                    <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-sm font-medium text-gray-900">{s.nombre}</td>
+                      <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">{s.cuit ?? <span className="text-gray-300">—</span>}</td>
+                      <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">{s.email ?? <span className="text-gray-300">—</span>}</td>
+                      <td className="hidden px-4 py-3 text-sm text-gray-500 lg:table-cell">{s.telefono ?? <span className="text-gray-300">—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Financiadores ───────────────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <h3 className="text-base font-semibold text-gray-900">Financiadores</h3>
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          {financiadores.length === 0 ? (
+            <div className="p-8 text-center text-sm text-gray-400">
+              No hay financiadores registrados.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Código</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Nombre</th>
+                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">CUIT</th>
+                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Email</th>
+                    <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 lg:table-cell">Teléfono</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {financiadores.map(f => (
+                    <tr key={f.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-xs font-mono text-slate-600">{f.codigo ?? '—'}</td>
+                      <td className="px-4 py-3 text-sm font-medium text-gray-900">{f.nombre}</td>
+                      <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">{f.cuit ?? <span className="text-gray-300">—</span>}</td>
+                      <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">{f.email ?? <span className="text-gray-300">—</span>}</td>
+                      <td className="hidden px-4 py-3 text-sm text-gray-500 lg:table-cell">{f.telefono ?? <span className="text-gray-300">—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          LEGACY UI (oculta en 2A; controlada por flag SHOW_LEGACY_UI).
+          Etapas 2B/2C/2D reemplazarán los flujos legacy con la nueva UI.
+          ═══════════════════════════════════════════════════════════════════════ */}
+      {SHOW_LEGACY_UI && (<>
 
       {/* ─── Section A: Fondos ─────────────────────────────────────────────── */}
       <div className="space-y-4">
@@ -576,6 +888,8 @@ export default function FondosClient({
           )}
         </div>
       </div>
+
+      </>)}
 
       {/* ─── Modal: Nuevo / Editar fondo ───────────────────────────────────── */}
       {(modal === 'newFondo' || modal === 'editFondo') && (

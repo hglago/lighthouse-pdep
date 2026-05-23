@@ -22,10 +22,11 @@ export interface Profile {
 
 export interface Fondo {
   id: string
+  codigo: string | null  // FON-### (Etapa 1). Null si la migración no se aplicó.
   nombre: string
   descripcion: string | null
   monto_inicial: number
-  saldo_actual: number
+  saldo_actual: number  // puede ser negativo (constraint fondos_saldo_no_negativo eliminada en Etapa 1)
   moneda: string
   estado: FondoEstado
   responsable_id: string | null
@@ -33,6 +34,8 @@ export interface Fondo {
   created_at: string
   updated_at: string
   deleted_at: string | null
+  deleted_by: string | null   // Etapa 1
+  motivo_baja: string | null  // Etapa 1
 }
 
 export interface Proveedor {
@@ -219,13 +222,17 @@ export type TipoAporte =
 
 export interface AporteFondo {
   id: string
+  codigo: string | null            // APO-### (Etapa 1)
   fondo_id: string
   movimiento_id: string | null
   fecha_aporte: string
   monto: number
   moneda: string
   tipo_aporte: TipoAporte
-  aportante: string | null
+  aportante: string | null         // legacy: nombre libre
+  socio_id: string | null          // Etapa 1 (FK nueva, principal)
+  destino_aporte: DestinoAporte    // Etapa 1: 'risa' | 'cancelacion_financiacion'
+  financiador_id: string | null    // Etapa 1: required cuando destino = 'cancelacion_financiacion'
   concepto: string
   comprobante_url: string | null
   observaciones: string | null
@@ -233,6 +240,73 @@ export interface AporteFondo {
   created_at: string
   updated_at: string
   deleted_at: string | null
+}
+
+// ── Etapa 1: Socios, Financiadores, Movimientos de financiación ───────────────
+
+export interface Socio {
+  id: string
+  nombre: string
+  cuit: string | null
+  email: string | null
+  telefono: string | null
+  observaciones: string | null
+  deleted_at: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Financiador {
+  id: string
+  codigo: string | null  // FIN-### (Etapa 1)
+  nombre: string
+  cuit: string | null
+  email: string | null
+  telefono: string | null
+  observaciones: string | null
+  deleted_at: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type DestinoAporte = 'risa' | 'cancelacion_financiacion'
+
+export type TipoMovimientoFinanciacion =
+  | 'deuda_generada'
+  | 'cancelacion_por_aporte'
+  | 'ajuste'
+  | 'reversa'
+
+export interface MovimientoFinanciacion {
+  id: string
+  fecha: string
+  financiador_id: string
+  tipo_movimiento: TipoMovimientoFinanciacion
+  importe: number
+  moneda: string
+  gasto_id: string | null
+  pago_id: string | null
+  aporte_id: string | null
+  socio_id: string | null
+  descripcion: string | null
+  created_by: string | null
+  created_at: string
+}
+
+// Fila agregada de v_saldos_financiadores (Etapa 1)
+export interface SaldoFinanciadorRow {
+  financiador_id: string
+  financiador_codigo: string | null
+  financiador_nombre: string
+  financiador_deleted_at: string | null
+  moneda: string
+  total_deuda_generada: number
+  total_cancelado: number
+  total_ajustes: number
+  total_reversas: number
+  saldo_pendiente: number
 }
 
 export interface GoogleAllowedUser {
