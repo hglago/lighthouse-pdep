@@ -8,6 +8,8 @@ export type {
   DestinoAporte, TipoMovimientoFinanciacion,
   // P3a-fc: forma de cancelación del gasto
   FormaCancelacion,
+  // FIN2.2: detalle de imputaciones del aporte (split MP + Terceros)
+  AporteImputacion, DestinoImputacion,
 } from './database'
 
 export const ROLE_LABELS: Record<string, string> = {

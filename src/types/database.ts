@@ -250,7 +250,7 @@ export interface AporteFondo {
   tipo_aporte: TipoAporte
   aportante: string | null         // legacy: nombre libre
   socio_id: string | null          // Etapa 1 (FK nueva, principal)
-  destino_aporte: DestinoAporte    // Etapa 1: 'risa' | 'cancelacion_financiacion'
+  destino_aporte: DestinoAporte    // Etapa 1: 'risa' | 'cancelacion_financiacion' (legacy 1-destino)
   financiador_id: string | null    // Etapa 1: required cuando destino = 'cancelacion_financiacion'
   concepto: string
   comprobante_url: string | null
@@ -259,6 +259,24 @@ export interface AporteFondo {
   created_at: string
   updated_at: string
   deleted_at: string | null
+}
+
+// FIN2.2: detalle de imputaciones de un aporte (split MP + uno o más Terceros).
+// Cabecera = aportes_fondo; cada línea apunta al movimiento que generó (mov_fondo
+// para destino_tipo='medios_propios', mov_financiacion para 'tercero').
+export type DestinoImputacion = 'medios_propios' | 'tercero'
+
+export interface AporteImputacion {
+  id: string
+  aporte_id: string
+  destino_tipo: DestinoImputacion
+  fondo_id: string | null
+  financiador_id: string | null
+  monto: number
+  moneda: string
+  movimiento_fondo_id: string | null
+  movimiento_financiacion_id: string | null
+  created_at: string
 }
 
 // ── Etapa 1: Socios, Financiadores, Movimientos de financiación ───────────────
