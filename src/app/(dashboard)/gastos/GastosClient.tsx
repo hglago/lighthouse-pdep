@@ -220,7 +220,7 @@ const EMPTY_FORM: FormState = {
 interface Props {
   gastos: GastoRow[]
   recurrentes: GastoRecurrenteRow[]
-  fondos: Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
+  fondos: Pick<Fondo, 'id' | 'codigo' | 'nombre' | 'moneda'>[]
   proveedores: ProveedorParaGasto[]
   financiadores: Financiador[]
   pagosDeGastos: PagoDeGasto[]
@@ -495,10 +495,16 @@ export default function GastosClient({
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
-  function handleFondoChange(fondo_id: string) {
-    const fondo = fondos.find((f) => f.id === fondo_id)
-    setForm((prev) => ({ ...prev, fondo_id, moneda: fondo?.moneda ?? '' }))
-  }
+  // G1 (2026-05-24): todos los gastos operan sobre el fondo RISA (FON-001).
+  // No hay selector visible en el modal — el fondo se asigna automáticamente
+  // tanto en alta como en edición (la edición lo conserva en el server).
+  // Si RISA no aparece en la lista de fondos activos, mostramos error y
+  // bloqueamos el guardar.
+  const fondoRisa = useMemo(() => {
+    return fondos.find(f => f.codigo === 'FON-001') ?? fondos[0] ?? null
+  }, [fondos])
+  const risaIdInicial = fondoRisa?.id ?? ''
+  const risaMonedaInicial = fondoRisa?.moneda ?? 'ARS'
 
   function handleEsRecurrenteToggle(checked: boolean) {
     setForm((prev) => ({
@@ -532,6 +538,9 @@ export default function GastosClient({
     setEditing(null)
     setForm({
       ...EMPTY_FORM,
+      // G1: fondo siempre RISA, sin selector visible.
+      fondo_id: risaIdInicial,
+      moneda: risaMonedaInicial,
       es_recurrente: tipo === 'recurrente',
       fecha_gasto: todayIso(),
       fecha_inicio: todayIso(),
@@ -634,7 +643,7 @@ export default function GastosClient({
     const isRecurrente = editing ? editing.tipo === 'recurrente' : form.es_recurrente
 
     if (isRecurrente) {
-      if (!form.fondo_id) { setFormError('Seleccioná un fondo.'); return }
+      if (!form.fondo_id) { setFormError('No se encontró el fondo operativo RISA. No se puede guardar.'); return }
       if (!form.descripcion.trim()) { setFormError('El concepto es requerido.'); return }
       const monto = parseFloat(form.monto)
       if (!form.monto || isNaN(monto) || monto <= 0) { setFormError('El monto debe ser mayor a 0.'); return }
@@ -668,13 +677,13 @@ export default function GastosClient({
         closeModal()
       })
     } else {
-      if (!form.fondo_id) { setFormError('Seleccioná un fondo.'); return }
+      if (!form.fondo_id) { setFormError('No se encontró el fondo operativo RISA. No se puede guardar.'); return }
       if (!form.descripcion.trim()) { setFormError('El concepto es requerido.'); return }
       if (!form.fecha_gasto) { setFormError('La fecha es requerida.'); return }
 
       // P3a-fc: forma de cancelación. Si está marcado financiado, exige financiador_id.
       if (form.es_financiado && !form.financiador_id) {
-        setFormError('Cuando el gasto es financiado, seleccioná un financiador.')
+        setFormError('Cuando el gasto se afronta con un tercero de la red, seleccioná el tercero.')
         return
       }
 
@@ -1244,7 +1253,6 @@ export default function GastosClient({
                       <SortableHeader label="Código" sortKey="codigo" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
                       <SortableHeader label="Fecha" sortKey="fecha" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
                       <SortableHeader label="Concepto" sortKey="descripcion" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
-                      <SortableHeader label="Fondo" sortKey="fondo" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} className="hidden sm:table-cell" />
                       <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} className="hidden md:table-cell" />
                       <SortableHeader label="Monto" sortKey="monto" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} align="right" />
                       <SortableHeader label="Estado" sortKey="estado" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} className="hidden lg:table-cell" />
@@ -1302,22 +1310,22 @@ export default function GastosClient({
                                 Servicio por hora
                               </span>
                             )}
-                            {/* P3a-fc: badge de forma de cancelación */}
+                            {/* P3a-fc: badge de canal de pago */}
                             {g.forma_cancelacion === 'financiador' ? (
                               <span
-                                title="Cancelación por financiador externo"
+                                title="Gasto afrontado por un tercero de la red"
                                 className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-orange-100 text-orange-800"
                               >
                                 {g.financiadores
-                                  ? `Financiador: ${g.financiadores.codigo ?? 'Sin código'} ${g.financiadores.nombre}`
-                                  : 'Financiador'}
+                                  ? `Tercero: ${g.financiadores.codigo ?? 'Sin código'} ${g.financiadores.nombre}`
+                                  : 'Tercero'}
                               </span>
                             ) : (
                               <span
-                                title="Cancelación con fondo RISA"
+                                title="Gasto afrontado con medios propios RISA"
                                 className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-slate-100 text-slate-700"
                               >
-                                RISA
+                                Medios propios RISA
                               </span>
                             )}
                             {g.recurrente_id && (
@@ -1338,9 +1346,6 @@ export default function GastosClient({
                               <span className="text-xs text-gray-400">vence {g.fecha_vencimiento}</span>
                             )}
                           </div>
-                        </td>
-                        <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">
-                          {g.fondos?.nombre ?? <span className="text-gray-300">—</span>}
                         </td>
                         <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">
                           {g.proveedores?.nombre ?? <span className="text-gray-300">—</span>}
@@ -1442,7 +1447,6 @@ export default function GastosClient({
                   <thead className="bg-gray-50">
                     <tr>
                       <SortableHeader label="Concepto" sortKey="concepto" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} />
-                      <SortableHeader label="Fondo" sortKey="fondo" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} className="hidden sm:table-cell" />
                       <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} className="hidden md:table-cell" />
                       <SortableHeader label="Día" sortKey="dia" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} align="center" />
                       <SortableHeader label="Monto" sortKey="monto" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} align="right" />
@@ -1471,9 +1475,6 @@ export default function GastosClient({
                               </span>
                             )}
                           </div>
-                        </td>
-                        <td className="hidden px-4 py-3 text-sm text-gray-500 sm:table-cell">
-                          {r.fondos?.nombre ?? <span className="text-gray-300">—</span>}
                         </td>
                         <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">
                           {r.proveedores?.nombre ?? <span className="text-gray-300">—</span>}
@@ -1550,17 +1551,19 @@ export default function GastosClient({
 
             <form onSubmit={handleSubmit} className="space-y-4">
 
-              {/* Campos comunes */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Fondo <span className="text-red-500">*</span>
-                  </label>
-                  <select value={form.fondo_id} onChange={(e) => handleFondoChange(e.target.value)} className={inputCls}>
-                    <option value="">Seleccionar fondo...</option>
-                    {fondos.map((f) => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-                  </select>
+              {/* G1: fondo siempre RISA — sin selector. Display informativo. */}
+              {fondoRisa ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  Fondo operativo: <span className="font-medium text-slate-800">{fondoRisa.codigo ?? 'FON-001'} — {fondoRisa.nombre}</span>
                 </div>
+              ) : (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  No se encontró el fondo operativo RISA. No se puede crear ni editar gastos hasta que esté disponible.
+                </div>
+              )}
+
+              {/* Campos comunes */}
+              <div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Proveedor</label>
                   <div className="flex gap-2">
@@ -1759,41 +1762,49 @@ export default function GastosClient({
                     />
                   )}
 
-                  {/* P3a-fc: forma de cancelación — RISA por default, opcional financiado */}
+                  {/* P3a-fc: canal de pago — Medios propios RISA vs Tercero de la red.
+                       Internamente: forma_cancelacion='risa' o 'financiador'; financiador_id FK opcional. */}
                   <div className="rounded-lg border border-gray-200 p-3 space-y-2">
-                    <p className="text-sm font-semibold text-gray-800">Forma de cancelación</p>
-                    <label className="flex cursor-pointer items-start gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={form.es_financiado}
-                        onChange={(e) => setForm(prev => ({
-                          ...prev,
-                          es_financiado: e.target.checked,
-                          // Si desactiva, limpiar financiador_id para evitar enviar valor residual.
-                          ...(e.target.checked ? {} : { financiador_id: '' }),
-                        }))}
-                        className="mt-0.5 h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
-                      />
-                      <span>
-                        <span className="font-medium text-gray-800">¿Es financiado?</span>
-                        <span className="block text-xs text-gray-500">
-                          Este gasto será cancelado por un financiador y luego quedará pendiente de reintegro.
-                        </span>
-                      </span>
-                    </label>
+                    <p className="text-sm font-semibold text-gray-800">Canal de pago</p>
+                    <div className="flex flex-col gap-2 text-sm sm:flex-row sm:gap-6">
+                      <label className="flex cursor-pointer items-start gap-2">
+                        <input
+                          type="radio"
+                          name="canal_pago"
+                          value="medios_propios"
+                          checked={!form.es_financiado}
+                          onChange={() => setForm(prev => ({ ...prev, es_financiado: false, financiador_id: '' }))}
+                          className="mt-0.5 h-4 w-4 border-gray-300 text-slate-900 focus:ring-slate-500"
+                        />
+                        <span className="font-medium text-gray-800">Medios propios RISA</span>
+                      </label>
+                      <label className="flex cursor-pointer items-start gap-2">
+                        <input
+                          type="radio"
+                          name="canal_pago"
+                          value="tercero"
+                          checked={form.es_financiado}
+                          onChange={() => setForm(prev => ({ ...prev, es_financiado: true }))}
+                          className="mt-0.5 h-4 w-4 border-gray-300 text-slate-900 focus:ring-slate-500"
+                        />
+                        <span className="font-medium text-gray-800">Tercero de la red</span>
+                      </label>
+                    </div>
 
                     {!form.es_financiado && (
-                      <p className="pl-6 text-xs text-gray-500">Se cancelará con RISA.</p>
+                      <p className="text-xs text-gray-500">
+                        El pago se registrará contra medios propios RISA.
+                      </p>
                     )}
 
                     {form.es_financiado && (
-                      <div className="pl-6 space-y-1">
+                      <div className="space-y-1 pt-1">
                         <label className="block text-xs font-medium text-gray-700">
-                          Financiador <span className="text-red-500">*</span>
+                          Tercero que afronta el pago <span className="text-red-500">*</span>
                         </label>
                         {effectiveFinanciadores.length === 0 ? (
                           <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
-                            No hay financiadores cargados.
+                            No hay terceros cargados.
                             {canWrite && (
                               <>
                                 {' '}
@@ -1816,6 +1827,9 @@ export default function GastosClient({
                             onRequestCreate={canWrite ? () => setQuickFinanOpen(true) : undefined}
                           />
                         )}
+                        <p className="text-xs text-gray-500">
+                          El gasto será pagado por un tercero de la red. PdeP/RISA registrará una cuenta corriente pendiente de reintegro con ese tercero.
+                        </p>
                       </div>
                     )}
                   </div>

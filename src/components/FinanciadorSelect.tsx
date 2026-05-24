@@ -12,13 +12,16 @@ interface Props {
 }
 
 /**
- * Selector de financiador con opción de alta rápida.
+ * Selector de tercero (de la red) con opción de alta rápida.
  * Muestra "FIN-### — Nombre" para cada opción.
  * Solo lista activos (deleted_at IS NULL). Si codigo es null muestra "Sin código — Nombre".
  *
  * El alta rápida se delega al padre vía onRequestCreate (que abre un modal aparte).
- * El padre debe encargarse de seleccionar el nuevo financiador automáticamente
+ * El padre debe encargarse de seleccionar el nuevo tercero automáticamente
  * después de crearlo.
+ *
+ * Internamente sigue usando el type `Financiador` y la tabla `financiadores` —
+ * solo el texto visible al usuario habla de "tercero" (decisión 2026-05-24).
  */
 export default function FinanciadorSelect({
   financiadores,
@@ -48,14 +51,14 @@ export default function FinanciadorSelect({
       disabled={disabled}
       className={`w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 disabled:opacity-50 ${className}`}
     >
-      <option value="">— Seleccionar financiador —</option>
+      <option value="">— Seleccionar tercero —</option>
       {activos.map(f => (
         <option key={f.id} value={f.id}>
           {(f.codigo ?? 'Sin código') + ' — ' + f.nombre}
         </option>
       ))}
       {onRequestCreate && (
-        <option value="__new__">+ Nuevo financiador…</option>
+        <option value="__new__">+ Nuevo tercero…</option>
       )}
     </select>
   )

@@ -24,10 +24,13 @@ interface Props {
 }
 
 /**
- * Modal mínimo para crear financiador desde otro flujo (ej: alta de gasto).
+ * Modal mínimo para crear un tercero (de la red) desde otro flujo (ej: alta de gasto).
  * Sin lógica de negocio compleja: nombre obligatorio, resto opcional.
  * El padre provee la action `onCreate` y un callback `onCreated` que selecciona
- * el financiador recién creado en el form que abrió el modal.
+ * el tercero recién creado en el form que abrió el modal.
+ *
+ * Internamente sigue usando la tabla `financiadores` y el type `Financiador` —
+ * solo el texto visible al usuario habla de "tercero" (decisión 2026-05-24).
  */
 export default function FinanciadorQuickCreateModal({
   open,
@@ -86,7 +89,7 @@ export default function FinanciadorQuickCreateModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
       <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-        <h2 className="mb-5 text-lg font-semibold text-gray-900">Nuevo financiador</h2>
+        <h2 className="mb-5 text-lg font-semibold text-gray-900">Nuevo tercero</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -108,7 +111,7 @@ export default function FinanciadorQuickCreateModal({
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
-              <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputCls} placeholder="financiador@email.com" />
+              <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputCls} placeholder="tercero@email.com" />
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Teléfono</label>
@@ -143,7 +146,7 @@ export default function FinanciadorQuickCreateModal({
               disabled={isPending}
               className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
             >
-              {isPending ? 'Guardando…' : 'Crear financiador'}
+              {isPending ? 'Guardando…' : 'Crear tercero'}
             </button>
           </div>
         </form>

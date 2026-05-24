@@ -60,7 +60,7 @@ function normalizeGasto(data: GastoPayload): GastoPayload | { error: string } {
     cleaned = { ...cleaned, financiador_id: null }
   } else if (cleaned.forma_cancelacion === 'financiador') {
     if (!cleaned.financiador_id) {
-      return { error: 'Cuando el gasto es financiado, seleccioná un financiador.' }
+      return { error: 'Cuando el gasto se afronta con un tercero de la red, seleccioná el tercero.' }
     }
   } else {
     return { error: `forma_cancelacion inválida: ${cleaned.forma_cancelacion}` }
@@ -101,6 +101,22 @@ function stripCamposOpcionales<T extends Record<string, unknown>>(p: T): Record<
   return rest
 }
 
+// G1 (2026-05-24): todos los gastos pertenecen al fondo operativo RISA.
+// El selector visible se eliminó del modal; este helper resuelve el id real.
+async function getRisaFondoId(
+  supabase: ReturnType<typeof createClient>
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('fondos')
+    .select('id')
+    .eq('codigo', 'FON-001')
+    .is('deleted_at', null)
+    .maybeSingle()
+  if (error) throw new Error(`Error al buscar fondo RISA: ${error.message}`)
+  if (!data) throw new Error('No se encontró el fondo operativo RISA.')
+  return data.id
+}
+
 export async function createGasto(
   data: GastoPayload,
   options?: { id?: string; comprobante?: { path: string; mime: string; nombre: string; size: number } }
@@ -114,8 +130,11 @@ export async function createGasto(
   if ('error' in normalized) {
     throw new Error(normalized.error)
   }
+  // G1: forzar fondo_id = RISA, ignorando lo que venga del payload.
+  const risaId = await getRisaFondoId(supabase)
   const insert: Record<string, unknown> = {
     ...normalized,
+    fondo_id: risaId,
     proveedor_id: normalized.proveedor_id || null,
     estado: 'enviado',  // alta directa a pendiente de aprobación (sin paso por borrador)
     created_by: user.id,
@@ -156,8 +175,12 @@ export async function updateGasto(id: string, data: GastoPayload) {
   if ('error' in normalized) {
     throw new Error(normalized.error)
   }
+  // G1: el fondo no es editable desde UI. Removemos del payload para conservar
+  // el fondo_id existente del gasto.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { fondo_id: _ignoredFondoId, ...rest } = normalized
   const update: Record<string, unknown> = {
-    ...normalized,
+    ...rest,
     proveedor_id: normalized.proveedor_id || null,
   }
 
@@ -259,8 +282,15 @@ export async function createGastoRecurrente(data: GastoRecurrentePayload): Promi
     const user = authResult.data?.user
     if (!user) return { ok: false, error: 'No autenticado' }
 
+    // G1: el recurrente también opera siempre contra RISA.
+    const risaId = await getRisaFondoId(supabase).catch(err => ({ error: err.message }))
+    if (typeof risaId === 'object') {
+      return { ok: false, error: risaId.error }
+    }
+
     const insertPayload = {
       ...data,
+      fondo_id: risaId,
       proveedor_id: data.proveedor_id || null,
       created_by: user.id,
     }
@@ -288,7 +318,10 @@ export async function createGastoRecurrente(data: GastoRecurrentePayload): Promi
 export async function updateGastoRecurrente(id: string, data: GastoRecurrentePayload): Promise<RecurrenteActionResult> {
   try {
     const supabase = createClient()
-    const updatePayload = { ...data, proveedor_id: data.proveedor_id || null }
+    // G1: el fondo no es editable. Quitar del update para conservar el existente.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { fondo_id: _ignoredFondoId, ...rest } = data
+    const updatePayload = { ...rest, proveedor_id: data.proveedor_id || null }
     console.error('[updateGastoRecurrente] id:', id, 'payload:', JSON.stringify(updatePayload))
 
     const { data: rows, error } = await supabase

@@ -30,7 +30,7 @@ export default async function GastosPage() {
       .order('fecha_gasto', { ascending: false }),
     supabase
       .from('fondos')
-      .select('id, nombre, moneda')
+      .select('id, codigo, nombre, moneda')
       .is('deleted_at', null)
       .eq('estado', 'activo')
       .order('nombre', { ascending: true }),
@@ -114,7 +114,7 @@ export default async function GastosPage() {
 
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const gastos: GastoRow[] = (gastosData ?? []) as unknown as GastoRow[]
-  const fondos = (fondosResult.data ?? []) as Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
+  const fondos = (fondosResult.data ?? []) as Pick<Fondo, 'id' | 'codigo' | 'nombre' | 'moneda'>[]
   const proveedores = (proveedoresData ?? []) as unknown as Pick<Proveedor, 'id' | 'nombre' | 'permite_horas_servicio' | 'valor_hora' | 'tiene_uplift' | 'porcentaje_uplift'>[]
   const recurrentes: GastoRecurrenteRow[] = (recurrentesResult.data ?? []) as unknown as GastoRecurrenteRow[]
   const pagosDeGastos: PagoDeGasto[] = (pagosDeGastosResult.data ?? []) as PagoDeGasto[]
