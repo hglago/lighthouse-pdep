@@ -94,8 +94,25 @@ export async function createPagoYConfirmar(
 
     const { error: confirmErr } = await supabase.rpc('fn_confirmar_pago', { p_pago_id: inserted.id })
     if (confirmErr) {
-      console.error('[createPagoYConfirmar] confirm:', confirmErr.message)
-      return { ok: false, error: `Pago creado pero falló la confirmación: ${cleanDbError(confirmErr.message)}` }
+      console.error('[createPagoYConfirmar] confirm failed:', confirmErr.message)
+      // FIN-FIX-2 (2026-05-24): atomicidad. Rollback explícito del INSERT
+      // para no dejar pago huérfano en estado borrador. Cualquier fallo de
+      // la RPC (saldo, RLS, validaciones SQL) ahora deja el sistema limpio.
+      const { error: rollbackErr } = await supabase.from('pagos').delete().eq('id', inserted.id)
+      if (rollbackErr) {
+        // Caso raro: el INSERT se grabó pero el DELETE no pudo limpiar.
+        // El borrador queda visible en la tabla; lo logueamos para diagnóstico.
+        console.error('[createPagoYConfirmar] rollback FAILED — pago huérfano:', {
+          pago_id: inserted.id,
+          confirm_error: confirmErr.message,
+          rollback_error: rollbackErr.message,
+        })
+        return {
+          ok: false,
+          error: `${cleanDbError(confirmErr.message)} · No se pudo limpiar el borrador automáticamente; eliminalo desde la tabla de Borradores.`,
+        }
+      }
+      return { ok: false, error: cleanDbError(confirmErr.message) }
     }
 
     revalidatePath('/pagos')
