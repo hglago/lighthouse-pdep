@@ -800,7 +800,7 @@ export default function PagosClient({
 
     const filasObligaciones = obligaciones.map(o => ({
       seccion: 'Obligación pendiente',
-      estado_operativo: 'Pendiente',
+      estado: 'Pendiente',
       nro_pago: '',
       fecha: o.fecha_vencimiento ?? o.fecha_gasto ?? '',
       tipo: OBLIGACION_TIPO_LABELS[o.tipo_obligacion] ?? o.tipo_obligacion,
@@ -812,7 +812,6 @@ export default function PagosClient({
       concepto: o.concepto,
       monto: o.monto_pendiente,
       moneda: o.moneda,
-      estado: 'pendiente',
       created_at: '',
     }))
 
@@ -820,7 +819,7 @@ export default function PagosClient({
       const esBorrador = p.estado === 'borrador'
       return {
         seccion: esBorrador ? 'Borrador pendiente' : 'Pago registrado',
-        estado_operativo: ESTADO_LABELS[p.estado] ?? p.estado,
+        estado: ESTADO_LABELS[p.estado] ?? p.estado,
         nro_pago: p.nro_pago,
         fecha: p.fecha_pago,
         tipo: TIPO_LABELS[p.tipo] ?? p.tipo,
@@ -832,7 +831,6 @@ export default function PagosClient({
         concepto: p.concepto,
         monto: p.monto,
         moneda: p.moneda,
-        estado: p.estado,
         created_at: p.created_at,
       }
     })
