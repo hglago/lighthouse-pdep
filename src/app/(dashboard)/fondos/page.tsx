@@ -117,9 +117,9 @@ export default async function FondosPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Caja RISA y financiación</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">Caja RISA y terceros</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Cuenta corriente de RISA, aportes de socios y financiación pendiente.
+          Cuenta corriente de RISA, aportes de socios y deuda pendiente con terceros.
         </p>
       </div>
 

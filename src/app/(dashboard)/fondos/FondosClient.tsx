@@ -439,7 +439,7 @@ export default function FondosClient({
     [risa, movimientos]
   )
   const destinoLabel = (d: DestinoAporte): string =>
-    d === 'risa' ? 'RISA' : 'Cancelación de financiación'
+    d === 'risa' ? 'RISA' : 'Cancelación de deuda con tercero'
 
   // ─── Etapa 2D: lookup aporte_id → APO-### para mostrar N° transacción
   //              en cuenta corriente RISA
@@ -493,7 +493,7 @@ export default function FondosClient({
       type: 'enum',
       enumOptions: [
         { value: 'risa', label: 'RISA' },
-        { value: 'cancelacion_financiacion', label: 'Cancelación financiación' },
+        { value: 'cancelacion_financiacion', label: 'Cancelación deuda tercero' },
       ],
       render: a => (
         <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${a.destino_aporte === 'risa' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'}`}>
@@ -502,7 +502,7 @@ export default function FondosClient({
       ),
     },
     {
-      key: 'financiador', label: 'Financiador',
+      key: 'financiador', label: 'Tercero',
       accessor: a => a.financiadores?.nombre ?? '',
       type: 'text',
       render: a => a.financiadores
@@ -616,7 +616,7 @@ export default function FondosClient({
     { key: 'codigo', label: 'Código', accessor: s => s.financiador_codigo ?? '', type: 'text',
       render: s => <span className="font-mono text-xs text-slate-600">{s.financiador_codigo ?? '—'}</span> },
     {
-      key: 'nombre', label: 'Financiador',
+      key: 'nombre', label: 'Tercero',
       accessor: s => s.financiador_nombre,
       type: 'text',
       render: s => (
@@ -754,7 +754,7 @@ export default function FondosClient({
       return
     }
     if (aporteSocioForm.destino_aporte === 'cancelacion_financiacion' && !aporteSocioForm.financiador_id) {
-      setNuevoError('Seleccioná un financiador para cancelar financiación.')
+      setNuevoError('Seleccioná un tercero para cancelar deuda.')
       return
     }
     startTransition(async () => {
@@ -797,7 +797,7 @@ export default function FondosClient({
     <div className="space-y-8">
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          Etapa 2A — Caja RISA y financiación (read-only)
+          Etapa 2A — Caja RISA y terceros (read-only)
           ═══════════════════════════════════════════════════════════════════════ */}
 
       {/* ── Card resumen RISA ─────────────────────────────────────────────── */}
@@ -858,7 +858,7 @@ export default function FondosClient({
             disabled={isPending}
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50"
           >
-            + Nuevo financiador
+            + Nuevo tercero
           </button>
         </div>
       )}
@@ -892,10 +892,10 @@ export default function FondosClient({
         />
       </div>
 
-      {/* ── Financiación pendiente (v_saldos_financiadores) ─────────────────── */}
+      {/* ── Deuda pendiente con terceros (v_saldos_financiadores) ──────────── */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold text-gray-900">Financiación pendiente</h3>
+          <h3 className="text-base font-semibold text-gray-900">Cuenta corriente de terceros</h3>
           <input
             type="text"
             value={searchFinPendiente}
@@ -913,8 +913,8 @@ export default function FondosClient({
           initialSort={{ key: 'saldo_pendiente', dir: 'desc' }}
           emptyMessage={
             saldosFinanciadores.length === 0
-              ? 'No hay financiación pendiente.'
-              : 'No hay financiación que coincida con los filtros.'
+              ? 'No hay deuda pendiente con terceros.'
+              : 'No hay deuda con terceros que coincida con los filtros.'
           }
         />
       </div>
@@ -927,7 +927,7 @@ export default function FondosClient({
             type="text"
             value={searchAportes}
             onChange={e => setSearchAportes(e.target.value)}
-            placeholder="Buscar… (APO-###, socio, financiador, destino)"
+            placeholder="Buscar… (APO-###, socio, tercero, destino)"
             className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
           />
         </div>
@@ -976,7 +976,7 @@ export default function FondosClient({
       {/* ── Financiadores ───────────────────────────────────────────────────── */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold text-gray-900">Financiadores</h3>
+          <h3 className="text-base font-semibold text-gray-900">Terceros</h3>
           <input
             type="text"
             value={searchFinanciadores}
@@ -994,8 +994,8 @@ export default function FondosClient({
           initialSort={{ key: 'codigo', dir: 'asc' }}
           emptyMessage={
             financiadores.length === 0
-              ? 'No hay financiadores registrados.'
-              : 'No hay financiadores que coincidan con los filtros.'
+              ? 'No hay terceros registrados.'
+              : 'No hay terceros que coincidan con los filtros.'
           }
         />
       </div>
@@ -1250,11 +1250,11 @@ export default function FondosClient({
         </div>
       )}
 
-      {/* ── Modal: Nuevo financiador ─────────────────────────────────────────── */}
+      {/* ── Modal: Nuevo tercero ─────────────────────────────────────────────── */}
       {nuevoModal === 'newFinanciador' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-            <h2 className="mb-5 text-lg font-semibold text-gray-900">Nuevo financiador</h2>
+            <h2 className="mb-5 text-lg font-semibold text-gray-900">Nuevo tercero</h2>
             <form onSubmit={handleCrearFinanciador} className="space-y-4">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -1276,7 +1276,7 @@ export default function FondosClient({
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
-                  <input type="email" value={finForm.email} onChange={e => setFinForm({ ...finForm, email: e.target.value })} className={inputCls} placeholder="financiador@email.com" />
+                  <input type="email" value={finForm.email} onChange={e => setFinForm({ ...finForm, email: e.target.value })} className={inputCls} placeholder="tercero@email.com" />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Teléfono</label>
@@ -1290,7 +1290,7 @@ export default function FondosClient({
               {nuevoError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{nuevoError}</div>}
               <div className="flex justify-end gap-2 pt-1">
                 <button type="button" onClick={closeNuevoModal} disabled={isPending} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50">Cancelar</button>
-                <button type="submit" disabled={isPending} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50">{isPending ? 'Guardando…' : 'Crear financiador'}</button>
+                <button type="submit" disabled={isPending} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50">{isPending ? 'Guardando…' : 'Crear tercero'}</button>
               </div>
             </form>
           </div>
@@ -1391,7 +1391,7 @@ export default function FondosClient({
                       onChange={() => setAporteSocioForm({ ...aporteSocioForm, destino_aporte: 'cancelacion_financiacion' })}
                       className="sr-only"
                     />
-                    Cancelar financiación
+                    Cancelar deuda con tercero
                   </label>
                 </div>
               </div>
@@ -1399,11 +1399,11 @@ export default function FondosClient({
               {aporteSocioForm.destino_aporte === 'cancelacion_financiacion' && (
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Financiador <span className="text-red-500">*</span>
+                    Tercero <span className="text-red-500">*</span>
                   </label>
                   {financiadoresConDeuda.length === 0 ? (
                     <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                      No hay financiación pendiente para cancelar.
+                      No hay deuda pendiente con terceros para cancelar.
                     </p>
                   ) : (
                     <>
@@ -1412,7 +1412,7 @@ export default function FondosClient({
                         onChange={e => setAporteSocioForm({ ...aporteSocioForm, financiador_id: e.target.value })}
                         className={inputCls}
                       >
-                        <option value="">— Seleccionar financiador —</option>
+                        <option value="">— Seleccionar tercero —</option>
                         {financiadoresConDeuda
                           .filter(f => f.moneda === aporteSocioForm.moneda)
                           .map(f => (
@@ -1423,7 +1423,7 @@ export default function FondosClient({
                       </select>
                       {saldoPendienteSeleccionado !== null && (
                         <p className="mt-1 text-xs text-gray-500">
-                          Saldo pendiente con este financiador: <span className="font-medium tabular-nums">{aporteSocioForm.moneda} {fmt(saldoPendienteSeleccionado)}</span>
+                          Saldo pendiente con este tercero: <span className="font-medium tabular-nums">{aporteSocioForm.moneda} {fmt(saldoPendienteSeleccionado)}</span>
                         </p>
                       )}
                     </>

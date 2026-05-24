@@ -276,7 +276,7 @@ export async function crearFinanciador(data: FinanciadorPayload): Promise<Financ
       console.error('[crearFinanciador] insert error:', { code: error.code, message: error.message })
       return { ok: false, error: cleanDbError(error.message) }
     }
-    if (!inserted) return { ok: false, error: 'No se pudo crear el financiador.' }
+    if (!inserted) return { ok: false, error: 'No se pudo crear el tercero.' }
 
     revalidatePath('/fondos')
     return { ok: true, id: inserted.id, codigo: inserted.codigo, nombre: inserted.nombre }
@@ -308,7 +308,7 @@ export async function registrarAporteSocio(data: AporteSocioPayload): Promise<Ap
       return { ok: false, error: 'El importe debe ser mayor a 0.' }
     }
     if (data.destino_aporte === 'cancelacion_financiacion' && !data.financiador_id) {
-      return { ok: false, error: 'El financiador es obligatorio cuando el destino es cancelar financiación.' }
+      return { ok: false, error: 'El tercero es obligatorio cuando el destino es cancelar deuda con tercero.' }
     }
 
     const supabase = createClient()
