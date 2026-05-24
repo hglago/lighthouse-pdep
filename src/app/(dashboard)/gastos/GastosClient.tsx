@@ -7,8 +7,6 @@ import type { ProveedorQuickResult } from '../proveedores/actions'
 import type { FinanciadorPayload, FinanciadorActionResult } from '../fondos/actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
-import { useSortable } from '@/lib/useSortable'
-import SortableHeader from '@/components/SortableHeader'
 import DataTable, { type Column } from '@/components/DataTable'
 import DetalleServicioBlock from '@/components/DetalleServicioBlock'
 import FinanciadorSelect from '@/components/FinanciadorSelect'
@@ -575,26 +573,18 @@ export default function GastosClient({
   }
 
   const qr = searchRecurrentes.trim().toLowerCase()
-  const filteredRecurrentesBase = qr
-    ? recurrentes.filter(
-        (r) =>
-          r.concepto.toLowerCase().includes(qr) ||
-          (r.fondos?.nombre ?? '').toLowerCase().includes(qr) ||
-          (r.proveedores?.nombre ?? '').toLowerCase().includes(qr) ||
-          (r.categoria ?? '').toLowerCase().includes(qr)
-      )
-    : recurrentes
-
-  const recurrentesAccessors = useMemo(() => ({
-    concepto: (r: GastoRecurrenteRow) => r.concepto,
-    fondo: (r: GastoRecurrenteRow) => r.fondos?.nombre ?? '',
-    proveedor: (r: GastoRecurrenteRow) => r.proveedores?.nombre ?? '',
-    dia: (r: GastoRecurrenteRow) => r.dia_vencimiento,
-    monto: (r: GastoRecurrenteRow) => r.monto,
-    estado: (r: GastoRecurrenteRow) => (r.activo ? 'activo' : 'inactivo'),
-  }), [])
-  const { sorted: filteredRecurrentes, sortKey: rSortKey, sortDir: rSortDir, onSort: onRecurrenteSort } =
-    useSortable(filteredRecurrentesBase, recurrentesAccessors, { key: 'concepto', dir: 'asc' })
+  // F2.2: memoizar para evitar loop con onVisibleRowsChange del DataTable.
+  const filteredRecurrentesBase = useMemo(() => {
+    if (!qr) return recurrentes
+    return recurrentes.filter(
+      (r) =>
+        r.concepto.toLowerCase().includes(qr) ||
+        (r.fondos?.nombre ?? '').toLowerCase().includes(qr) ||
+        (r.proveedores?.nombre ?? '').toLowerCase().includes(qr) ||
+        (r.categoria ?? '').toLowerCase().includes(qr)
+    )
+  }, [recurrentes, qr])
+  const [visibleRecurrentes, setVisibleRecurrentes] = useState<GastoRecurrenteRow[]>(filteredRecurrentesBase)
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1084,7 +1074,8 @@ export default function GastosClient({
   }
 
   function handleExportRecurrentes() {
-    const rows = filteredRecurrentes.map(r => ({
+    const source = visibleRecurrentes.length > 0 ? visibleRecurrentes : filteredRecurrentesBase
+    const rows = source.map(r => ({
       fecha: r.fecha_inicio,
       proveedor: r.proveedores?.nombre ?? '',
       concepto: r.concepto,
@@ -1111,11 +1102,78 @@ export default function GastosClient({
 
   // Set de recurrente_id que YA tienen gasto generado para el período actual (YYYY-MM)
   const periodoActual = new Date().toISOString().slice(0, 7)
-  const recurrentesGeneradosEsteMes = new Set(
+  const recurrentesGeneradosEsteMes = useMemo(() => new Set(
     gastos
       .filter(g => g.recurrente_id && g.periodo === periodoActual)
       .map(g => g.recurrente_id as string)
-  )
+  ), [gastos, periodoActual])
+
+  const recurrentesColumns = useMemo<Column<GastoRecurrenteRow>[]>(() => [
+    {
+      key: 'concepto',
+      label: 'Concepto',
+      accessor: r => r.concepto,
+      render: r => (
+        <div>
+          <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{r.concepto}</div>
+          <div className="flex gap-1 mt-0.5 items-center">
+            {r.categoria && <span className="text-xs text-gray-400">{r.categoria}</span>}
+            {r.prioridad_pago <= 2 && (
+              <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-700">{PRIORIDAD_LABELS[r.prioridad_pago]}</span>
+            )}
+            {recurrentesGeneradosEsteMes.has(r.id) && (
+              <span
+                title={`Ya generó gasto para el período ${periodoActual}`}
+                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-emerald-100 text-emerald-700"
+              >
+                Generado {periodoActual}
+              </span>
+            )}
+          </div>
+        </div>
+      ),
+      type: 'text',
+    },
+    {
+      key: 'proveedor',
+      label: 'Proveedor',
+      accessor: r => r.proveedores?.nombre ?? '',
+      render: r => r.proveedores?.nombre ?? <span className="text-gray-300">—</span>,
+      type: 'text',
+      className: 'hidden md:table-cell',
+    },
+    {
+      key: 'dia',
+      label: 'Día',
+      accessor: r => r.dia_vencimiento,
+      type: 'number',
+      align: 'center',
+    },
+    {
+      key: 'monto',
+      label: 'Monto',
+      accessor: r => r.monto,
+      render: r => <span className="whitespace-nowrap font-medium text-gray-900">{formatMonto(r.monto, r.moneda)}</span>,
+      type: 'number',
+      align: 'right',
+    },
+    {
+      key: 'estado',
+      label: 'Estado',
+      accessor: r => (r.activo ? 'activo' : 'inactivo'),
+      render: r => (
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${r.activo ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+          {r.activo ? 'Activo' : 'Inactivo'}
+        </span>
+      ),
+      type: 'enum',
+      enumOptions: [
+        { value: 'activo', label: 'Activo' },
+        { value: 'inactivo', label: 'Inactivo' },
+      ],
+      className: 'hidden lg:table-cell',
+    },
+  ], [recurrentesGeneradosEsteMes, periodoActual])
 
   // Pagos por gasto_id (incluye todos los estados; el caller decide filtrar)
   const pagosPorGastoId = new Map<string, PagoDeGasto[]>()
@@ -1384,7 +1442,7 @@ export default function GastosClient({
             <div className="flex items-center gap-2">
               <button
                 onClick={handleExportRecurrentes}
-                disabled={filteredRecurrentes.length === 0}
+                disabled={filteredRecurrentesBase.length === 0}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 whitespace-nowrap"
               >
                 Exportar Excel
@@ -1401,90 +1459,37 @@ export default function GastosClient({
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-            {filteredRecurrentes.length === 0 ? (
-              <div className="p-12 text-center text-sm text-gray-400">
-                {searchRecurrentes ? 'Sin resultados para esa búsqueda.' : 'No hay gastos recurrentes configurados.'}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <SortableHeader label="Concepto" sortKey="concepto" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} />
-                      <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} className="hidden md:table-cell" />
-                      <SortableHeader label="Día" sortKey="dia" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} align="center" />
-                      <SortableHeader label="Monto" sortKey="monto" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} align="right" />
-                      <SortableHeader label="Estado" sortKey="estado" activeKey={rSortKey} dir={rSortDir} onSort={onRecurrenteSort} className="hidden lg:table-cell" />
-                      {(canWrite || canDelete) && (
-                        <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredRecurrentes.map((r) => (
-                      <tr key={r.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3">
-                          <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{r.concepto}</div>
-                          <div className="flex gap-1 mt-0.5 items-center">
-                            {r.categoria && <span className="text-xs text-gray-400">{r.categoria}</span>}
-                            {r.prioridad_pago <= 2 && (
-                              <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-700">{PRIORIDAD_LABELS[r.prioridad_pago]}</span>
-                            )}
-                            {recurrentesGeneradosEsteMes.has(r.id) && (
-                              <span
-                                title={`Ya generó gasto para el período ${periodoActual}`}
-                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-emerald-100 text-emerald-700"
-                              >
-                                Generado {periodoActual}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">
-                          {r.proveedores?.nombre ?? <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-center text-gray-600">{r.dia_vencimiento}</td>
-                        <td className="px-4 py-3 text-sm text-right font-medium text-gray-900 whitespace-nowrap">
-                          {formatMonto(r.monto, r.moneda)}
-                        </td>
-                        <td className="hidden px-4 py-3 lg:table-cell">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${r.activo ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                            {r.activo ? 'Activo' : 'Inactivo'}
-                          </span>
-                        </td>
-                        {(canWrite || canDelete) && (
-                          <td className="px-4 py-3">
-                            <div className="flex justify-end gap-2">
-                              {canWrite && (
-                                <button onClick={() => openEditRecurrente(r)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
-                                  Editar
-                                </button>
-                              )}
-                              {canWrite && (
-                                <button
-                                  onClick={() => handleToggleActivo(r)}
-                                  disabled={isPending}
-                                  className={`rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${r.activo ? 'text-amber-700 hover:bg-amber-50' : 'text-green-700 hover:bg-green-50'}`}
-                                >
-                                  {r.activo ? 'Desactivar' : 'Activar'}
-                                </button>
-                              )}
-                              {canDelete && (
-                                <button onClick={() => handleDeleteRecurrente(r.id, r.concepto)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
-                                  Eliminar
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <DataTable<GastoRecurrenteRow>
+            rows={filteredRecurrentesBase}
+            getRowId={r => r.id}
+            initialSort={{ key: 'concepto', dir: 'asc' }}
+            emptyMessage={searchRecurrentes ? 'Sin resultados para esa búsqueda.' : 'No hay gastos recurrentes configurados.'}
+            onVisibleRowsChange={setVisibleRecurrentes}
+            columns={recurrentesColumns}
+            rowActions={(canWrite || canDelete) ? (r) => (
+              <>
+                {canWrite && (
+                  <button onClick={() => openEditRecurrente(r)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
+                    Editar
+                  </button>
+                )}
+                {canWrite && (
+                  <button
+                    onClick={() => handleToggleActivo(r)}
+                    disabled={isPending}
+                    className={`rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${r.activo ? 'text-amber-700 hover:bg-amber-50' : 'text-green-700 hover:bg-green-50'}`}
+                  >
+                    {r.activo ? 'Desactivar' : 'Activar'}
+                  </button>
+                )}
+                {canDelete && (
+                  <button onClick={() => handleDeleteRecurrente(r.id, r.concepto)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
+                    Eliminar
+                  </button>
+                )}
+              </>
+            ) : undefined}
+          />
         </div>
       )}
 
