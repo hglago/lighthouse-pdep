@@ -299,7 +299,7 @@ export default function PagosClient({
   // ── Bulk state (F2.3: la selección de obligaciones se delegó al DataTable) ──
   const [ocultarConBorrador, setOcultarConBorrador] = useState(false)
   const [bulkMessage, setBulkMessage] = useState<{ text: string; isError: boolean } | null>(null)
-  const [selectedPagoIds, setSelectedPagoIds] = useState<Set<string>>(new Set())
+  // F2.4: la selección de borradores la maneja el DataTable de la nueva sección.
   const [bulkPagosMessage, setBulkPagosMessage] = useState<{ text: string; isError: boolean } | null>(null)
 
   const canWrite = role === 'admin' || role === 'contador'
@@ -429,44 +429,33 @@ export default function PagosClient({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [tieneBorrador])
 
-  function toggleSelectAllPagos() {
-    if (allVisibleBorradoresSelected) {
-      setSelectedPagoIds(new Set())
-    } else {
-      setSelectedPagoIds(new Set(visibleBorradores.map(p => p.id)))
+  // F2.4: la selección y el toggle del header son nativos del DataTable.
+  // handleBulkConfirmar recibe ids + clear desde el slot bulkActions.
+  function handleBulkConfirmar(ids: string[], clear: () => void) {
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    const seleccionados = borradoresFiltrados.filter(p => idSet.has(p.id))
+    const totales = new Map<string, number>()
+    for (const p of seleccionados) {
+      totales.set(p.moneda, (totales.get(p.moneda) ?? 0) + p.monto)
     }
-  }
-
-  function toggleSelectPago(id: string) {
-    setSelectedPagoIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  function handleBulkConfirmar() {
-    if (selectedVisibleBorradores.length === 0) return
-    const totalesStr = Array.from(totalesPagosPorMoneda.entries())
+    const totalesStr = Array.from(totales.entries())
       .map(([moneda, total]) => formatMonto(total, moneda))
       .join(' / ')
     if (
       !confirm(
-        `Se confirmarán ${selectedVisibleBorradores.length} pago${selectedVisibleBorradores.length !== 1 ? 's' : ''} por un total de ${totalesStr}. Esto impactará los saldos de los fondos.`
+        `Se confirmarán ${ids.length} pago${ids.length !== 1 ? 's' : ''} por un total de ${totalesStr}. Esto impactará los saldos de los fondos.`
       )
-    )
-      return
+    ) return
     setBulkPagosMessage(null)
     setActionError('')
-    const ids = selectedVisibleBorradores.map(p => p.id)
     startTransition(async () => {
       try {
         const result = await onConfirmarPagosBulk(ids)
         const nConfirm = result.confirmados.length
         const nErr = result.errores.length
         if (nConfirm > 0) {
-          setSelectedPagoIds(new Set())
+          clear()
           setBulkMessage(null)
         }
         const partes: string[] = [
@@ -889,15 +878,122 @@ export default function PagosClient({
   const { sorted: filteredPagos, sortKey: pSortKey, sortDir: pSortDir, onSort: onPagoSort } =
     useSortable(filteredPagosBase, pagosAccessors, { key: 'fecha', dir: 'desc' })
 
-  const visibleBorradores = filteredPagos.filter(p => p.estado === 'borrador')
-  const selectedVisibleBorradores = visibleBorradores.filter(p => selectedPagoIds.has(p.id))
-  const allVisibleBorradoresSelected =
-    visibleBorradores.length > 0 && visibleBorradores.every(p => selectedPagoIds.has(p.id))
+  // F2.4: dividir la tabla anterior en dos secciones independientes.
+  //   - Borradores pendientes (DataTable, selectable, bulk Confirmar).
+  //   - Pagos registrados (tabla manual por ahora, solo pagado + anulado;
+  //     F2.5 la migrará a DataTable).
+  // Ambas comparten la misma búsqueda (input arriba de Pagos registrados).
+  const borradoresFiltrados = useMemo(
+    () => filteredPagosBase.filter(p => p.estado === 'borrador'),
+    [filteredPagosBase]
+  )
+  const noBorradoresFiltrados = useMemo(
+    () => filteredPagos.filter(p => p.estado !== 'borrador'),
+    [filteredPagos]
+  )
 
-  const totalesPagosPorMoneda: Map<string, number> = new Map()
-  for (const p of selectedVisibleBorradores) {
-    totalesPagosPorMoneda.set(p.moneda, (totalesPagosPorMoneda.get(p.moneda) ?? 0) + p.monto)
-  }
+  const borradoresColumns = useMemo<Column<PagoRow>[]>(() => [
+    {
+      key: 'codigo',
+      label: 'Código',
+      accessor: p => p.codigo ?? '',
+      render: p => p.codigo
+        ? <span className="text-xs font-mono tabular-nums text-slate-600 whitespace-nowrap">{p.codigo}</span>
+        : <span className="text-gray-300">—</span>,
+      type: 'text',
+    },
+    {
+      key: 'nro',
+      label: 'Nro',
+      accessor: p => p.nro_pago,
+      render: p => <span className="text-xs text-gray-400 whitespace-nowrap font-mono">{p.nro_pago}</span>,
+      type: 'text',
+      className: 'hidden sm:table-cell',
+    },
+    {
+      key: 'fecha',
+      label: 'Fecha',
+      accessor: p => p.fecha_pago,
+      render: p => <span className="text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</span>,
+      type: 'date',
+    },
+    {
+      key: 'concepto',
+      label: 'Concepto',
+      accessor: p => p.concepto,
+      render: p => (
+        <div>
+          <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{p.concepto}</div>
+          {p.comprobante_url && (
+            <a href={p.comprobante_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+              Ver comprobante
+            </a>
+          )}
+        </div>
+      ),
+      type: 'text',
+    },
+    {
+      key: 'tipo',
+      label: 'Tipo',
+      accessor: p => p.tipo,
+      render: p => (
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${TIPO_COLORS[p.tipo]}`}>
+          {TIPO_LABELS[p.tipo]}
+        </span>
+      ),
+      type: 'enum',
+      enumOptions: (Object.keys(TIPO_LABELS) as PagoTipo[]).map(k => ({ value: k, label: TIPO_LABELS[k] })),
+      className: 'hidden sm:table-cell',
+    },
+    {
+      key: 'pago',
+      label: 'Pago',
+      accessor: p => modalidadPorPagoId.get(p.id) ?? 'desconocida',
+      render: p => {
+        const m = modalidadPorPagoId.get(p.id) ?? 'desconocida'
+        return (
+          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${MODALIDAD_COLORS[m]}`}>
+            {MODALIDAD_LABELS[m]}
+          </span>
+        )
+      },
+      type: 'enum',
+      enumOptions: [
+        { value: 'total', label: 'Total' },
+        { value: 'parcial', label: 'Parcial' },
+        { value: 'anticipo', label: '—' },
+        { value: 'desconocida', label: '—' },
+      ],
+      className: 'hidden sm:table-cell',
+    },
+    {
+      key: 'fondo',
+      label: 'Fondo',
+      accessor: p => p.fondos?.nombre ?? '',
+      render: p => p.fondos?.nombre ?? <span className="text-gray-300">—</span>,
+      type: 'text',
+      className: 'hidden md:table-cell',
+    },
+    {
+      key: 'proveedor',
+      label: 'Proveedor',
+      accessor: p => p.proveedores?.nombre ?? '',
+      render: p => p.proveedores?.nombre ?? <span className="text-gray-300">—</span>,
+      type: 'text',
+      className: 'hidden md:table-cell',
+    },
+    {
+      key: 'monto',
+      label: 'Monto',
+      accessor: p => p.monto,
+      render: p => (
+        <span className="whitespace-nowrap font-medium text-gray-900">{formatMonto(p.monto, p.moneda)}</span>
+      ),
+      type: 'number',
+      align: 'right',
+    },
+  ], [modalidadPorPagoId])
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -985,7 +1081,76 @@ export default function PagosClient({
         />
       </div>
 
-      {/* ── SECTION 2: Pagos registrados ────────────────────────────────────── */}
+      {/* ── SECTION 2: Borradores pendientes (F2.4) ─────────────────────────── */}
+      {borradoresFiltrados.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-base font-semibold text-gray-900">
+            Borradores pendientes
+            <span className="ml-2 text-sm font-normal text-gray-400">({borradoresFiltrados.length})</span>
+          </h2>
+
+          {bulkPagosMessage && (
+            <div className={`rounded-lg border px-3 py-2 text-sm ${bulkPagosMessage.isError ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+              {bulkPagosMessage.text}
+            </div>
+          )}
+
+          <DataTable<PagoRow>
+            rows={borradoresFiltrados}
+            getRowId={p => p.id}
+            selectable={canWrite}
+            initialSort={{ key: 'fecha', dir: 'desc' }}
+            emptyMessage="No hay borradores pendientes."
+            columns={borradoresColumns}
+            rowActions={canWrite ? (p) => (
+              <>
+                <button
+                  onClick={() => openEdit(p)}
+                  disabled={isPending}
+                  className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                >
+                  Editar
+                </button>
+                <button
+                  onClick={() => handleConfirmar(p.id)}
+                  disabled={isPending}
+                  className="rounded px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                >
+                  Confirmar
+                </button>
+              </>
+            ) : undefined}
+            bulkActions={canWrite ? (selectedIds, clear) => {
+              const idSet = selectedIds
+              const seleccionados = borradoresFiltrados.filter(p => idSet.has(p.id))
+              const totales = new Map<string, number>()
+              for (const p of seleccionados) {
+                totales.set(p.moneda, (totales.get(p.moneda) ?? 0) + p.monto)
+              }
+              const ids = Array.from(selectedIds)
+              return (
+                <>
+                  {Array.from(totales.entries()).map(([moneda, total]) => (
+                    <span key={moneda} className="text-sm font-semibold text-emerald-900">
+                      {formatMonto(total, moneda)}
+                    </span>
+                  ))}
+                  <span className="text-xs font-medium text-amber-700">Confirmar impactará saldos</span>
+                  <button
+                    onClick={() => handleBulkConfirmar(ids, clear)}
+                    disabled={isPending}
+                    className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 transition-colors disabled:opacity-50 whitespace-nowrap"
+                  >
+                    Confirmar pagos seleccionados ({ids.length})
+                  </button>
+                </>
+              )
+            } : undefined}
+          />
+        </div>
+      )}
+
+      {/* ── SECTION 3: Pagos registrados (confirmados + anulados) ───────────── */}
       <div className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-base font-semibold text-gray-900">
@@ -1024,36 +1189,8 @@ export default function PagosClient({
           </div>
         )}
 
-        {selectedVisibleBorradores.length > 0 && canWrite && (
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5">
-            <span className="text-sm font-medium text-emerald-800">
-              {selectedVisibleBorradores.length} borrador{selectedVisibleBorradores.length !== 1 ? 'es' : ''} seleccionado{selectedVisibleBorradores.length !== 1 ? 's' : ''}
-            </span>
-            <span className="text-emerald-300">·</span>
-            {Array.from(totalesPagosPorMoneda.entries()).map(([moneda, total]) => (
-              <span key={moneda} className="text-sm font-semibold text-emerald-900">
-                {formatMonto(total, moneda)}
-              </span>
-            ))}
-            <span className="text-xs font-medium text-amber-700">Confirmar impactará saldos de fondos</span>
-            <button
-              onClick={handleBulkConfirmar}
-              disabled={isPending}
-              className="ml-auto rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 transition-colors disabled:opacity-50 whitespace-nowrap"
-            >
-              Confirmar pagos seleccionados ({selectedVisibleBorradores.length})
-            </button>
-          </div>
-        )}
-
-        {bulkPagosMessage && (
-          <div className={`rounded-lg border px-3 py-2 text-sm ${bulkPagosMessage.isError ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-            {bulkPagosMessage.text}
-          </div>
-        )}
-
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          {filteredPagos.length === 0 ? (
+          {noBorradoresFiltrados.length === 0 ? (
             <div className="p-10 text-center text-sm text-gray-400">
               {search ? 'Sin resultados para esa búsqueda.' : 'No hay pagos registrados.'}
             </div>
@@ -1062,17 +1199,6 @@ export default function PagosClient({
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    {canWrite && (
-                      <th className="w-10 px-4 py-3">
-                        <input
-                          type="checkbox"
-                          checked={allVisibleBorradoresSelected}
-                          onChange={toggleSelectAllPagos}
-                          disabled={visibleBorradores.length === 0}
-                          className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500 disabled:opacity-40"
-                        />
-                      </th>
-                    )}
                     <SortableHeader label="Código" sortKey="codigo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Nro" sortKey="nro" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
                     <SortableHeader label="Fecha" sortKey="fecha" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
@@ -1083,28 +1209,14 @@ export default function PagosClient({
                     <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden md:table-cell" />
                     <SortableHeader label="Monto" sortKey="monto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} align="right" />
                     <SortableHeader label="Estado" sortKey="estado" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden lg:table-cell" />
-                    {(canWrite || isAdmin) && (
+                    {isAdmin && (
                       <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
                     )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredPagos.map(p => (
-                    <tr key={p.id} className={`transition-colors ${selectedPagoIds.has(p.id) ? 'bg-emerald-50' : 'hover:bg-gray-50'}`}>
-                      {canWrite && (
-                        <td className="px-4 py-3">
-                          {p.estado === 'borrador' ? (
-                            <input
-                              type="checkbox"
-                              checked={selectedPagoIds.has(p.id)}
-                              onChange={() => toggleSelectPago(p.id)}
-                              className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
-                            />
-                          ) : (
-                            <span className="inline-block w-4" />
-                          )}
-                        </td>
-                      )}
+                  {noBorradoresFiltrados.map(p => (
+                    <tr key={p.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 text-xs font-mono tabular-nums text-slate-600 whitespace-nowrap">
                         {p.codigo ?? <span className="text-gray-300">—</span>}
                       </td>
@@ -1147,28 +1259,10 @@ export default function PagosClient({
                           {ESTADO_LABELS[p.estado]}
                         </span>
                       </td>
-                      {(canWrite || isAdmin) && (
+                      {isAdmin && (
                         <td className="px-4 py-3">
                           <div className="flex justify-end gap-2">
-                            {canWrite && p.estado === 'borrador' && (
-                              <>
-                                <button
-                                  onClick={() => openEdit(p)}
-                                  disabled={isPending}
-                                  className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
-                                >
-                                  Editar
-                                </button>
-                                <button
-                                  onClick={() => handleConfirmar(p.id)}
-                                  disabled={isPending}
-                                  className="rounded px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50"
-                                >
-                                  Confirmar
-                                </button>
-                              </>
-                            )}
-                            {isAdmin && p.estado === 'pagado' && (
+                            {p.estado === 'pagado' && (
                               <button
                                 onClick={() => handleAnular(p.id, p.concepto)}
                                 disabled={isPending}
