@@ -9,6 +9,7 @@ import { exportToExcel, todayForFile } from '@/lib/excel'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
+import DataTable, { type Column } from '@/components/DataTable'
 import DetalleServicioBlock from '@/components/DetalleServicioBlock'
 import FinanciadorSelect from '@/components/FinanciadorSelect'
 import FinanciadorQuickCreateModal from '@/components/FinanciadorQuickCreateModal'
@@ -381,51 +382,164 @@ export default function GastosClient({
   const canApprove = role === 'admin' || role === 'revisor'
 
   const qg = searchGastos.trim().toLowerCase()
-  const filteredGastosBase = qg
-    ? gastos.filter(
-        (g) =>
-          (g.codigo ?? '').toLowerCase().includes(qg) ||
-          g.descripcion.toLowerCase().includes(qg) ||
-          (g.fondos?.nombre ?? '').toLowerCase().includes(qg) ||
-          (g.proveedores?.nombre ?? '').toLowerCase().includes(qg) ||
-          (g.financiadores?.nombre ?? '').toLowerCase().includes(qg) ||
-          (g.financiadores?.codigo ?? '').toLowerCase().includes(qg) ||
-          (g.notas ?? '').toLowerCase().includes(qg) ||
-          (g.descripcion_servicio ?? '').toLowerCase().includes(qg)
-      )
-    : gastos
+  // Memoizar el filtro: si no se memoiza, la identidad cambia en cada render y
+  // el useEffect interno del DataTable (onVisibleRowsChange) entra en loop.
+  const filteredGastosBase = useMemo(() => {
+    if (!qg) return gastos
+    return gastos.filter(
+      (g) =>
+        (g.codigo ?? '').toLowerCase().includes(qg) ||
+        g.descripcion.toLowerCase().includes(qg) ||
+        (g.fondos?.nombre ?? '').toLowerCase().includes(qg) ||
+        (g.proveedores?.nombre ?? '').toLowerCase().includes(qg) ||
+        (g.financiadores?.nombre ?? '').toLowerCase().includes(qg) ||
+        (g.financiadores?.codigo ?? '').toLowerCase().includes(qg) ||
+        (g.notas ?? '').toLowerCase().includes(qg) ||
+        (g.descripcion_servicio ?? '').toLowerCase().includes(qg)
+    )
+  }, [gastos, qg])
 
-  const gastosAccessors = useMemo(() => ({
-    codigo: (g: GastoRow) => g.codigo ?? '',
-    fecha: (g: GastoRow) => g.fecha_gasto,
-    descripcion: (g: GastoRow) => g.descripcion,
-    fondo: (g: GastoRow) => g.fondos?.nombre ?? '',
-    proveedor: (g: GastoRow) => g.proveedores?.nombre ?? '',
-    monto: (g: GastoRow) => g.monto,
-    estado: (g: GastoRow) => g.estado,
-  }), [])
-  const { sorted: filteredGastos, sortKey: gSortKey, sortDir: gSortDir, onSort: onGastoSort } =
-    useSortable(filteredGastosBase, gastosAccessors, { key: 'fecha', dir: 'desc' })
+  // F2.1: tabla de gastos migrada a DataTable. La búsqueda libre (input arriba)
+  // pre-filtra a `filteredGastosBase` ANTES de pasarlas al DataTable, para
+  // conservar match contra columnas no expuestas (notas, descripcion_servicio,
+  // financiador.codigo). El sort + selección + filtros por columna los maneja
+  // el DataTable internamente.
+  const [visibleGastos, setVisibleGastos] = useState<GastoRow[]>(filteredGastosBase)
 
-  // Selección de gastos (mismo patrón que pagos: Set<string> + header select-all visible)
-  const [selectedGastoIds, setSelectedGastoIds] = useState<Set<string>>(new Set())
-  const selectedVisibleCount = filteredGastos.reduce((n, g) => n + (selectedGastoIds.has(g.id) ? 1 : 0), 0)
-  const allVisibleGastosSelected = filteredGastos.length > 0 && selectedVisibleCount === filteredGastos.length
-  const someVisibleGastosSelected = selectedVisibleCount > 0 && !allVisibleGastosSelected
-  function toggleSelectGasto(id: string) {
-    setSelectedGastoIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-  function toggleSelectAllGastos() {
-    if (allVisibleGastosSelected) setSelectedGastoIds(new Set())
-    else setSelectedGastoIds(new Set(filteredGastos.map(g => g.id)))
-  }
+  const gastosColumns = useMemo<Column<GastoRow>[]>(() => [
+    {
+      key: 'codigo',
+      label: 'Código',
+      accessor: g => g.codigo ?? '',
+      render: g => g.codigo
+        ? <span className="text-xs font-mono tabular-nums text-slate-600 whitespace-nowrap">{g.codigo}</span>
+        : <span className="text-gray-300">—</span>,
+      type: 'text',
+    },
+    {
+      key: 'fecha',
+      label: 'Fecha',
+      accessor: g => g.fecha_gasto,
+      render: g => <span className="text-sm text-gray-500 whitespace-nowrap">{g.fecha_gasto}</span>,
+      type: 'date',
+    },
+    {
+      key: 'descripcion',
+      label: 'Concepto',
+      accessor: g => g.descripcion,
+      render: g => (
+        <div>
+          <div className="flex items-center gap-1.5 max-w-xs">
+            <span className="text-sm font-medium text-gray-900 truncate min-w-0">{g.descripcion}</span>
+            {g.comprobante_path && (
+              <button
+                type="button"
+                title="Ver comprobante"
+                aria-label="Ver comprobante"
+                onClick={() => handleViewComprobante(g.comprobante_path!)}
+                className="flex-shrink-0 text-slate-400 hover:text-slate-700 transition-colors"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <div className="flex gap-1 mt-0.5 items-center flex-wrap">
+            {g.es_servicio_horas && (
+              <span
+                title={
+                  g.horas_servicio != null && g.valor_hora_aplicado != null
+                    ? `Servicio por hora — ${g.horas_servicio}h × ${formatMonto(g.valor_hora_aplicado, g.moneda)}`
+                    : 'Servicio por hora'
+                }
+                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-800"
+              >
+                Servicio por hora
+              </span>
+            )}
+            {g.forma_cancelacion === 'financiador' ? (
+              <span
+                title="Gasto afrontado por un tercero de la red"
+                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-orange-100 text-orange-800"
+              >
+                {g.financiadores
+                  ? `Tercero: ${g.financiadores.codigo ?? 'Sin código'} ${g.financiadores.nombre}`
+                  : 'Tercero'}
+              </span>
+            ) : (
+              <span
+                title="Gasto afrontado con medios propios RISA"
+                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-slate-100 text-slate-700"
+              >
+                Medios propios RISA
+              </span>
+            )}
+            {g.recurrente_id && (
+              <span
+                title={`Generado automáticamente desde recurrente${g.periodo ? ` — período ${g.periodo}` : ''}`}
+                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-indigo-100 text-indigo-700"
+              >
+                Recurrente{g.periodo ? ` ${g.periodo}` : ''}
+              </span>
+            )}
+            {g.tiene_anticipo && (
+              <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-purple-100 text-purple-700">Anticipo</span>
+            )}
+            {g.prioridad_pago <= 2 && (
+              <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-700">{PRIORIDAD_LABELS[g.prioridad_pago]}</span>
+            )}
+            {g.fecha_vencimiento && (
+              <span className="text-xs text-gray-400">vence {g.fecha_vencimiento}</span>
+            )}
+          </div>
+        </div>
+      ),
+      type: 'text',
+    },
+    {
+      key: 'proveedor',
+      label: 'Proveedor',
+      accessor: g => g.proveedores?.nombre ?? '',
+      render: g => g.proveedores?.nombre ?? <span className="text-gray-300">—</span>,
+      type: 'text',
+      className: 'hidden md:table-cell',
+    },
+    {
+      key: 'monto',
+      label: 'Monto',
+      accessor: g => g.monto,
+      render: g => <span className="whitespace-nowrap font-medium text-gray-900">{formatMonto(g.monto, g.moneda)}</span>,
+      type: 'number',
+      align: 'right',
+    },
+    {
+      key: 'estado',
+      label: 'Estado',
+      accessor: g => g.estado,
+      render: g => {
+        const ui = estadoUI(g)
+        return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${ui.cls}`}>{ui.label}</span>
+      },
+      type: 'enum',
+      enumOptions: [
+        { value: 'borrador', label: ESTADO_LABELS.borrador },
+        { value: 'enviado', label: ESTADO_LABELS.enviado },
+        { value: 'aprobado', label: ESTADO_LABELS.aprobado },
+        { value: 'pagado_parcial', label: ESTADO_LABELS.pagado_parcial },
+        { value: 'pagado', label: ESTADO_LABELS.pagado },
+        { value: 'rechazado', label: ESTADO_LABELS.rechazado },
+      ],
+      className: 'hidden lg:table-cell',
+    },
+  // estadoUI/handleViewComprobante usan estado y handlers que dependen del
+  // ciclo de vida — no agregamos deps para evitar re-crear columns en cada
+  // render (los closures siempre apuntan al estado actual).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [])
 
-  // ─── Bulk actions: estado + handlers ────────────────────────────────────────
+  // ─── Bulk actions: feedback + handler genérico ─────────────────────────────
   const [bulkMessage, setBulkMessage] = useState<{ text: string; isError: boolean } | null>(null)
 
   function describirResultado(r: BulkGastoResult, accion: string): { text: string; isError: boolean } {
@@ -442,33 +556,22 @@ export default function GastosClient({
   }
 
   function runBulk(
+    ids: string[],
     actionFn: (ids: string[]) => Promise<BulkGastoResult>,
     accionDescriptiva: string,
+    clearSelection: () => void,
   ) {
-    const ids = Array.from(selectedGastoIds)
     if (ids.length === 0) return
     setBulkMessage(null)
     startTransition(async () => {
       try {
         const result = await actionFn(ids)
         setBulkMessage(describirResultado(result, accionDescriptiva))
-        setSelectedGastoIds(new Set())
+        clearSelection()
       } catch (err) {
         setBulkMessage({ text: err instanceof Error ? err.message : 'Error inesperado.', isError: true })
       }
     })
-  }
-
-  function handleBulkAprobar() {
-    runBulk(onBulkAprobar, 'autorizado(s)')
-  }
-  function handleBulkRechazar() {
-    if (!confirm(`¿Cancelar ${selectedGastoIds.size} gasto(s)? Quedarán en estado "rechazado".`)) return
-    runBulk(onBulkRechazar, 'cancelado(s)')
-  }
-  function handleBulkDelete() {
-    if (!confirm(`¿Eliminar ${selectedGastoIds.size} gasto(s)? Solo se eliminarán los que no tengan pagos asociados.`)) return
-    runBulk(onBulkDelete, 'eliminado(s)')
   }
 
   const qr = searchRecurrentes.trim().toLowerCase()
@@ -960,7 +1063,10 @@ export default function GastosClient({
   // ─── Export ──────────────────────────────────────────────────────────────────
 
   function handleExportGastos() {
-    const rows = filteredGastos.map(g => ({
+    // visibleGastos refleja lo que muestra el DataTable tras búsqueda + filtros
+    // por columna + sort. Fallback a filteredGastosBase por si aún no se hidrató.
+    const source = visibleGastos.length > 0 ? visibleGastos : filteredGastosBase
+    const rows = source.map(g => ({
       fecha: g.fecha_gasto,
       proveedor: g.proveedores?.nombre ?? '',
       concepto: g.descripcion,
@@ -1146,7 +1252,7 @@ export default function GastosClient({
             <div className="flex items-center gap-2">
               <button
                 onClick={handleExportGastos}
-                disabled={filteredGastos.length === 0}
+                disabled={filteredGastosBase.length === 0}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 whitespace-nowrap"
               >
                 Exportar Excel
@@ -1163,51 +1269,7 @@ export default function GastosClient({
             </div>
           </div>
 
-          {/* Barra de acciones masivas — solo cuando hay selección */}
-          {canWrite && selectedGastoIds.size > 0 && (
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
-              <span className="text-sm font-medium text-emerald-900">
-                {selectedGastoIds.size} seleccionado{selectedGastoIds.size !== 1 ? 's' : ''}
-              </span>
-              <span className="text-emerald-300">·</span>
-              <button
-                type="button"
-                onClick={handleBulkAprobar}
-                disabled={isPending}
-                className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800 transition-colors disabled:opacity-50"
-              >
-                Autorizar seleccionados
-              </button>
-              <button
-                type="button"
-                onClick={handleBulkRechazar}
-                disabled={isPending}
-                className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50"
-              >
-                Cancelar seleccionados
-              </button>
-              {canDelete && (
-                <button
-                  type="button"
-                  onClick={handleBulkDelete}
-                  disabled={isPending}
-                  className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 transition-colors disabled:opacity-50"
-                >
-                  Eliminar seleccionados
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setSelectedGastoIds(new Set())}
-                disabled={isPending}
-                className="ml-auto rounded-md px-2 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-50"
-              >
-                Limpiar selección
-              </button>
-            </div>
-          )}
-
-          {/* Feedback de última acción masiva */}
+          {/* Feedback de última acción masiva — externo al DataTable */}
           {bulkMessage && (
             <div
               className={`rounded-lg border px-3 py-2 text-sm ${
@@ -1227,181 +1289,84 @@ export default function GastosClient({
             </div>
           )}
 
-          <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-            {filteredGastos.length === 0 ? (
-              <div className="p-12 text-center text-sm text-gray-400">
-                {searchGastos ? 'Sin resultados para esa búsqueda.' : 'No hay gastos registrados.'}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      {canWrite && (
-                        <th className="w-10 px-4 py-3">
-                          <input
-                            type="checkbox"
-                            ref={el => { if (el) el.indeterminate = someVisibleGastosSelected }}
-                            checked={allVisibleGastosSelected}
-                            onChange={toggleSelectAllGastos}
-                            disabled={filteredGastos.length === 0}
-                            className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500 disabled:opacity-40"
-                            aria-label="Seleccionar todos los gastos visibles"
-                          />
-                        </th>
-                      )}
-                      <SortableHeader label="Código" sortKey="codigo" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
-                      <SortableHeader label="Fecha" sortKey="fecha" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
-                      <SortableHeader label="Concepto" sortKey="descripcion" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} />
-                      <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} className="hidden md:table-cell" />
-                      <SortableHeader label="Monto" sortKey="monto" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} align="right" />
-                      <SortableHeader label="Estado" sortKey="estado" activeKey={gSortKey} dir={gSortDir} onSort={onGastoSort} className="hidden lg:table-cell" />
-                      {(canWrite || canApprove) && (
-                        <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredGastos.map((g) => (
-                      <tr key={g.id} className={`transition-colors ${selectedGastoIds.has(g.id) ? 'bg-emerald-50' : 'hover:bg-gray-50'}`}>
-                        {canWrite && (
-                          <td className="px-4 py-3">
-                            <input
-                              type="checkbox"
-                              checked={selectedGastoIds.has(g.id)}
-                              onChange={() => toggleSelectGasto(g.id)}
-                              className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
-                              aria-label={`Seleccionar gasto ${g.descripcion}`}
-                            />
-                          </td>
-                        )}
-                        <td className="px-4 py-3 text-xs font-mono tabular-nums text-slate-600 whitespace-nowrap">
-                          {g.codigo ?? <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{g.fecha_gasto}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5 max-w-xs">
-                            <span className="text-sm font-medium text-gray-900 truncate min-w-0">{g.descripcion}</span>
-                            {g.comprobante_path && (
-                              <button
-                                type="button"
-                                title="Ver comprobante"
-                                aria-label="Ver comprobante"
-                                onClick={() => handleViewComprobante(g.comprobante_path!)}
-                                className="flex-shrink-0 text-slate-400 hover:text-slate-700 transition-colors"
-                              >
-                                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                  <polyline points="14 2 14 8 20 8" />
-                                </svg>
-                              </button>
-                            )}
-                          </div>
-                          <div className="flex gap-1 mt-0.5 items-center flex-wrap">
-                            {g.es_servicio_horas && (
-                              <span
-                                title={
-                                  g.horas_servicio != null && g.valor_hora_aplicado != null
-                                    ? `Servicio por hora — ${g.horas_servicio}h × ${formatMonto(g.valor_hora_aplicado, g.moneda)}`
-                                    : 'Servicio por hora'
-                                }
-                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-800"
-                              >
-                                Servicio por hora
-                              </span>
-                            )}
-                            {/* P3a-fc: badge de canal de pago */}
-                            {g.forma_cancelacion === 'financiador' ? (
-                              <span
-                                title="Gasto afrontado por un tercero de la red"
-                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-orange-100 text-orange-800"
-                              >
-                                {g.financiadores
-                                  ? `Tercero: ${g.financiadores.codigo ?? 'Sin código'} ${g.financiadores.nombre}`
-                                  : 'Tercero'}
-                              </span>
-                            ) : (
-                              <span
-                                title="Gasto afrontado con medios propios RISA"
-                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-slate-100 text-slate-700"
-                              >
-                                Medios propios RISA
-                              </span>
-                            )}
-                            {g.recurrente_id && (
-                              <span
-                                title={`Generado automáticamente desde recurrente${g.periodo ? ` — período ${g.periodo}` : ''}`}
-                                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-indigo-100 text-indigo-700"
-                              >
-                                Recurrente{g.periodo ? ` ${g.periodo}` : ''}
-                              </span>
-                            )}
-                            {g.tiene_anticipo && (
-                              <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-purple-100 text-purple-700">Anticipo</span>
-                            )}
-                            {g.prioridad_pago <= 2 && (
-                              <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-700">{PRIORIDAD_LABELS[g.prioridad_pago]}</span>
-                            )}
-                            {g.fecha_vencimiento && (
-                              <span className="text-xs text-gray-400">vence {g.fecha_vencimiento}</span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">
-                          {g.proveedores?.nombre ?? <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right font-medium text-gray-900 whitespace-nowrap">
-                          {formatMonto(g.monto, g.moneda)}
-                        </td>
-                        <td className="hidden px-4 py-3 lg:table-cell">
-                          {(() => {
-                            const ui = estadoUI(g)
-                            return (
-                              <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${ui.cls}`}>
-                                {ui.label}
-                              </span>
-                            )
-                          })()}
-                        </td>
-                        {(canWrite || canApprove) && (
-                          <td className="px-4 py-3">
-                            <div className="flex justify-end gap-2">
-                              {canWrite && (g.estado === 'borrador' || g.estado === 'enviado') && (
-                                <button onClick={() => openEditGasto(g)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
-                                  Editar
-                                </button>
-                              )}
-                              {/* "Enviar" solo legacy: nuevos gastos nacen 'enviado' */}
-                              {canWrite && g.estado === 'borrador' && (
-                                <button onClick={() => handleCambiarEstado(g.id, 'enviado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50">
-                                  Enviar
-                                </button>
-                              )}
-                              {canDelete && (g.estado === 'borrador' || g.estado === 'enviado') && (
-                                <button onClick={() => handleDeleteGasto(g.id, g.descripcion)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
-                                  Eliminar
-                                </button>
-                              )}
-                              {canApprove && g.estado === 'enviado' && (
-                                <button onClick={() => handleCambiarEstado(g.id, 'aprobado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 transition-colors disabled:opacity-50">
-                                  Aprobar
-                                </button>
-                              )}
-                              {canApprove && g.estado === 'enviado' && (
-                                <button onClick={() => handleCambiarEstado(g.id, 'rechazado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
-                                  Rechazar
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <DataTable<GastoRow>
+            rows={filteredGastosBase}
+            getRowId={g => g.id}
+            selectable={canWrite}
+            initialSort={{ key: 'fecha', dir: 'desc' }}
+            emptyMessage={searchGastos ? 'Sin resultados para esa búsqueda.' : 'No hay gastos registrados.'}
+            onVisibleRowsChange={setVisibleGastos}
+            columns={gastosColumns}
+            rowActions={(canWrite || canApprove) ? (g) => (
+              <>
+                {canWrite && (g.estado === 'borrador' || g.estado === 'enviado') && (
+                  <button onClick={() => openEditGasto(g)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
+                    Editar
+                  </button>
+                )}
+                {/* "Enviar" solo legacy: nuevos gastos nacen 'enviado' */}
+                {canWrite && g.estado === 'borrador' && (
+                  <button onClick={() => handleCambiarEstado(g.id, 'enviado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50">
+                    Enviar
+                  </button>
+                )}
+                {canDelete && (g.estado === 'borrador' || g.estado === 'enviado') && (
+                  <button onClick={() => handleDeleteGasto(g.id, g.descripcion)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
+                    Eliminar
+                  </button>
+                )}
+                {canApprove && g.estado === 'enviado' && (
+                  <button onClick={() => handleCambiarEstado(g.id, 'aprobado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 transition-colors disabled:opacity-50">
+                    Aprobar
+                  </button>
+                )}
+                {canApprove && g.estado === 'enviado' && (
+                  <button onClick={() => handleCambiarEstado(g.id, 'rechazado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
+                    Rechazar
+                  </button>
+                )}
+              </>
+            ) : undefined}
+            bulkActions={canWrite ? (selectedIds, clear) => {
+              const ids = Array.from(selectedIds)
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => runBulk(ids, onBulkAprobar, 'autorizado(s)', clear)}
+                    disabled={isPending}
+                    className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-800 transition-colors disabled:opacity-50"
+                  >
+                    Autorizar seleccionados
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!confirm(`¿Cancelar ${ids.length} gasto(s)? Quedarán en estado "rechazado".`)) return
+                      runBulk(ids, onBulkRechazar, 'cancelado(s)', clear)
+                    }}
+                    disabled={isPending}
+                    className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50"
+                  >
+                    Cancelar seleccionados
+                  </button>
+                  {canDelete && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!confirm(`¿Eliminar ${ids.length} gasto(s)? Solo se eliminarán los que no tengan pagos asociados.`)) return
+                        runBulk(ids, onBulkDelete, 'eliminado(s)', clear)
+                      }}
+                      disabled={isPending}
+                      className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 transition-colors disabled:opacity-50"
+                    >
+                      Eliminar seleccionados
+                    </button>
+                  )}
+                </>
+              )
+            } : undefined}
+          />
         </div>
       )}
 
