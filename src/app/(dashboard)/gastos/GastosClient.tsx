@@ -1382,8 +1382,12 @@ export default function GastosClient({
               } else if (g.estado === 'aprobado') {
                 if (sinPagosActivos) {
                   if (canWrite) items.push({ label: 'Editar', onClick: () => openEditGasto(g) })
-                  if (canApprove) items.push({ label: 'Volver a pendiente', onClick: () => handleCambiarEstado(g.id, 'enviado') })
                   if (canApprove) items.push({ label: 'Cancelar', variant: 'danger', onClick: () => handleCambiarEstado(g.id, 'rechazado') })
+                  // "Volver a pendiente" requiere la migración SQL
+                  // 20260524000001 (fn_gastos_validar_estado extendido para
+                  // permitir aprobado→enviado). Hasta aplicarla, el click
+                  // mostrará el error del trigger.
+                  if (canApprove) items.push({ label: 'Volver a pendiente', onClick: () => handleCambiarEstado(g.id, 'enviado') })
                   if (canDelete && sinPagosAlguna) {
                     items.push({ label: 'Eliminar', variant: 'danger', onClick: () => handleDeleteGasto(g.id, g.descripcion) })
                   }
