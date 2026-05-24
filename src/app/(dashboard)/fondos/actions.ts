@@ -345,3 +345,86 @@ export async function registrarAporteSocio(data: AporteSocioPayload): Promise<Ap
     return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
   }
 }
+
+// ─── FIN2.3: registrar_aporte_socio_v2 (imputaciones múltiples) ─────────────
+//
+// Cabecera (aportes_fondo) + detalle (aporte_imputaciones). El array items
+// puede mezclar destino 'medios_propios' (fondo_id) y 'tercero' (financiador_id).
+// La RPC valida atómicamente: suma(items)==monto_total, deuda viva por tercero,
+// rol del usuario. SECURITY DEFINER bypasea RLS para los INSERTs internos.
+//
+// El frontend usará esta action desde FIN2.4 (modal con imputaciones múltiples).
+// La action legacy registrarAporteSocio queda intacta para compatibilidad y
+// como fallback hasta que la UI nueva esté validada.
+
+export type AporteImputacionPayload =
+  | { destino_tipo: 'medios_propios'; fondo_id?: string | null; monto: number; moneda?: string | null }
+  | { destino_tipo: 'tercero';        financiador_id: string;    monto: number; moneda?: string | null }
+
+export type AporteSocioV2Payload = {
+  fecha:         string                  // ISO YYYY-MM-DD (default: hoy)
+  socio_id:      string
+  fondo_id:      string                  // cabecera; típicamente RISA (FON-001)
+  moneda:        string                  // 3 letras ISO
+  monto_total:   number                  // > 0
+  concepto?:     string | null           // opcional; default auto desde socio
+  observaciones?: string | null
+  items:         AporteImputacionPayload[]
+}
+
+export async function registrarAporteSocioV2(
+  data: AporteSocioV2Payload,
+): Promise<AporteSocioActionResult> {
+  try {
+    // Validaciones de borde (la RPC re-valida server-side, esto es feedback rápido)
+    if (!Number.isFinite(data.monto_total) || data.monto_total <= 0) {
+      return { ok: false, error: 'monto_total debe ser mayor a 0.' }
+    }
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      return { ok: false, error: 'items debe ser un array no vacío.' }
+    }
+    let suma = 0
+    for (const it of data.items) {
+      if (!Number.isFinite(it.monto) || it.monto <= 0) {
+        return { ok: false, error: 'Cada item debe tener monto > 0.' }
+      }
+      if (it.destino_tipo === 'tercero' && !it.financiador_id) {
+        return { ok: false, error: 'Cada item destino=tercero requiere financiador_id.' }
+      }
+      suma += it.monto
+    }
+    if (Math.abs(suma - data.monto_total) > 0.01) {
+      return { ok: false, error: `La suma de los items (${suma.toFixed(2)}) no coincide con monto_total (${data.monto_total.toFixed(2)}).` }
+    }
+
+    const supabase = createClient()
+    const { data: result, error } = await supabase.rpc('registrar_aporte_socio_v2', {
+      payload: {
+        fecha:         data.fecha,
+        socio_id:      data.socio_id,
+        fondo_id:      data.fondo_id,
+        moneda:        data.moneda,
+        monto_total:   data.monto_total,
+        concepto:      data.concepto ?? null,
+        observaciones: data.observaciones ?? null,
+        items:         data.items,
+      },
+    })
+    if (error) {
+      console.error('[registrarAporteSocioV2] RPC error:', { code: error.code, message: error.message })
+      return { ok: false, error: cleanDbError(error.message) }
+    }
+
+    // RPC returns jsonb { aporte_id, codigo }
+    const out = result as { aporte_id: string; codigo: string | null } | null
+    if (!out?.aporte_id) {
+      return { ok: false, error: 'La RPC no devolvió aporte_id.' }
+    }
+
+    revalidatePath('/fondos')
+    return { ok: true, aporte_id: out.aporte_id, aporte_codigo: out.codigo ?? null }
+  } catch (err) {
+    console.error('[registrarAporteSocioV2] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
+}
