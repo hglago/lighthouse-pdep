@@ -8,6 +8,7 @@ import type { FinanciadorPayload, FinanciadorActionResult } from '../fondos/acti
 import { exportToExcel, todayForFile } from '@/lib/excel'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
 import DataTable, { type Column } from '@/components/DataTable'
+import RowActionMenu, { type RowActionItem } from '@/components/RowActionMenu'
 import DetalleServicioBlock from '@/components/DetalleServicioBlock'
 import FinanciadorSelect from '@/components/FinanciadorSelect'
 import FinanciadorQuickCreateModal from '@/components/FinanciadorQuickCreateModal'
@@ -1356,53 +1357,44 @@ export default function GastosClient({
             onVisibleRowsChange={setVisibleGastos}
             columns={gastosColumns}
             rowActions={(canWrite || canApprove) ? (g) => {
-              // GASTOS-UX: gasto aprobado sin pagos activos (no anulados) puede
-              // editarse, cancelarse o volver a pendiente. Con pagos vivos queda
-              // bloqueado hasta anular los pagos.
+              // GASTOS-UX-2: dropdown único con acciones aplicables según
+              // estado, rol y pagos asociados. Reglas server-side intactas.
               const pagosDelGasto = pagosPorGastoId.get(g.id) ?? []
               const pagosActivos = pagosDelGasto.filter(p => p.estado !== 'anulado').length
               const pagosTotal   = pagosDelGasto.length
               const sinPagosActivos = pagosActivos === 0
               const sinPagosAlguna  = pagosTotal === 0
-              const aprobadoEditable = g.estado === 'aprobado' && sinPagosActivos
-              return (
-                <>
-                  {canWrite && (g.estado === 'borrador' || g.estado === 'enviado' || aprobadoEditable) && (
-                    <button onClick={() => openEditGasto(g)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
-                      Editar
-                    </button>
-                  )}
-                  {/* "Enviar" solo legacy: nuevos gastos nacen 'enviado' */}
-                  {canWrite && g.estado === 'borrador' && (
-                    <button onClick={() => handleCambiarEstado(g.id, 'enviado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50">
-                      Enviar
-                    </button>
-                  )}
-                  {canApprove && g.estado === 'enviado' && (
-                    <button onClick={() => handleCambiarEstado(g.id, 'aprobado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 transition-colors disabled:opacity-50">
-                      Aprobar
-                    </button>
-                  )}
-                  {/* Volver a pendiente: solo gastos aprobados sin pagos activos */}
-                  {canApprove && aprobadoEditable && (
-                    <button onClick={() => handleCambiarEstado(g.id, 'enviado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50">
-                      Volver a pendiente
-                    </button>
-                  )}
-                  {/* Cancelar: enviado, o aprobado sin pagos activos */}
-                  {canApprove && (g.estado === 'enviado' || aprobadoEditable) && (
-                    <button onClick={() => handleCambiarEstado(g.id, 'rechazado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50">
-                      Cancelar
-                    </button>
-                  )}
-                  {/* Eliminar: borrador/enviado/aprobado mientras no haya NINGÚN pago (ni anulado) */}
-                  {canDelete && sinPagosAlguna && (g.estado === 'borrador' || g.estado === 'enviado' || g.estado === 'aprobado') && (
-                    <button onClick={() => handleDeleteGasto(g.id, g.descripcion)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
-                      Eliminar
-                    </button>
-                  )}
-                </>
-              )
+              const items: RowActionItem[] = []
+              let tooltipBloqueo: string | undefined
+
+              if (g.estado === 'borrador' || g.estado === 'enviado') {
+                if (canApprove && g.estado === 'enviado') {
+                  items.push({ label: 'Aprobar', variant: 'primary', onClick: () => handleCambiarEstado(g.id, 'aprobado') })
+                }
+                if (canWrite) items.push({ label: 'Editar', onClick: () => openEditGasto(g) })
+                if (canWrite && g.estado === 'borrador') {
+                  items.push({ label: 'Enviar', variant: 'primary', onClick: () => handleCambiarEstado(g.id, 'enviado') })
+                }
+                if (canApprove) items.push({ label: 'Cancelar', variant: 'danger', onClick: () => handleCambiarEstado(g.id, 'rechazado') })
+                if (canDelete && sinPagosAlguna) {
+                  items.push({ label: 'Eliminar', variant: 'danger', onClick: () => handleDeleteGasto(g.id, g.descripcion) })
+                }
+              } else if (g.estado === 'aprobado') {
+                if (sinPagosActivos) {
+                  if (canWrite) items.push({ label: 'Editar', onClick: () => openEditGasto(g) })
+                  if (canApprove) items.push({ label: 'Volver a pendiente', onClick: () => handleCambiarEstado(g.id, 'enviado') })
+                  if (canApprove) items.push({ label: 'Cancelar', variant: 'danger', onClick: () => handleCambiarEstado(g.id, 'rechazado') })
+                  if (canDelete && sinPagosAlguna) {
+                    items.push({ label: 'Eliminar', variant: 'danger', onClick: () => handleDeleteGasto(g.id, g.descripcion) })
+                  }
+                } else {
+                  tooltipBloqueo = 'Tiene pagos asociados. Anulá los pagos primero.'
+                }
+              } else if (g.estado === 'pagado_parcial' || g.estado === 'pagado') {
+                tooltipBloqueo = 'Anulá el pago desde /pagos.'
+              }
+              // rechazado: sin items ni tooltip
+              return <RowActionMenu items={items} emptyTooltip={tooltipBloqueo} />
             } : undefined}
             bulkActions={canWrite ? (selectedIds, clear) => {
               const ids = Array.from(selectedIds)

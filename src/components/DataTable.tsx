@@ -261,7 +261,7 @@ export default function DataTable<T>({
                 ))}
                 {rowActions && (
                   <th className="sticky right-0 z-10 border-l border-gray-200 bg-gray-50 px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">
-                    Acciones
+                    Acción
                   </th>
                 )}
               </tr>
