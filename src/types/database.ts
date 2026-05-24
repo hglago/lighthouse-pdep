@@ -138,12 +138,6 @@ export interface Pago {
   codigo: string | null  // P000001, P000002... generado por trigger DB. Null hasta aplicar migración.
   nro_pago: string
   fondo_id: string
-  // Cajas pagadora vs responsable. Si difieren, el pago genera deuda interna.
-  // Hasta aplicar la migración pueden ser null; defaultean a fondo_id en runtime.
-  fondo_pagador_id: string | null
-  fondo_responsable_id: string | null
-  genera_deuda_interna: boolean
-  deuda_interna_id: string | null
   proveedor_id: string
   gasto_id: string | null
   anticipo_id: string | null
