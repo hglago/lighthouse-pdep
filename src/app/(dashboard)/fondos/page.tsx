@@ -4,7 +4,7 @@ import FondosClient, { type AporteFondoRow, type MovimientoFondoRow } from './Fo
 import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole } from '@/types'
 import {
   createFondo, updateFondo, deleteFondo, registrarAporte, getFondoDependencies,
-  crearSocio, crearFinanciador, registrarAporteSocio,
+  crearSocio, crearFinanciador, registrarAporteSocio, registrarAporteSocioV2,
 } from './actions'
 
 export default async function FondosPage() {
@@ -139,6 +139,7 @@ export default async function FondosPage() {
         onCrearSocio={crearSocio}
         onCrearFinanciador={crearFinanciador}
         onRegistrarAporteSocio={registrarAporteSocio}
+        onRegistrarAporteSocioV2={registrarAporteSocioV2}
       />
     </div>
   )

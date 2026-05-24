@@ -7,6 +7,7 @@ import type {
   SocioPayload, SocioActionResult,
   FinanciadorPayload, FinanciadorActionResult,
   AporteSocioPayload, AporteSocioActionResult,
+  AporteSocioV2Payload,
 } from './actions'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
@@ -156,6 +157,8 @@ interface Props {
   onCrearSocio: (data: SocioPayload) => Promise<SocioActionResult>
   onCrearFinanciador: (data: FinanciadorPayload) => Promise<FinanciadorActionResult>
   onRegistrarAporteSocio: (data: AporteSocioPayload) => Promise<AporteSocioActionResult>
+  // FIN2.4: nueva firma con imputaciones múltiples (split MP + Terceros).
+  onRegistrarAporteSocioV2: (data: AporteSocioV2Payload) => Promise<AporteSocioActionResult>
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -176,6 +179,7 @@ export default function FondosClient({
   onCrearSocio,
   onCrearFinanciador,
   onRegistrarAporteSocio,
+  onRegistrarAporteSocioV2,
 }: Props) {
   const [modal, setModal] = useState<ModalType>('none')
   const [editingFondo, setEditingFondo] = useState<Fondo | null>(null)
@@ -661,25 +665,59 @@ export default function FondosClient({
     setFinForm({ nombre: '', cuit: '', email: '', telefono: '', observaciones: '' })
   }
 
-  // Aporte
-  const [aporteSocioForm, setAporteSocioForm] = useState({
-    fecha:           todayIso(),
-    socio_id:        '',
-    importe:         '',
-    moneda:          'ARS',
-    destino_aporte:  'risa' as DestinoAporte,
-    financiador_id:  '',
-    observaciones:   '',
+  // FIN2.4: aporte con imputaciones múltiples (split MP + Terceros).
+  // Cada item lleva destino_tipo + fondo o financiador + monto.
+  type AporteItemForm = {
+    destino_tipo: 'medios_propios' | 'tercero'
+    fondo_id:       string  // usado si destino_tipo='medios_propios'
+    financiador_id: string  // usado si destino_tipo='tercero'
+    monto:          string  // string para input controlado; se parsea al submit
+  }
+  type AporteFormState = {
+    fecha:         string
+    socio_id:      string
+    moneda:        string
+    monto_total:   string
+    observaciones: string
+    items:         AporteItemForm[]
+  }
+
+  function makeEmptyItem(): AporteItemForm {
+    return { destino_tipo: 'medios_propios', fondo_id: '', financiador_id: '', monto: '' }
+  }
+
+  const [aporteSocioForm, setAporteSocioForm] = useState<AporteFormState>({
+    fecha:         todayIso(),
+    socio_id:      '',
+    moneda:        'ARS',
+    monto_total:   '',
+    observaciones: '',
+    items:         [makeEmptyItem()],
   })
   function resetAporteSocioForm() {
     setAporteSocioForm({
-      fecha:           todayIso(),
-      socio_id:        '',
-      importe:         '',
-      moneda:          'ARS',
-      destino_aporte:  'risa',
-      financiador_id:  '',
-      observaciones:   '',
+      fecha:         todayIso(),
+      socio_id:      '',
+      moneda:        'ARS',
+      monto_total:   '',
+      observaciones: '',
+      items:         [makeEmptyItem()],
+    })
+  }
+
+  function updateItem(idx: number, patch: Partial<AporteItemForm>) {
+    setAporteSocioForm(prev => ({
+      ...prev,
+      items: prev.items.map((it, i) => i === idx ? { ...it, ...patch } : it),
+    }))
+  }
+  function addItem() {
+    setAporteSocioForm(prev => ({ ...prev, items: [...prev.items, makeEmptyItem()] }))
+  }
+  function removeItem(idx: number) {
+    setAporteSocioForm(prev => {
+      const next = prev.items.filter((_, i) => i !== idx)
+      return { ...prev, items: next.length > 0 ? next : [makeEmptyItem()] }
     })
   }
 
@@ -741,37 +779,61 @@ export default function FondosClient({
     })
   }
 
+  // FIN2.4: handler que arma payload v2 y llama a registrar_aporte_socio_v2.
+  // La RPC valida server-side y es transaccional; este handler solo da feedback
+  // rápido al usuario sobre errores de forma.
   function handleRegistrarAporteSocio(e: React.FormEvent) {
     e.preventDefault()
     setNuevoError('')
-    const importe = parseFloat(aporteSocioForm.importe.replace(',', '.'))
+
+    const monto_total = parseFloat(aporteSocioForm.monto_total.replace(',', '.'))
     if (!aporteSocioForm.socio_id) {
-      setNuevoError('Seleccioná un socio.')
-      return
+      setNuevoError('Seleccioná un socio.'); return
     }
-    if (!Number.isFinite(importe) || importe <= 0) {
-      setNuevoError('El importe debe ser mayor a 0.')
-      return
+    if (!Number.isFinite(monto_total) || monto_total <= 0) {
+      setNuevoError('El monto total debe ser mayor a 0.'); return
     }
-    if (aporteSocioForm.destino_aporte === 'cancelacion_financiacion' && !aporteSocioForm.financiador_id) {
-      setNuevoError('Seleccioná un tercero para cancelar deuda.')
-      return
+    if (!risa?.id) {
+      setNuevoError('Fondo RISA no encontrado.'); return
     }
-    startTransition(async () => {
-      const result = await onRegistrarAporteSocio({
-        fecha:           aporteSocioForm.fecha,
-        socio_id:        aporteSocioForm.socio_id,
-        importe,
-        moneda:          aporteSocioForm.moneda,
-        destino_aporte:  aporteSocioForm.destino_aporte,
-        financiador_id:  aporteSocioForm.destino_aporte === 'cancelacion_financiacion' ? aporteSocioForm.financiador_id : null,
-        observaciones:   aporteSocioForm.observaciones.trim() || null,
-      })
-      if (!result.ok) {
-        setNuevoError(result.error)
-        return
+
+    const items: AporteSocioV2Payload['items'] = []
+    let suma = 0
+    for (let i = 0; i < aporteSocioForm.items.length; i++) {
+      const it = aporteSocioForm.items[i]
+      const m = parseFloat(it.monto.replace(',', '.'))
+      if (!Number.isFinite(m) || m <= 0) {
+        setNuevoError(`Imputación ${i + 1}: monto inválido.`); return
       }
-      // Etapa 2D: mensaje de éxito con N° transacción
+      if (it.destino_tipo === 'medios_propios') {
+        const fid = it.fondo_id || risa.id
+        items.push({ destino_tipo: 'medios_propios', fondo_id: fid, monto: m })
+      } else {
+        if (!it.financiador_id) {
+          setNuevoError(`Imputación ${i + 1}: seleccioná un tercero.`); return
+        }
+        items.push({ destino_tipo: 'tercero', financiador_id: it.financiador_id, monto: m })
+      }
+      suma += m
+    }
+    if (Math.abs(suma - monto_total) > 0.01) {
+      setNuevoError(
+        `Suma de imputaciones (${suma.toFixed(2)}) no coincide con monto total (${monto_total.toFixed(2)}).`
+      )
+      return
+    }
+
+    startTransition(async () => {
+      const result = await onRegistrarAporteSocioV2({
+        fecha:         aporteSocioForm.fecha,
+        socio_id:      aporteSocioForm.socio_id,
+        fondo_id:      risa.id,
+        moneda:        aporteSocioForm.moneda,
+        monto_total,
+        observaciones: aporteSocioForm.observaciones.trim() || null,
+        items,
+      })
+      if (!result.ok) { setNuevoError(result.error); return }
       const codigo = result.aporte_codigo ?? 'APO-?'
       alert(`Aporte ${codigo} registrado correctamente.`)
       closeNuevoModal()
@@ -785,13 +847,30 @@ export default function FondosClient({
     () => saldosFinanciadores.filter(s => s.saldo_pendiente > 0 && !s.financiador_deleted_at),
     [saldosFinanciadores]
   )
-  const saldoPendienteSeleccionado = useMemo(() => {
-    if (aporteSocioForm.destino_aporte !== 'cancelacion_financiacion') return null
-    const f = financiadoresConDeuda.find(
-      x => x.financiador_id === aporteSocioForm.financiador_id && x.moneda === aporteSocioForm.moneda
-    )
-    return f?.saldo_pendiente ?? null
-  }, [aporteSocioForm, financiadoresConDeuda])
+  // FIN2.4: lookup rápido por (financiador_id, moneda) para mostrar
+  // deuda viva junto al select del item tercero.
+  const deudaPorFinanciador = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const s of financiadoresConDeuda) {
+      m.set(`${s.financiador_id}-${s.moneda}`, s.saldo_pendiente)
+    }
+    return m
+  }, [financiadoresConDeuda])
+
+  // Total imputado viva para feedback del form.
+  const totalImputado = useMemo(
+    () => aporteSocioForm.items.reduce((s, it) => {
+      const m = parseFloat(it.monto.replace(',', '.'))
+      return s + (Number.isFinite(m) ? m : 0)
+    }, 0),
+    [aporteSocioForm.items],
+  )
+  const montoTotalNum = useMemo(() => {
+    const v = parseFloat(aporteSocioForm.monto_total.replace(',', '.'))
+    return Number.isFinite(v) ? v : 0
+  }, [aporteSocioForm.monto_total])
+  const diferencia = totalImputado - montoTotalNum  // <0 falta, >0 sobra, ==0 OK
+  const sumaCoincide = Math.abs(diferencia) < 0.01 && montoTotalNum > 0
 
   return (
     <div className="space-y-8">
@@ -1297,13 +1376,18 @@ export default function FondosClient({
         </div>
       )}
 
-      {/* ── Modal: Nuevo aporte ─────────────────────────────────────────────── */}
+      {/* ── Modal: Nuevo aporte (FIN2.4 — imputaciones múltiples) ────────── */}
       {nuevoModal === 'newAporte' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-            <h2 className="mb-5 text-lg font-semibold text-gray-900">Registrar nuevo aporte</h2>
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <h2 className="mb-1 text-lg font-semibold text-gray-900">Registrar nuevo aporte</h2>
+            <p className="mb-5 text-xs text-gray-500">
+              El aporte se puede imputar a Medios Propios RISA y/o a uno o más Terceros. La suma de las imputaciones debe coincidir con el monto total.
+            </p>
             <form onSubmit={handleRegistrarAporteSocio} className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+
+              {/* Cabecera */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Fecha</label>
                   <input
@@ -1322,6 +1406,19 @@ export default function FondosClient({
                   >
                     {MONEDAS.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Monto total <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={aporteSocioForm.monto_total}
+                    onChange={e => setAporteSocioForm({ ...aporteSocioForm, monto_total: e.target.value })}
+                    className={`${inputCls} tabular-nums`}
+                    placeholder="0.00"
+                  />
                 </div>
               </div>
 
@@ -1346,90 +1443,134 @@ export default function FondosClient({
                 )}
               </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Importe <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={aporteSocioForm.importe}
-                  onChange={e => setAporteSocioForm({ ...aporteSocioForm, importe: e.target.value })}
-                  className={`${inputCls} tabular-nums`}
-                  placeholder="0.00"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Destino del aporte</label>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
-                    aporteSocioForm.destino_aporte === 'risa'
-                      ? 'border-slate-900 bg-slate-900 text-white'
-                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="destino"
-                      value="risa"
-                      checked={aporteSocioForm.destino_aporte === 'risa'}
-                      onChange={() => setAporteSocioForm({ ...aporteSocioForm, destino_aporte: 'risa', financiador_id: '' })}
-                      className="sr-only"
-                    />
-                    Aportar a RISA
-                  </label>
-                  <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
-                    aporteSocioForm.destino_aporte === 'cancelacion_financiacion'
-                      ? 'border-indigo-700 bg-indigo-700 text-white'
-                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="destino"
-                      value="cancelacion_financiacion"
-                      checked={aporteSocioForm.destino_aporte === 'cancelacion_financiacion'}
-                      onChange={() => setAporteSocioForm({ ...aporteSocioForm, destino_aporte: 'cancelacion_financiacion' })}
-                      className="sr-only"
-                    />
-                    Cancelar deuda con tercero
-                  </label>
+              {/* Imputaciones */}
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">Imputaciones</span>
+                  <button
+                    type="button"
+                    onClick={addItem}
+                    className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+                  >
+                    + Agregar imputación
+                  </button>
                 </div>
-              </div>
 
-              {aporteSocioForm.destino_aporte === 'cancelacion_financiacion' && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Tercero <span className="text-red-500">*</span>
-                  </label>
-                  {financiadoresConDeuda.length === 0 ? (
-                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                      No hay deuda pendiente con terceros para cancelar.
-                    </p>
-                  ) : (
-                    <>
-                      <select
-                        value={aporteSocioForm.financiador_id}
-                        onChange={e => setAporteSocioForm({ ...aporteSocioForm, financiador_id: e.target.value })}
-                        className={inputCls}
-                      >
-                        <option value="">— Seleccionar tercero —</option>
-                        {financiadoresConDeuda
-                          .filter(f => f.moneda === aporteSocioForm.moneda)
-                          .map(f => (
-                            <option key={`${f.financiador_id}-${f.moneda}`} value={f.financiador_id}>
-                              {(f.financiador_codigo ?? 'Sin código') + ' — ' + f.financiador_nombre + ' · saldo pendiente ' + f.moneda + ' ' + fmt(f.saldo_pendiente)}
-                            </option>
-                          ))}
-                      </select>
-                      {saldoPendienteSeleccionado !== null && (
-                        <p className="mt-1 text-xs text-gray-500">
-                          Saldo pendiente con este tercero: <span className="font-medium tabular-nums">{aporteSocioForm.moneda} {fmt(saldoPendienteSeleccionado)}</span>
-                        </p>
-                      )}
-                    </>
+                <div className="space-y-2">
+                  {aporteSocioForm.items.map((it, i) => {
+                    const deudaKey = `${it.financiador_id}-${aporteSocioForm.moneda}`
+                    const deudaViva = it.destino_tipo === 'tercero' ? deudaPorFinanciador.get(deudaKey) ?? null : null
+                    const montoNum = parseFloat(it.monto.replace(',', '.'))
+                    const excedeDeuda =
+                      it.destino_tipo === 'tercero' &&
+                      it.financiador_id !== '' &&
+                      Number.isFinite(montoNum) &&
+                      deudaViva !== null &&
+                      montoNum > deudaViva + 0.01
+                    return (
+                      <div key={i} className="rounded-md border border-gray-200 bg-white p-2.5">
+                        <div className="grid grid-cols-12 gap-2 items-end">
+                          <div className="col-span-12 sm:col-span-3">
+                            <label className="mb-0.5 block text-[11px] uppercase tracking-wide text-gray-500">Destino</label>
+                            <select
+                              value={it.destino_tipo}
+                              onChange={e => updateItem(i, {
+                                destino_tipo: e.target.value as AporteItemForm['destino_tipo'],
+                                financiador_id: e.target.value === 'medios_propios' ? '' : it.financiador_id,
+                                fondo_id:       e.target.value === 'tercero'        ? '' : it.fondo_id,
+                              })}
+                              className={inputCls}
+                            >
+                              <option value="medios_propios">Medios Propios</option>
+                              <option value="tercero">Tercero</option>
+                            </select>
+                          </div>
+
+                          {it.destino_tipo === 'medios_propios' ? (
+                            <div className="col-span-12 sm:col-span-5">
+                              <label className="mb-0.5 block text-[11px] uppercase tracking-wide text-gray-500">Fondo</label>
+                              <input
+                                type="text"
+                                value={risa ? `${risa.codigo ?? 'Sin código'} — ${risa.nombre}` : '—'}
+                                disabled
+                                className={`${inputCls} bg-gray-50 text-gray-500`}
+                              />
+                            </div>
+                          ) : (
+                            <div className="col-span-12 sm:col-span-5">
+                              <label className="mb-0.5 block text-[11px] uppercase tracking-wide text-gray-500">Tercero</label>
+                              <select
+                                value={it.financiador_id}
+                                onChange={e => updateItem(i, { financiador_id: e.target.value })}
+                                className={inputCls}
+                              >
+                                <option value="">— Seleccionar tercero —</option>
+                                {financiadoresConDeuda
+                                  .filter(f => f.moneda === aporteSocioForm.moneda)
+                                  .map(f => (
+                                    <option key={`${f.financiador_id}-${f.moneda}`} value={f.financiador_id}>
+                                      {(f.financiador_codigo ?? 'Sin código') + ' — ' + f.financiador_nombre + ' · deuda ' + f.moneda + ' ' + fmt(f.saldo_pendiente)}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                          )}
+
+                          <div className="col-span-10 sm:col-span-3">
+                            <label className="mb-0.5 block text-[11px] uppercase tracking-wide text-gray-500">Monto</label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={it.monto}
+                              onChange={e => updateItem(i, { monto: e.target.value })}
+                              className={`${inputCls} tabular-nums ${excedeDeuda ? 'border-red-400 bg-red-50' : ''}`}
+                              placeholder="0.00"
+                            />
+                          </div>
+
+                          <div className="col-span-2 sm:col-span-1 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => removeItem(i)}
+                              title="Quitar imputación"
+                              className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                              aria-label={`Quitar imputación ${i + 1}`}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+
+                        {it.destino_tipo === 'tercero' && it.financiador_id !== '' && deudaViva !== null && (
+                          <p className={`mt-1.5 text-[11px] ${excedeDeuda ? 'text-red-600' : 'text-gray-500'}`}>
+                            Deuda viva con este tercero: <span className="font-medium tabular-nums">{aporteSocioForm.moneda} {fmt(deudaViva)}</span>
+                            {excedeDeuda && ' · supera la deuda'}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Resumen de coincidencia */}
+                <div className={`mt-3 rounded-md border px-3 py-2 text-sm tabular-nums ${
+                  sumaCoincide ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : montoTotalNum === 0 ? 'border-gray-200 bg-white text-gray-500'
+                  : 'border-amber-200 bg-amber-50 text-amber-800'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span>Total imputado:</span>
+                    <span className="font-semibold">{aporteSocioForm.moneda} {fmt(totalImputado)}</span>
+                  </div>
+                  {montoTotalNum > 0 && (
+                    <div className="mt-0.5 text-xs">
+                      {sumaCoincide ? '✓ Coincide con monto total' :
+                        diferencia < 0 ? `Falta imputar ${aporteSocioForm.moneda} ${fmt(Math.abs(diferencia))}` :
+                                          `Sobra ${aporteSocioForm.moneda} ${fmt(diferencia)}`}
+                    </div>
                   )}
                 </div>
-              )}
+              </div>
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Observaciones</label>
@@ -1445,7 +1586,13 @@ export default function FondosClient({
 
               <div className="flex justify-end gap-2 pt-1">
                 <button type="button" onClick={closeNuevoModal} disabled={isPending} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50">Cancelar</button>
-                <button type="submit" disabled={isPending} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50">{isPending ? 'Guardando…' : 'Registrar aporte'}</button>
+                <button
+                  type="submit"
+                  disabled={isPending || !sumaCoincide || !aporteSocioForm.socio_id}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
+                >
+                  {isPending ? 'Guardando…' : 'Registrar aporte'}
+                </button>
               </div>
             </form>
           </div>
