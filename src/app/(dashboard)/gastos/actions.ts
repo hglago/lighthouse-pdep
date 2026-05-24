@@ -169,12 +169,36 @@ export async function createGasto(
   throw new Error(error.message)
 }
 
+// GASTOS-UX: cuenta pagos del gasto, distinguiendo "activos" (no anulados)
+// de "total" (cualquier estado, incluso anulados). Usado para decidir si un
+// gasto puede editarse, cambiar de estado o eliminarse físicamente.
+async function getPagosCount(
+  supabase: ReturnType<typeof createClient>,
+  gastoId: string,
+): Promise<{ activos: number; total: number }> {
+  const [activos, total] = await Promise.all([
+    supabase.from('pagos').select('id', { count: 'exact', head: true })
+      .eq('gasto_id', gastoId).neq('estado', 'anulado'),
+    supabase.from('pagos').select('id', { count: 'exact', head: true })
+      .eq('gasto_id', gastoId),
+  ])
+  return { activos: activos.count ?? 0, total: total.count ?? 0 }
+}
+
 export async function updateGasto(id: string, data: GastoPayload) {
   const supabase = createClient()
   const normalized = normalizeGasto(data)
   if ('error' in normalized) {
     throw new Error(normalized.error)
   }
+
+  // GASTOS-UX: permitir editar también gastos aprobados, pero SOLO si no
+  // tienen pagos activos (borrador o pagado). Los pagos anulados no cuentan.
+  const { activos } = await getPagosCount(supabase, id)
+  if (activos > 0) {
+    throw new Error('Este gasto tiene pagos activos. Anulalos antes de editar.')
+  }
+
   // G1: el fondo no es editable desde UI. Removemos del payload para conservar
   // el fondo_id existente del gasto.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -188,13 +212,13 @@ export async function updateGasto(id: string, data: GastoPayload) {
     .from('gastos')
     .update(update)
     .eq('id', id)
-    .in('estado', ['borrador', 'enviado'])  // editable mientras no esté aprobado/pagado
+    .in('estado', ['borrador', 'enviado', 'aprobado'])
     .is('deleted_at', null)
     .select('id')
 
   if (!result.error) {
     if (!result.data || result.data.length === 0)
-      throw new Error('Sin permiso para editar este gasto o ya fue aprobado/pagado.')
+      throw new Error('Sin permiso para editar este gasto o ya fue pagado/rechazado.')
     revalidatePath('/gastos')
     return
   }
@@ -205,12 +229,12 @@ export async function updateGasto(id: string, data: GastoPayload) {
       .from('gastos')
       .update(stripCamposOpcionales(update))
       .eq('id', id)
-      .in('estado', ['borrador', 'enviado'])
+      .in('estado', ['borrador', 'enviado', 'aprobado'])
       .is('deleted_at', null)
       .select('id')
     if (retry.error) throw new Error(retry.error.message)
     if (!retry.data || retry.data.length === 0)
-      throw new Error('Sin permiso para editar este gasto o ya fue aprobado/pagado.')
+      throw new Error('Sin permiso para editar este gasto o ya fue pagado/rechazado.')
     revalidatePath('/gastos')
     return
   }
@@ -221,34 +245,19 @@ export async function updateGasto(id: string, data: GastoPayload) {
 export async function deleteGasto(id: string) {
   const supabase = createClient()
 
-  // 1. rol del usuario según get_my_role()
-  const roleResult = await supabase.rpc('get_my_role')
-  console.error('[deleteGasto] get_my_role:', roleResult.data, '| rpcError:', roleResult.error?.message)
+  // GASTOS-UX: bloquear si el gasto tiene cualquier pago asociado (vivo o anulado),
+  // para no dejar pagos huérfanos apuntando a un gasto borrado.
+  const { total } = await getPagosCount(supabase, id)
+  if (total > 0) {
+    throw new Error(`Este gasto tiene ${total} pago${total !== 1 ? 's' : ''} asociado${total !== 1 ? 's' : ''}. Anulalos primero.`)
+  }
 
-  // 2. id del usuario autenticado
-  const authResult = await supabase.auth.getUser()
-  console.error('[deleteGasto] auth.uid:', authResult.data.user?.id)
-
-  // 3. estado actual del gasto antes del update
-  const gastoActual = await supabase
-    .from('gastos')
-    .select('id, created_by, estado, deleted_at')
-    .eq('id', id)
-    .maybeSingle()
-  console.error('[deleteGasto] gasto actual:', JSON.stringify(gastoActual.data), '| selectError:', gastoActual.error?.message)
-
-  // 4. payload exacto
-  const payload = { deleted_at: new Date().toISOString() }
-  console.error('[deleteGasto] payload:', JSON.stringify(payload))
-
-  // 5. resultado del update
   const result = await supabase
     .from('gastos')
-    .update(payload)
+    .update({ deleted_at: new Date().toISOString() })
     .eq('id', id)
     .is('deleted_at', null)
     .select('id')
-  console.error('[deleteGasto] result data:', JSON.stringify(result.data), '| error:', result.error?.message, '| code:', result.error?.code, '| status:', result.status)
 
   if (result.error) throw new Error(result.error.message)
   if (!result.data || result.data.length === 0)
@@ -398,6 +407,17 @@ export async function cambiarEstadoGasto(
   nuevoEstado: 'enviado' | 'aprobado' | 'rechazado'
 ) {
   const supabase = createClient()
+
+  // GASTOS-UX: salir de 'aprobado' (volver a pendiente o rechazar) requiere
+  // que no haya pagos activos. Aprobar/enviar desde otros estados no necesita
+  // este guard (no debería ocurrir, pero igual no es destructivo).
+  if (nuevoEstado === 'enviado' || nuevoEstado === 'rechazado') {
+    const { activos } = await getPagosCount(supabase, id)
+    if (activos > 0) {
+      throw new Error('Este gasto tiene pagos activos. Anulalos primero.')
+    }
+  }
+
   const result = await supabase
     .from('gastos')
     .update({ estado: nuevoEstado })
@@ -408,6 +428,7 @@ export async function cambiarEstadoGasto(
   if (!result.data || result.data.length === 0)
     throw new Error('Sin permiso para cambiar el estado de este gasto.')
   revalidatePath('/gastos')
+  revalidatePath('/pagos')
 }
 
 // ─── Bulk actions sobre gastos seleccionados ─────────────────────────────────
@@ -454,13 +475,27 @@ export async function bulkAprobarGastos(ids: string[]): Promise<BulkGastoResult>
   return { procesados, errores }
 }
 
-// Cancela (= rechaza) gastos. Solo permite si no están ya pagados/parciales.
+// Cancela (= rechaza) gastos. Bloquea si tienen pagos activos (no anulados);
+// el resultado parcial vuelve con los errores explicativos por gasto.
 export async function bulkRechazarGastos(ids: string[]): Promise<BulkGastoResult> {
   const supabase = createClient()
   const procesados: string[] = []
   const errores: BulkGastoResult['errores'] = []
 
   for (const id of ids) {
+    // GASTOS-UX: si tiene pagos activos, no cancelar. Hay que anular primero.
+    const { activos } = await getPagosCount(supabase, id)
+    if (activos > 0) {
+      const { data: g } = await supabase
+        .from('gastos').select('descripcion').eq('id', id).maybeSingle()
+      errores.push({
+        id,
+        descripcion: g?.descripcion,
+        error: `Tiene ${activos} pago${activos !== 1 ? 's' : ''} activo${activos !== 1 ? 's' : ''}. Anulalos primero.`,
+      })
+      continue
+    }
+
     const { data: rows, error } = await supabase
       .from('gastos')
       .update({ estado: 'rechazado' })

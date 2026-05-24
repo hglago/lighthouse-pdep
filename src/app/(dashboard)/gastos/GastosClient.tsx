@@ -1355,36 +1355,55 @@ export default function GastosClient({
             emptyMessage={searchGastos ? 'Sin resultados para esa búsqueda.' : 'No hay gastos registrados.'}
             onVisibleRowsChange={setVisibleGastos}
             columns={gastosColumns}
-            rowActions={(canWrite || canApprove) ? (g) => (
-              <>
-                {canWrite && (g.estado === 'borrador' || g.estado === 'enviado') && (
-                  <button onClick={() => openEditGasto(g)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
-                    Editar
-                  </button>
-                )}
-                {/* "Enviar" solo legacy: nuevos gastos nacen 'enviado' */}
-                {canWrite && g.estado === 'borrador' && (
-                  <button onClick={() => handleCambiarEstado(g.id, 'enviado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50">
-                    Enviar
-                  </button>
-                )}
-                {canDelete && (g.estado === 'borrador' || g.estado === 'enviado') && (
-                  <button onClick={() => handleDeleteGasto(g.id, g.descripcion)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
-                    Eliminar
-                  </button>
-                )}
-                {canApprove && g.estado === 'enviado' && (
-                  <button onClick={() => handleCambiarEstado(g.id, 'aprobado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 transition-colors disabled:opacity-50">
-                    Aprobar
-                  </button>
-                )}
-                {canApprove && g.estado === 'enviado' && (
-                  <button onClick={() => handleCambiarEstado(g.id, 'rechazado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
-                    Rechazar
-                  </button>
-                )}
-              </>
-            ) : undefined}
+            rowActions={(canWrite || canApprove) ? (g) => {
+              // GASTOS-UX: gasto aprobado sin pagos activos (no anulados) puede
+              // editarse, cancelarse o volver a pendiente. Con pagos vivos queda
+              // bloqueado hasta anular los pagos.
+              const pagosDelGasto = pagosPorGastoId.get(g.id) ?? []
+              const pagosActivos = pagosDelGasto.filter(p => p.estado !== 'anulado').length
+              const pagosTotal   = pagosDelGasto.length
+              const sinPagosActivos = pagosActivos === 0
+              const sinPagosAlguna  = pagosTotal === 0
+              const aprobadoEditable = g.estado === 'aprobado' && sinPagosActivos
+              return (
+                <>
+                  {canWrite && (g.estado === 'borrador' || g.estado === 'enviado' || aprobadoEditable) && (
+                    <button onClick={() => openEditGasto(g)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">
+                      Editar
+                    </button>
+                  )}
+                  {/* "Enviar" solo legacy: nuevos gastos nacen 'enviado' */}
+                  {canWrite && g.estado === 'borrador' && (
+                    <button onClick={() => handleCambiarEstado(g.id, 'enviado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50">
+                      Enviar
+                    </button>
+                  )}
+                  {canApprove && g.estado === 'enviado' && (
+                    <button onClick={() => handleCambiarEstado(g.id, 'aprobado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 transition-colors disabled:opacity-50">
+                      Aprobar
+                    </button>
+                  )}
+                  {/* Volver a pendiente: solo gastos aprobados sin pagos activos */}
+                  {canApprove && aprobadoEditable && (
+                    <button onClick={() => handleCambiarEstado(g.id, 'enviado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50">
+                      Volver a pendiente
+                    </button>
+                  )}
+                  {/* Cancelar: enviado, o aprobado sin pagos activos */}
+                  {canApprove && (g.estado === 'enviado' || aprobadoEditable) && (
+                    <button onClick={() => handleCambiarEstado(g.id, 'rechazado')} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50">
+                      Cancelar
+                    </button>
+                  )}
+                  {/* Eliminar: borrador/enviado/aprobado mientras no haya NINGÚN pago (ni anulado) */}
+                  {canDelete && sinPagosAlguna && (g.estado === 'borrador' || g.estado === 'enviado' || g.estado === 'aprobado') && (
+                    <button onClick={() => handleDeleteGasto(g.id, g.descripcion)} disabled={isPending} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
+                      Eliminar
+                    </button>
+                  )}
+                </>
+              )
+            } : undefined}
             bulkActions={canWrite ? (selectedIds, clear) => {
               const ids = Array.from(selectedIds)
               return (
