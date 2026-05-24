@@ -111,11 +111,13 @@ const EMPTY_FORM: FormState = {
   notas: '',
 }
 
+// UX-PAGOS: labels cortos. La columna Tipo dice qué se paga; la columna Pago
+// dice si fue Total/Parcial/—. No duplicar la palabra "Pago" en el label.
 const TIPO_LABELS: Record<PagoTipo, string> = {
-  directo: 'Pago directo',
-  gasto: 'Pago de gasto',
+  directo: 'Directo',
+  gasto: 'Gasto',
   anticipo: 'Anticipo',
-  saldo_anticipo: 'Pagar saldo',
+  saldo_anticipo: 'Saldo',
   recurrente: 'Recurrente',
 }
 
