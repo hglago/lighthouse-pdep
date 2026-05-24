@@ -4,9 +4,8 @@ import { useState, useTransition, useMemo } from 'react'
 import type { UserRole, PagoEstado, PagoTipo, ObligacionPendiente, ObligacionTipo } from '@/types'
 import type { PagoPayload } from './actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
-import { useSortable } from '@/lib/useSortable'
-import SortableHeader from '@/components/SortableHeader'
 import DataTable, { type Column } from '@/components/DataTable'
+import RowActionMenu, { type RowActionItem } from '@/components/RowActionMenu'
 
 export interface PagoRow {
   id: string
@@ -759,7 +758,9 @@ export default function PagosClient({
   }
 
   function handleExportPagos() {
-    const rows = filteredPagos.map(p => ({
+    // Export incluye TODOS los pagos post-search (todos los estados), igual
+    // que antes de F2.5. Cambiar este alcance requiere decisión del user.
+    const rows = filteredPagosBase.map(p => ({
       nro_pago: p.nro_pago,
       fecha: p.fecha_pago,
       tipo: TIPO_LABELS[p.tipo] ?? p.tipo,
@@ -864,20 +865,9 @@ export default function PagosClient({
     return map
   }, [pagos])
 
-  const pagosAccessors = useMemo(() => ({
-    codigo: (p: PagoRow) => p.codigo ?? '',
-    nro: (p: PagoRow) => p.nro_pago,
-    fecha: (p: PagoRow) => p.fecha_pago,
-    concepto: (p: PagoRow) => p.concepto,
-    tipo: (p: PagoRow) => p.tipo,
-    pago: (p: PagoRow) => modalidadPorPagoId.get(p.id) ?? 'desconocida',
-    fondo: (p: PagoRow) => p.fondos?.nombre ?? '',
-    proveedor: (p: PagoRow) => p.proveedores?.nombre ?? '',
-    monto: (p: PagoRow) => p.monto,
-    estado: (p: PagoRow) => p.estado,
-  }), [modalidadPorPagoId])
-  const { sorted: filteredPagos, sortKey: pSortKey, sortDir: pSortDir, onSort: onPagoSort } =
-    useSortable(filteredPagosBase, pagosAccessors, { key: 'fecha', dir: 'desc' })
+  // F2.5: Pagos registrados migrada a DataTable; ya no hace falta useSortable
+  // externo. filteredPagosBase es la lista filtrada por search (todos los
+  // estados); el DataTable sub-filtra a no-borradores y aplica su propio sort.
 
   // F2.4: dividir la tabla anterior en dos secciones independientes.
   //   - Borradores pendientes (DataTable, selectable, bulk Confirmar).
@@ -889,8 +879,8 @@ export default function PagosClient({
     [filteredPagosBase]
   )
   const noBorradoresFiltrados = useMemo(
-    () => filteredPagos.filter(p => p.estado !== 'borrador'),
-    [filteredPagos]
+    () => filteredPagosBase.filter(p => p.estado !== 'borrador'),
+    [filteredPagosBase]
   )
 
   const borradoresColumns = useMemo<Column<PagoRow>[]>(() => [
@@ -983,6 +973,117 @@ export default function PagosClient({
       ),
       type: 'number',
       align: 'right',
+    },
+  ], [modalidadPorPagoId])
+
+  // F2.5: columnas para "Pagos registrados" (pagado + anulado). Espejo de
+  // borradoresColumns pero con columna Estado adicional.
+  const pagosRegistradosColumns = useMemo<Column<PagoRow>[]>(() => [
+    {
+      key: 'nro',
+      label: 'Nro',
+      accessor: p => p.nro_pago,
+      render: p => <span className="text-xs text-slate-600 whitespace-nowrap font-mono tabular-nums">{p.nro_pago}</span>,
+      type: 'text',
+    },
+    {
+      key: 'fecha',
+      label: 'Fecha',
+      accessor: p => p.fecha_pago,
+      render: p => <span className="text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</span>,
+      type: 'date',
+    },
+    {
+      key: 'concepto',
+      label: 'Concepto',
+      accessor: p => p.concepto,
+      render: p => (
+        <div>
+          <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{p.concepto}</div>
+          {p.comprobante_url && (
+            <a href={p.comprobante_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+              Ver comprobante
+            </a>
+          )}
+        </div>
+      ),
+      type: 'text',
+    },
+    {
+      key: 'tipo',
+      label: 'Tipo',
+      accessor: p => p.tipo,
+      render: p => (
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${TIPO_COLORS[p.tipo]}`}>
+          {TIPO_LABELS[p.tipo]}
+        </span>
+      ),
+      type: 'enum',
+      enumOptions: (Object.keys(TIPO_LABELS) as PagoTipo[]).map(k => ({ value: k, label: TIPO_LABELS[k] })),
+      className: 'hidden sm:table-cell',
+    },
+    {
+      key: 'pago',
+      label: 'Pago',
+      accessor: p => modalidadPorPagoId.get(p.id) ?? 'desconocida',
+      render: p => {
+        const m = modalidadPorPagoId.get(p.id) ?? 'desconocida'
+        return (
+          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${MODALIDAD_COLORS[m]}`}>
+            {MODALIDAD_LABELS[m]}
+          </span>
+        )
+      },
+      type: 'enum',
+      enumOptions: [
+        { value: 'total', label: 'Total' },
+        { value: 'parcial', label: 'Parcial' },
+        { value: 'anticipo', label: '—' },
+        { value: 'desconocida', label: '—' },
+      ],
+      className: 'hidden sm:table-cell',
+    },
+    {
+      key: 'fondo',
+      label: 'Fondo',
+      accessor: p => p.fondos?.nombre ?? '',
+      render: p => p.fondos?.nombre ?? <span className="text-gray-300">—</span>,
+      type: 'text',
+      className: 'hidden md:table-cell',
+    },
+    {
+      key: 'proveedor',
+      label: 'Proveedor',
+      accessor: p => p.proveedores?.nombre ?? '',
+      render: p => p.proveedores?.nombre ?? <span className="text-gray-300">—</span>,
+      type: 'text',
+      className: 'hidden md:table-cell',
+    },
+    {
+      key: 'monto',
+      label: 'Monto',
+      accessor: p => p.monto,
+      render: p => (
+        <span className="whitespace-nowrap font-medium text-gray-900">{formatMonto(p.monto, p.moneda)}</span>
+      ),
+      type: 'number',
+      align: 'right',
+    },
+    {
+      key: 'estado',
+      label: 'Estado',
+      accessor: p => p.estado,
+      render: p => (
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${ESTADO_COLORS[p.estado]}`}>
+          {ESTADO_LABELS[p.estado]}
+        </span>
+      ),
+      type: 'enum',
+      enumOptions: [
+        { value: 'pagado', label: ESTADO_LABELS.pagado },
+        { value: 'anulado', label: ESTADO_LABELS.anulado },
+      ],
+      className: 'hidden lg:table-cell',
     },
   ], [modalidadPorPagoId])
 
@@ -1157,7 +1258,7 @@ export default function PagosClient({
             />
             <button
               onClick={handleExportPagos}
-              disabled={filteredPagos.length === 0}
+              disabled={filteredPagosBase.length === 0}
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 whitespace-nowrap"
             >
               Exportar Excel
@@ -1180,94 +1281,27 @@ export default function PagosClient({
           </div>
         )}
 
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          {noBorradoresFiltrados.length === 0 ? (
-            <div className="p-10 text-center text-sm text-gray-400">
-              {search ? 'Sin resultados para esa búsqueda.' : 'No hay pagos registrados.'}
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <SortableHeader label="Nro" sortKey="nro" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
-                    <SortableHeader label="Fecha" sortKey="fecha" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
-                    <SortableHeader label="Concepto" sortKey="concepto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
-                    <SortableHeader label="Tipo" sortKey="tipo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
-                    <SortableHeader label="Pago" sortKey="pago" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
-                    <SortableHeader label="Fondo" sortKey="fondo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden md:table-cell" />
-                    <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden md:table-cell" />
-                    <SortableHeader label="Monto" sortKey="monto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} align="right" />
-                    <SortableHeader label="Estado" sortKey="estado" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden lg:table-cell" />
-                    {isAdmin && (
-                      <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acciones</th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {noBorradoresFiltrados.map(p => (
-                    <tr key={p.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap font-mono tabular-nums">{p.nro_pago}</td>
-                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</td>
-                      <td className="px-4 py-3">
-                        <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{p.concepto}</div>
-                        {p.comprobante_url && (
-                          <a href={p.comprobante_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
-                            Ver comprobante
-                          </a>
-                        )}
-                      </td>
-                      <td className="hidden px-4 py-3 sm:table-cell">
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${TIPO_COLORS[p.tipo]}`}>
-                          {TIPO_LABELS[p.tipo]}
-                        </span>
-                      </td>
-                      <td className="hidden px-4 py-3 sm:table-cell">
-                        {(() => {
-                          const m = modalidadPorPagoId.get(p.id) ?? 'desconocida'
-                          return (
-                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${MODALIDAD_COLORS[m]}`}>
-                              {MODALIDAD_LABELS[m]}
-                            </span>
-                          )
-                        })()}
-                      </td>
-                      <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">
-                        {p.fondos?.nombre ?? <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">
-                        {p.proveedores?.nombre ?? <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-right font-medium text-gray-900 whitespace-nowrap">
-                        {formatMonto(p.monto, p.moneda)}
-                      </td>
-                      <td className="hidden px-4 py-3 lg:table-cell">
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${ESTADO_COLORS[p.estado]}`}>
-                          {ESTADO_LABELS[p.estado]}
-                        </span>
-                      </td>
-                      {isAdmin && (
-                        <td className="px-4 py-3">
-                          <div className="flex justify-end gap-2">
-                            {p.estado === 'pagado' && (
-                              <button
-                                onClick={() => handleAnular(p.id, p.concepto)}
-                                disabled={isPending}
-                                className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                              >
-                                Anular
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <DataTable<PagoRow>
+          rows={noBorradoresFiltrados}
+          getRowId={p => p.id}
+          initialSort={{ key: 'fecha', dir: 'desc' }}
+          emptyMessage={search ? 'Sin resultados para esa búsqueda.' : 'No hay pagos registrados.'}
+          columns={pagosRegistradosColumns}
+          rowActions={isAdmin ? (p) => {
+            const items: RowActionItem[] = []
+            let tooltipBloqueo: string | undefined
+            if (p.estado === 'pagado') {
+              items.push({
+                label: 'Anular',
+                variant: 'danger',
+                onClick: () => handleAnular(p.id, p.concepto),
+              })
+            } else if (p.estado === 'anulado') {
+              tooltipBloqueo = 'Pago ya anulado.'
+            }
+            return <RowActionMenu items={items} emptyTooltip={tooltipBloqueo} />
+          } : undefined}
+        />
       </div>
 
       {/* ── Modal ───────────────────────────────────────────────────────────── */}
