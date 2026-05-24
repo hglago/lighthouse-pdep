@@ -768,6 +768,54 @@ export default function FondosClient({
     })
   }
 
+  // FIN2.4c: setea el monto del item al saldo restante (total - sum(otros items)).
+  // Si no queda saldo (≤ 0), avisa y no modifica.
+  function handleUsarSaldoEnItem(idx: number) {
+    setAporteSocioForm(prev => {
+      const total = parseMonto(prev.monto_total)
+      const sumOtros = prev.items.reduce(
+        (s, it, i) => i === idx ? s : s + parseMonto(it.monto),
+        0,
+      )
+      const restante = total - sumOtros
+      if (restante <= 0.01) {
+        alert('No queda saldo pendiente para imputar en esta línea.')
+        return prev
+      }
+      return {
+        ...prev,
+        items: prev.items.map((it, i) =>
+          i === idx ? { ...it, monto: restante.toFixed(2), montoEditado: true } : it
+        ),
+      }
+    })
+  }
+
+  // FIN2.4c: ajusta la última imputación para que la suma == monto_total.
+  // Si el ajuste dejaría esa línea en ≤ 0, avisa y no modifica.
+  function handleAjustarUltimaImputacion() {
+    setAporteSocioForm(prev => {
+      if (prev.items.length === 0) return prev
+      const total   = parseMonto(prev.monto_total)
+      const lastIdx = prev.items.length - 1
+      const sumOtros = prev.items.slice(0, lastIdx).reduce(
+        (s, it) => s + parseMonto(it.monto),
+        0,
+      )
+      const nuevoUltimo = total - sumOtros
+      if (nuevoUltimo <= 0.01) {
+        alert('La última imputación quedaría en cero. Eliminala o ajustá otra línea.')
+        return prev
+      }
+      return {
+        ...prev,
+        items: prev.items.map((it, i) =>
+          i === lastIdx ? { ...it, monto: nuevoUltimo.toFixed(2), montoEditado: true } : it
+        ),
+      }
+    })
+  }
+
   function openModal(m: NuevoModal) {
     setNuevoError('')
     if (m === 'newSocio') resetSocioForm()
@@ -1616,6 +1664,14 @@ export default function FondosClient({
                               className={`${inputCls} tabular-nums ${excedeDeuda ? 'border-red-400 bg-red-50' : ''}`}
                               placeholder="0.00"
                             />
+                            <button
+                              type="button"
+                              onClick={() => handleUsarSaldoEnItem(i)}
+                              className="mt-1 text-[11px] text-slate-500 underline hover:text-slate-800"
+                              title="Imputar el saldo restante (monto total − otras imputaciones)"
+                            >
+                              Usar saldo
+                            </button>
                           </div>
 
                           <div className="col-span-2 sm:col-span-1 flex justify-end">
@@ -1657,10 +1713,21 @@ export default function FondosClient({
                     <span className="font-semibold">{aporteSocioForm.moneda} {fmt(totalImputado)}</span>
                   </div>
                   {montoTotalNum > 0 && (
-                    <div className="mt-0.5 text-xs">
-                      {sumaCoincide ? '✓ Coincide con monto total' :
-                        diferencia < 0 ? `Falta imputar ${aporteSocioForm.moneda} ${fmt(Math.abs(diferencia))}` :
-                                          `Sobra imputar ${aporteSocioForm.moneda} ${fmt(diferencia)}`}
+                    <div className="mt-0.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span>
+                        {sumaCoincide ? '✓ Coincide con monto total' :
+                          diferencia < 0 ? `Falta imputar ${aporteSocioForm.moneda} ${fmt(Math.abs(diferencia))}` :
+                                            `Sobra imputar ${aporteSocioForm.moneda} ${fmt(diferencia)}`}
+                      </span>
+                      {!sumaCoincide && (
+                        <button
+                          type="button"
+                          onClick={handleAjustarUltimaImputacion}
+                          className="rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors"
+                        >
+                          Ajustar última imputación
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
