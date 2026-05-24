@@ -140,6 +140,27 @@ const ESTADO_COLORS: Record<PagoEstado, string> = {
   anulado: 'bg-red-100 text-red-700',
 }
 
+// UX-1 (2026-05-24): modalidad inferida del histórico del gasto.
+// Total   = el pago saldó exactamente el saldo pendiente al momento de pagarse.
+// Parcial = el pago fue menor al saldo pendiente al momento.
+// Anticipo = pago.tipo === 'anticipo' (independiente del saldo).
+// Desconocida = pago sin gasto vinculado o datos insuficientes para inferir.
+type Modalidad = 'total' | 'parcial' | 'anticipo' | 'desconocida'
+
+const MODALIDAD_LABELS: Record<Modalidad, string> = {
+  total: 'Total',
+  parcial: 'Parcial',
+  anticipo: 'Anticipo',
+  desconocida: '—',
+}
+
+const MODALIDAD_COLORS: Record<Modalidad, string> = {
+  total: 'bg-emerald-100 text-emerald-700',
+  parcial: 'bg-amber-100 text-amber-800',
+  anticipo: 'bg-purple-100 text-purple-700',
+  desconocida: 'bg-gray-100 text-gray-400',
+}
+
 const OBLIGACION_TIPO_LABELS: Record<ObligacionTipo, string> = {
   gasto_total: 'Gasto',
   anticipo: 'Anticipo',
@@ -751,6 +772,7 @@ export default function PagosClient({
       nro_pago: p.nro_pago,
       fecha: p.fecha_pago,
       tipo: TIPO_LABELS[p.tipo] ?? p.tipo,
+      modalidad: MODALIDAD_LABELS[modalidadPorPagoId.get(p.id) ?? 'desconocida'],
       fondo: p.fondos?.nombre ?? '',
       proveedor: p.proveedores?.nombre ?? '',
       concepto: p.concepto,
@@ -786,17 +808,69 @@ export default function PagosClient({
       )
     : pagos
 
+  // UX-1: modalidad por pago, calculada recorriendo el histórico de cada gasto.
+  // Por gasto se ordenan los pagos por created_at y se acumula `pagadoPrevio`
+  // contando SOLO los pagos en estado 'pagado' (los anulados no contaron).
+  // Cada pago compara su monto contra el saldo_pre = gasto.monto - pagadoPrevio.
+  const modalidadPorPagoId = useMemo(() => {
+    const map = new Map<string, Modalidad>()
+    const porGasto = new Map<string, PagoRow[]>()
+    for (const p of pagos) {
+      if (p.tipo === 'anticipo') {
+        map.set(p.id, 'anticipo')
+      }
+      if (p.gasto_id) {
+        const arr = porGasto.get(p.gasto_id)
+        if (arr) arr.push(p); else porGasto.set(p.gasto_id, [p])
+      } else if (p.tipo !== 'anticipo') {
+        map.set(p.id, 'desconocida')
+      }
+    }
+    for (const lista of Array.from(porGasto.values())) {
+      const sorted = [...lista].sort((a, b) => a.created_at.localeCompare(b.created_at))
+      let pagadoPrevio = 0
+      for (const p of sorted) {
+        if (p.tipo === 'anticipo') {
+          // Ya marcado 'anticipo' arriba. Igual lo acumulamos para los pagos
+          // siguientes del mismo gasto si estaba pagado.
+          if (p.estado === 'pagado') pagadoPrevio += Number(p.monto)
+          continue
+        }
+        const gastoMonto = Number(p.gastos?.monto ?? 0)
+        const monto = Number(p.monto)
+        if (!Number.isFinite(gastoMonto) || gastoMonto <= 0) {
+          map.set(p.id, 'desconocida')
+          if (p.estado === 'pagado') pagadoPrevio += monto
+          continue
+        }
+        const saldoPre = gastoMonto - pagadoPrevio
+        if (saldoPre <= 0) {
+          map.set(p.id, 'desconocida')
+        } else if (Math.abs(monto - saldoPre) < 0.01) {
+          map.set(p.id, 'total')
+        } else if (monto < saldoPre) {
+          map.set(p.id, 'parcial')
+        } else {
+          map.set(p.id, 'desconocida')
+        }
+        if (p.estado === 'pagado') pagadoPrevio += monto
+      }
+    }
+    return map
+  }, [pagos])
+
   const pagosAccessors = useMemo(() => ({
     codigo: (p: PagoRow) => p.codigo ?? '',
     nro: (p: PagoRow) => p.nro_pago,
     fecha: (p: PagoRow) => p.fecha_pago,
     concepto: (p: PagoRow) => p.concepto,
     tipo: (p: PagoRow) => p.tipo,
+    modalidad: (p: PagoRow) => modalidadPorPagoId.get(p.id) ?? 'desconocida',
     fondo: (p: PagoRow) => p.fondos?.nombre ?? '',
     proveedor: (p: PagoRow) => p.proveedores?.nombre ?? '',
     monto: (p: PagoRow) => p.monto,
     estado: (p: PagoRow) => p.estado,
-  }), [])
+  }), [modalidadPorPagoId])
   const { sorted: filteredPagos, sortKey: pSortKey, sortDir: pSortDir, onSort: onPagoSort } =
     useSortable(filteredPagosBase, pagosAccessors, { key: 'fecha', dir: 'desc' })
 
@@ -989,6 +1063,7 @@ export default function PagosClient({
                     <SortableHeader label="Fecha" sortKey="fecha" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Concepto" sortKey="concepto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Tipo" sortKey="tipo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
+                    <SortableHeader label="Modalidad" sortKey="modalidad" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
                     <SortableHeader label="Fondo" sortKey="fondo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden md:table-cell" />
                     <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden md:table-cell" />
                     <SortableHeader label="Monto" sortKey="monto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} align="right" />
@@ -1032,6 +1107,16 @@ export default function PagosClient({
                         <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${TIPO_COLORS[p.tipo]}`}>
                           {TIPO_LABELS[p.tipo]}
                         </span>
+                      </td>
+                      <td className="hidden px-4 py-3 sm:table-cell">
+                        {(() => {
+                          const m = modalidadPorPagoId.get(p.id) ?? 'desconocida'
+                          return (
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${MODALIDAD_COLORS[m]}`}>
+                              {MODALIDAD_LABELS[m]}
+                            </span>
+                          )
+                        })()}
                       </td>
                       <td className="hidden px-4 py-3 text-sm text-gray-500 md:table-cell">
                         {p.fondos?.nombre ?? <span className="text-gray-300">—</span>}
