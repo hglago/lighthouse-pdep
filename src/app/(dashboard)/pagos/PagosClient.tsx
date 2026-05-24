@@ -263,6 +263,10 @@ export default function PagosClient({
   const [search, setSearch] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<PagoRow | null>(null)
+  // P4c.2-fix: true cuando el modal se abre desde un botón "Pagar" de fila
+  // (obligación pre-determinada, NO se puede cambiar). false cuando se abre
+  // desde el botón "Nuevo pago" general (el usuario debe elegir obligación).
+  const [obligacionPreseleccionada, setObligacionPreseleccionada] = useState(false)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [formError, setFormError] = useState('')
   const [actionError, setActionError] = useState('')
@@ -396,6 +400,7 @@ export default function PagosClient({
     const fondo = fondos.find(f => f.id === ob.fondo_id)
     const gasto = ob.gasto_id ? gastoInfoPorId.get(ob.gasto_id) : undefined
     setEditing(null)
+    setObligacionPreseleccionada(true)            // P4c.2-fix: bloquear cambio de obligación
     setForm({
       ui_tipo,
       modalidad: 'total',                          // P4c.2: default Pago total
@@ -535,6 +540,7 @@ export default function PagosClient({
 
   function openNew() {
     setEditing(null)
+    setObligacionPreseleccionada(false)          // P4c.2-fix: usuario debe elegir
     setForm(EMPTY_FORM)
     setFormError('')
     setModalOpen(true)
@@ -542,6 +548,7 @@ export default function PagosClient({
 
   function openEdit(p: PagoRow) {
     setEditing(p)
+    setObligacionPreseleccionada(false)          // P4c.2-fix: edición no usa el flag
     let ui_tipo: UiTipo = 'directo'
     if (p.tipo === 'anticipo') ui_tipo = 'anticipo'
     else if (p.tipo === 'saldo_anticipo') ui_tipo = 'saldo'
@@ -570,6 +577,7 @@ export default function PagosClient({
   function closeModal() {
     setModalOpen(false)
     setEditing(null)
+    setObligacionPreseleccionada(false)          // P4c.2-fix: reset al cerrar
     setForm(EMPTY_FORM)
     setFormError('')
   }
@@ -1133,8 +1141,10 @@ export default function PagosClient({
               const proveedorNombre = ob?.proveedor_nombre ?? editing?.proveedores?.nombre ?? '—'
               return (
                 <form onSubmit={handleSubmit} className="space-y-4">
-                  {/* Selector de obligación — solo en alta nueva */}
-                  {!editing && (
+                  {/* P4c.2-fix: dos modos de apertura.
+                       (a) "Nuevo pago" general → muestra selector editable.
+                       (b) "Pagar" desde fila → muestra card readonly con la obligación. */}
+                  {!editing && !obligacionPreseleccionada && (
                     <div>
                       <label className="mb-1 block text-sm font-medium text-gray-700">
                         Obligación pendiente <span className="text-red-500">*</span>
@@ -1160,6 +1170,26 @@ export default function PagosClient({
                       {obligaciones.length === 0 && (
                         <p className="mt-1 text-xs text-gray-400">No hay obligaciones pendientes.</p>
                       )}
+                    </div>
+                  )}
+
+                  {/* Modo preseleccionado: tarjeta readonly compacta de la obligación */}
+                  {!editing && obligacionPreseleccionada && ob && (
+                    <div className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                      <p className="mb-0.5 text-xs font-medium uppercase tracking-wide text-gray-500">Obligación seleccionada</p>
+                      <p className="font-mono text-gray-900">
+                        {gastoView?.codigo ?? `[${OBLIGACION_TIPO_LABELS[ob.tipo_obligacion]}]`}{' '}
+                        <span className="font-sans font-medium">{ob.concepto}</span>
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Proveedor: <span className="text-gray-700">{proveedorNombre}</span>
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Canal: <span className={gastoView?.forma_cancelacion === 'financiador' ? 'text-amber-800 font-medium' : 'text-slate-800 font-medium'}>{canalLabel}</span>
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Saldo pendiente: <span className="font-semibold tabular-nums text-amber-800">{formatMonto(saldoPendiente, ob.moneda)}</span>
+                      </p>
                     </div>
                   )}
 
