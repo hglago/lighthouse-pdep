@@ -792,6 +792,7 @@ export default function PagosClient({
     ? pagos.filter(
         p =>
           (p.codigo ?? '').toLowerCase().includes(q) ||
+          p.nro_pago.toLowerCase().includes(q) ||
           p.concepto.toLowerCase().includes(q) ||
           (p.fondos?.nombre ?? '').toLowerCase().includes(q) ||
           (p.proveedores?.nombre ?? '').toLowerCase().includes(q) ||
@@ -1161,7 +1162,7 @@ export default function PagosClient({
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar por código, concepto, fondo o proveedor..."
+              placeholder="Buscar por nro, concepto, proveedor..."
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:w-48"
             />
             <button
@@ -1199,8 +1200,7 @@ export default function PagosClient({
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <SortableHeader label="Código" sortKey="codigo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
-                    <SortableHeader label="Nro" sortKey="nro" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
+                    <SortableHeader label="Nro" sortKey="nro" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Fecha" sortKey="fecha" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Concepto" sortKey="concepto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Tipo" sortKey="tipo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
@@ -1217,10 +1217,7 @@ export default function PagosClient({
                 <tbody className="divide-y divide-gray-100">
                   {noBorradoresFiltrados.map(p => (
                     <tr key={p.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 text-xs font-mono tabular-nums text-slate-600 whitespace-nowrap">
-                        {p.codigo ?? <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="hidden px-4 py-3 text-xs text-gray-400 whitespace-nowrap font-mono sm:table-cell">{p.nro_pago}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap font-mono tabular-nums">{p.nro_pago}</td>
                       <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</td>
                       <td className="px-4 py-3">
                         <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{p.concepto}</div>
