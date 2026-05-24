@@ -80,11 +80,17 @@ DECLARE
   v_saldo_final    NUMERIC(12,2);
   v_mov_fondo_count INT;
 BEGIN
-  -- Tomar cualquier user válido para los created_by.
-  SELECT id INTO v_user_id FROM auth.users LIMIT 1;
+  -- Tomar cualquier user válido para los created_by. Usamos profiles porque
+  -- fondos.created_by FK apunta a profiles(id), no a auth.users(id) directo.
+  -- profiles.id == auth.users.id, así que el mismo UUID sirve para las demás
+  -- FKs (financiadores.created_by, movimientos_fondo.created_by, etc.).
+  SELECT id
+    INTO v_user_id
+    FROM profiles
+   ORDER BY created_at NULLS LAST
+   LIMIT 1;
   IF v_user_id IS NULL THEN
-    RAISE NOTICE 'FIN-FIX-1 [tests] SKIP: no hay filas en auth.users';
-    RETURN;
+    RAISE EXCEPTION 'FIN-FIX-1 [tests] FAIL: no hay profiles disponibles para created_by';
   END IF;
 
   -- Setup: fondo de test con saldo 0.
