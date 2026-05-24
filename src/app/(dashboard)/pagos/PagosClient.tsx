@@ -147,17 +147,19 @@ const ESTADO_COLORS: Record<PagoEstado, string> = {
 // Desconocida = pago sin gasto vinculado o datos insuficientes para inferir.
 type Modalidad = 'total' | 'parcial' | 'anticipo' | 'desconocida'
 
+// UX-1b: la columna se llama "Pago" y muestra solo Total / Parcial / —.
+// Para tipo='anticipo' mostramos "—" porque la columna Tipo ya indica el origen.
 const MODALIDAD_LABELS: Record<Modalidad, string> = {
   total: 'Total',
   parcial: 'Parcial',
-  anticipo: 'Anticipo',
+  anticipo: '—',
   desconocida: '—',
 }
 
 const MODALIDAD_COLORS: Record<Modalidad, string> = {
   total: 'bg-emerald-100 text-emerald-700',
   parcial: 'bg-amber-100 text-amber-800',
-  anticipo: 'bg-purple-100 text-purple-700',
+  anticipo: 'bg-gray-100 text-gray-400',
   desconocida: 'bg-gray-100 text-gray-400',
 }
 
@@ -772,7 +774,7 @@ export default function PagosClient({
       nro_pago: p.nro_pago,
       fecha: p.fecha_pago,
       tipo: TIPO_LABELS[p.tipo] ?? p.tipo,
-      modalidad: MODALIDAD_LABELS[modalidadPorPagoId.get(p.id) ?? 'desconocida'],
+      pago: MODALIDAD_LABELS[modalidadPorPagoId.get(p.id) ?? 'desconocida'],
       fondo: p.fondos?.nombre ?? '',
       proveedor: p.proveedores?.nombre ?? '',
       concepto: p.concepto,
@@ -865,7 +867,7 @@ export default function PagosClient({
     fecha: (p: PagoRow) => p.fecha_pago,
     concepto: (p: PagoRow) => p.concepto,
     tipo: (p: PagoRow) => p.tipo,
-    modalidad: (p: PagoRow) => modalidadPorPagoId.get(p.id) ?? 'desconocida',
+    pago: (p: PagoRow) => modalidadPorPagoId.get(p.id) ?? 'desconocida',
     fondo: (p: PagoRow) => p.fondos?.nombre ?? '',
     proveedor: (p: PagoRow) => p.proveedores?.nombre ?? '',
     monto: (p: PagoRow) => p.monto,
@@ -1063,7 +1065,7 @@ export default function PagosClient({
                     <SortableHeader label="Fecha" sortKey="fecha" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Concepto" sortKey="concepto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} />
                     <SortableHeader label="Tipo" sortKey="tipo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
-                    <SortableHeader label="Modalidad" sortKey="modalidad" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
+                    <SortableHeader label="Pago" sortKey="pago" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden sm:table-cell" />
                     <SortableHeader label="Fondo" sortKey="fondo" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden md:table-cell" />
                     <SortableHeader label="Proveedor" sortKey="proveedor" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} className="hidden md:table-cell" />
                     <SortableHeader label="Monto" sortKey="monto" activeKey={pSortKey} dir={pSortDir} onSort={onPagoSort} align="right" />
