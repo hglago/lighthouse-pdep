@@ -260,7 +260,7 @@ export default function DataTable<T>({
                   />
                 ))}
                 {rowActions && (
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">
+                  <th className="sticky right-0 z-10 border-l border-gray-200 bg-gray-50 px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">
                     Acciones
                   </th>
                 )}
@@ -301,7 +301,7 @@ export default function DataTable<T>({
                         )
                       })}
                       {rowActions && (
-                        <td className="px-4 py-3">
+                        <td className={`sticky right-0 z-10 border-l border-gray-200 px-4 py-3 ${isSel ? 'bg-emerald-50' : 'bg-white'}`}>
                           <div className="flex justify-end gap-2">{rowActions(row)}</div>
                         </td>
                       )}
