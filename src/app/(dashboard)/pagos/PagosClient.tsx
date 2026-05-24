@@ -758,38 +758,86 @@ export default function PagosClient({
   }
 
   function handleExportPagos() {
-    // Export incluye TODOS los pagos post-search (todos los estados), igual
-    // que antes de F2.5. Cambiar este alcance requiere decisión del user.
-    const rows = filteredPagosBase.map(p => {
-      // F2.5-export: canal de pago + tercero. Derivado del gasto vinculado
-      // (p.gastos.forma_cancelacion). Para pagos sin gasto vinculado (directo,
-      // saldo_anticipo standalone) → '—'.
-      const formaCancelacion = p.gastos?.forma_cancelacion ?? null
-      const canalPago =
-        formaCancelacion === 'risa'        ? 'Medios propios RISA' :
-        formaCancelacion === 'financiador' ? 'Tercero de la red' :
-                                              '—'
-      const tercero = p.gastos?.financiadores
+    // F2.5c: export universal con 3 secciones:
+    //   1. Obligación pendiente (de la vista v_obligaciones_pendientes)
+    //   2. Borrador pendiente   (pagos.estado='borrador')
+    //   3. Pago registrado       (pagos.estado IN 'pagado','anulado')
+    // Columnas comunes: seccion, estado_operativo, nro_pago, fecha, tipo,
+    // pago, canal_pago, tercero, fondo, proveedor, concepto, monto, moneda,
+    // estado, created_at.
+
+    // Helper local: deriva canal de pago para un pago. Si no hay info del
+    // gasto vinculado, default 'Medios propios RISA' porque G1 impuso que
+    // todo pasa por el fondo RISA. '—' queda reservado para casos en que
+    // explícitamente no aplique.
+    function canalPagoDePago(p: PagoRow): string {
+      const f = p.gastos?.forma_cancelacion ?? null
+      if (f === 'financiador') return 'Tercero de la red'
+      if (f === 'risa') return 'Medios propios RISA'
+      // Sin gasto vinculado (directo, saldo_anticipo standalone) o anulado
+      // legacy: si el pago tuviera financiador_id propio sería tercero, pero
+      // ese campo no está en PagoRow. Default a RISA por convención G1.
+      return 'Medios propios RISA'
+    }
+    function terceroDePago(p: PagoRow): string {
+      return p.gastos?.financiadores
         ? `${p.gastos.financiadores.codigo ?? ''} ${p.gastos.financiadores.nombre}`.trim()
         : ''
+    }
 
+    // Helper para obligaciones: derivamos canal/tercero desde gastoInfoPorId.
+    function canalPagoDeObligacion(o: ObligacionPendiente): string {
+      const g = o.gasto_id ? gastoInfoPorId.get(o.gasto_id) : undefined
+      if (g?.forma_cancelacion === 'financiador') return 'Tercero de la red'
+      return 'Medios propios RISA'
+    }
+    function terceroDeObligacion(o: ObligacionPendiente): string {
+      const g = o.gasto_id ? gastoInfoPorId.get(o.gasto_id) : undefined
+      return g?.financiadores
+        ? `${g.financiadores.codigo ?? ''} ${g.financiadores.nombre}`.trim()
+        : ''
+    }
+
+    const filasObligaciones = obligaciones.map(o => ({
+      seccion: 'Obligación pendiente',
+      estado_operativo: 'Pendiente',
+      nro_pago: '',
+      fecha: o.fecha_vencimiento ?? o.fecha_gasto ?? '',
+      tipo: OBLIGACION_TIPO_LABELS[o.tipo_obligacion] ?? o.tipo_obligacion,
+      pago: '—',
+      canal_pago: canalPagoDeObligacion(o),
+      tercero: terceroDeObligacion(o),
+      fondo: o.fondo_nombre ?? '',
+      proveedor: o.proveedor_nombre ?? '',
+      concepto: o.concepto,
+      monto: o.monto_pendiente,
+      moneda: o.moneda,
+      estado: 'pendiente',
+      created_at: '',
+    }))
+
+    const filasPagos = filteredPagosBase.map(p => {
+      const esBorrador = p.estado === 'borrador'
       return {
+        seccion: esBorrador ? 'Borrador pendiente' : 'Pago registrado',
+        estado_operativo: ESTADO_LABELS[p.estado] ?? p.estado,
         nro_pago: p.nro_pago,
         fecha: p.fecha_pago,
         tipo: TIPO_LABELS[p.tipo] ?? p.tipo,
         pago: MODALIDAD_LABELS[modalidadPorPagoId.get(p.id) ?? 'desconocida'],
-        canal_pago: canalPago,
-        tercero,
+        canal_pago: canalPagoDePago(p),
+        tercero: terceroDePago(p),
         fondo: p.fondos?.nombre ?? '',
         proveedor: p.proveedores?.nombre ?? '',
         concepto: p.concepto,
         monto: p.monto,
         moneda: p.moneda,
-        estado: ESTADO_LABELS[p.estado] ?? p.estado,
+        estado: p.estado,
         created_at: p.created_at,
       }
     })
-    exportToExcel(rows, `pagos_${todayForFile()}.xlsx`, 'Pagos')
+
+    exportToExcel([...filasObligaciones, ...filasPagos], `pagos_${todayForFile()}.xlsx`, 'Pagos')
   }
 
   function handleAnular(id: string, concepto: string) {
