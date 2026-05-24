@@ -895,21 +895,11 @@ export default function PagosClient({
 
   const borradoresColumns = useMemo<Column<PagoRow>[]>(() => [
     {
-      key: 'codigo',
-      label: 'Código',
-      accessor: p => p.codigo ?? '',
-      render: p => p.codigo
-        ? <span className="text-xs font-mono tabular-nums text-slate-600 whitespace-nowrap">{p.codigo}</span>
-        : <span className="text-gray-300">—</span>,
-      type: 'text',
-    },
-    {
       key: 'nro',
       label: 'Nro',
       accessor: p => p.nro_pago,
-      render: p => <span className="text-xs text-gray-400 whitespace-nowrap font-mono">{p.nro_pago}</span>,
+      render: p => <span className="text-xs text-slate-600 whitespace-nowrap font-mono tabular-nums">{p.nro_pago}</span>,
       type: 'text',
-      className: 'hidden sm:table-cell',
     },
     {
       key: 'fecha',
