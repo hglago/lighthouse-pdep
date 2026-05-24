@@ -665,15 +665,20 @@ export default function FondosClient({
     setFinForm({ nombre: '', cuit: '', email: '', telefono: '', observaciones: '' })
   }
 
-  // FIN2.4 / FIN2.4b: aporte con imputaciones múltiples (split MP + Terceros).
-  // montoEditado=true significa que el usuario tipeó el monto; el sistema NO
-  // lo va a pisar automáticamente al cambiar monto_total ni al agregar items.
+  // FIN2.4 / FIN2.4b / FIN2.4d: aporte con imputaciones múltiples
+  // (split MP + Terceros).
+  // - montoEditado=true: el user tipeó el monto; el sistema no lo pisa por
+  //   sugerencias automáticas (excepto recálculo de línea Saldo).
+  // - esSaldo=true: esta línea se mantiene == saldo restante; su monto se
+  //   recalcula cada vez que cambia monto_total o otra línea. Solo una línea
+  //   puede tener esSaldo=true al mismo tiempo.
   type AporteItemForm = {
     destino_tipo:   'medios_propios' | 'tercero'
     fondo_id:       string  // usado si destino_tipo='medios_propios'
     financiador_id: string  // usado si destino_tipo='tercero'
     monto:          string  // string para input controlado; se parsea al submit
     montoEditado:   boolean // true si el user lo modificó manualmente
+    esSaldo:        boolean // true si esta línea representa el saldo restante
   }
   type AporteFormState = {
     fecha:         string
@@ -691,6 +696,36 @@ export default function FondosClient({
       financiador_id: '',
       monto,
       montoEditado: false,
+      esSaldo:      false,
+    }
+  }
+
+  // FIN2.4d: recalcula el monto de la línea esSaldo (si existe) según
+  // monto_total - SUM(otras líneas). Si el saldo restante quedaría ≤ 0,
+  // se desmarca esa línea automáticamente (no se puede sostener una
+  // línea Saldo sin saldo positivo).
+  function recomputeSaldoLine(state: AporteFormState): AporteFormState {
+    const idx = state.items.findIndex(it => it.esSaldo)
+    if (idx === -1) return state
+    const total = parseMonto(state.monto_total)
+    const sumOtros = state.items.reduce(
+      (s, it, i) => i === idx ? s : s + parseMonto(it.monto),
+      0,
+    )
+    const restante = total - sumOtros
+    if (restante <= 0.01) {
+      return {
+        ...state,
+        items: state.items.map((it, i) =>
+          i === idx ? { ...it, esSaldo: false } : it
+        ),
+      }
+    }
+    return {
+      ...state,
+      items: state.items.map((it, i) =>
+        i === idx ? { ...it, monto: restante.toFixed(2) } : it
+      ),
     }
   }
 
@@ -731,40 +766,86 @@ export default function FondosClient({
     }))
   }
 
-  // Marca montoEditado=true (el user tipeó).
+  // Marca montoEditado=true (el user tipeó). Si esa línea es la Saldo, no
+  // hace nada (la línea Saldo es readonly desde la UI; este guard es defensivo).
   function onChangeMontoManual(idx: number, monto: string) {
-    updateItem(idx, { monto, montoEditado: true })
+    setAporteSocioForm(prev => {
+      if (prev.items[idx]?.esSaldo) return prev
+      const next: AporteFormState = {
+        ...prev,
+        items: prev.items.map((it, i) => i === idx ? { ...it, monto, montoEditado: true } : it),
+      }
+      // Si OTRA línea está marcada como Saldo, recomputarla.
+      return recomputeSaldoLine(next)
+    })
   }
 
-  // FIN2.4b: cambiar monto_total puede autocompletar el monto del único item
-  // si ese item no fue editado manualmente.
+  // FIN2.4b/d: cambiar monto_total puede autocompletar el monto del único
+  // item si ese item no fue editado manualmente. También recomputa la
+  // línea Saldo si existe.
   function onChangeMontoTotal(v: string) {
     setAporteSocioForm(prev => {
-      const next: AporteFormState = { ...prev, monto_total: v }
-      if (prev.items.length === 1 && !prev.items[0].montoEditado) {
-        // Sugerir 100% al único item (sin marcarlo como "editado").
+      let next: AporteFormState = { ...prev, monto_total: v }
+      if (prev.items.length === 1 && !prev.items[0].montoEditado && !prev.items[0].esSaldo) {
         next.items = [{ ...prev.items[0], monto: v, montoEditado: false }]
       }
+      next = recomputeSaldoLine(next)
       return next
     })
   }
 
-  // FIN2.4b: agregar item con monto sugerido = saldo pendiente de imputar.
-  // Si ya está todo cubierto (pendiente <= 0), agrega item vacío.
+  // FIN2.4b/d: agregar item con monto sugerido = saldo pendiente de imputar.
+  // Si existe una línea Saldo, no sugerir (la Saldo absorbe el resto).
   function addItem() {
     setAporteSocioForm(prev => {
+      const haySaldo = prev.items.some(it => it.esSaldo)
       const total      = parseMonto(prev.monto_total)
       const sumActual  = sumaItems(prev.items)
       const pendiente  = total - sumActual
-      const sugerido   = pendiente > 0.01 ? pendiente.toFixed(2) : ''
-      return { ...prev, items: [...prev.items, makeEmptyItem(sugerido)] }
+      const sugerido   = !haySaldo && pendiente > 0.01 ? pendiente.toFixed(2) : ''
+      const next: AporteFormState = { ...prev, items: [...prev.items, makeEmptyItem(sugerido)] }
+      return recomputeSaldoLine(next)
     })
   }
 
   function removeItem(idx: number) {
     setAporteSocioForm(prev => {
       const next = prev.items.filter((_, i) => i !== idx)
-      return { ...prev, items: next.length > 0 ? next : [makeEmptyItem()] }
+      const ensured = next.length > 0 ? next : [makeEmptyItem()]
+      return recomputeSaldoLine({ ...prev, items: ensured })
+    })
+  }
+
+  // FIN2.4d: marca/desmarca una línea como "Saldo".
+  // - Solo una línea puede tener esSaldo=true a la vez (las otras se desmarcan).
+  // - Al marcar, valida saldo > 0; si ≤ 0 → alert y no marca.
+  // - Al marcar, setea el monto = saldo restante + montoEditado=true.
+  function toggleEsSaldo(idx: number) {
+    setAporteSocioForm(prev => {
+      const wasSaldo = prev.items[idx]?.esSaldo ?? false
+      if (wasSaldo) {
+        return {
+          ...prev,
+          items: prev.items.map((it, i) => i === idx ? { ...it, esSaldo: false } : it),
+        }
+      }
+      const total = parseMonto(prev.monto_total)
+      const sumOtros = prev.items.reduce(
+        (s, it, i) => i === idx ? s : s + parseMonto(it.monto),
+        0,
+      )
+      const restante = total - sumOtros
+      if (restante <= 0.01) {
+        alert('No queda saldo pendiente para imputar.')
+        return prev
+      }
+      return {
+        ...prev,
+        items: prev.items.map((it, i) => {
+          if (i === idx) return { ...it, esSaldo: true, monto: restante.toFixed(2), montoEditado: true }
+          return { ...it, esSaldo: false }
+        }),
+      }
     })
   }
 
@@ -1640,7 +1721,7 @@ export default function FondosClient({
                               <select
                                 value={it.financiador_id}
                                 onChange={e => updateItem(i, { financiador_id: e.target.value })}
-                                className={inputCls}
+                                className={`${inputCls} ${it.financiador_id === '' ? 'border-red-400 bg-red-50' : ''}`}
                               >
                                 <option value="">— Seleccionar tercero —</option>
                                 {financiadoresConDeuda
@@ -1651,6 +1732,9 @@ export default function FondosClient({
                                     </option>
                                   ))}
                               </select>
+                              {it.financiador_id === '' && (
+                                <p className="mt-1 text-[11px] text-red-600">Seleccioná un tercero</p>
+                              )}
                             </div>
                           )}
 
@@ -1661,17 +1745,23 @@ export default function FondosClient({
                               inputMode="decimal"
                               value={it.monto}
                               onChange={e => onChangeMontoManual(i, e.target.value)}
-                              className={`${inputCls} tabular-nums ${excedeDeuda ? 'border-red-400 bg-red-50' : ''}`}
+                              readOnly={it.esSaldo}
+                              className={`${inputCls} tabular-nums ${
+                                excedeDeuda ? 'border-red-400 bg-red-50' :
+                                it.esSaldo  ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''
+                              }`}
                               placeholder="0.00"
+                              title={it.esSaldo ? 'Línea Saldo: desmarcá el checkbox para editar manualmente.' : undefined}
                             />
-                            <button
-                              type="button"
-                              onClick={() => handleUsarSaldoEnItem(i)}
-                              className="mt-1 text-[11px] text-slate-500 underline hover:text-slate-800"
-                              title="Imputar el saldo restante (monto total − otras imputaciones)"
-                            >
-                              Usar saldo
-                            </button>
+                            <label className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={it.esSaldo}
+                                onChange={() => toggleEsSaldo(i)}
+                                className="h-3.5 w-3.5 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
+                              />
+                              <span>Saldo</span>
+                            </label>
                           </div>
 
                           <div className="col-span-2 sm:col-span-1 flex justify-end">
