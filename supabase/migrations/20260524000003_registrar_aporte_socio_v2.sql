@@ -13,16 +13,16 @@
 -- ║      aporte_imputaciones). movimiento_id = NULL.                        ║
 -- ║   4. Por cada item:                                                      ║
 -- ║      a) destino_tipo='medios_propios':                                  ║
-- ║           INSERT movimientos_fondo crédito                              -- ║
-- ║             → trigger fn_aplicar_movimiento_fondo actualiza saldo       -- ║
-- ║           INSERT aporte_imputaciones con movimiento_fondo_id            -- ║
-- ║      b) destino_tipo='tercero':                                         -- ║
-- ║           Valida item.monto ≤ v_saldos_financiadores.saldo_pendiente   -- ║
-- ║             para (financiador_id, moneda) AT THAT POINT (secuencial).   -- ║
-- ║           INSERT movimientos_financiacion 'cancelacion_por_aporte'      -- ║
-- ║             → v_saldos_financiadores se actualiza implícitamente        -- ║
-- ║           INSERT aporte_imputaciones con movimiento_financiacion_id     -- ║
-- ║   5. Return jsonb { aporte_id, codigo }.                                -- ║
+-- ║           INSERT movimientos_fondo crédito                              ║
+-- ║             → trigger fn_aplicar_movimiento_fondo actualiza saldo       ║
+-- ║           INSERT aporte_imputaciones con movimiento_fondo_id            ║
+-- ║      b) destino_tipo='tercero':                                         ║
+-- ║           Valida item.monto ≤ v_saldos_financiadores.saldo_pendiente    ║
+-- ║             para (financiador_id, moneda) AT THAT POINT (secuencial).   ║
+-- ║           INSERT movimientos_financiacion 'cancelacion_por_aporte'      ║
+-- ║             → v_saldos_financiadores se actualiza implícitamente        ║
+-- ║           INSERT aporte_imputaciones con movimiento_financiacion_id     ║
+-- ║   5. Return jsonb { aporte_id, codigo }.                                ║
 -- ║                                                                          ║
 -- ║ Atomicidad: todo dentro del bloque PL/pgSQL es una transacción          ║
 -- ║ implícita. RAISE EXCEPTION revierte cualquier INSERT previo.            ║
