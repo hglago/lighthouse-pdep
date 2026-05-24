@@ -6,6 +6,7 @@ import type { PagoPayload } from './actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
+import DataTable, { type Column } from '@/components/DataTable'
 
 export interface PagoRow {
   id: string
@@ -272,8 +273,7 @@ export default function PagosClient({
   const [actionError, setActionError] = useState('')
   const [isPending, startTransition] = useTransition()
 
-  // ── Multi-select + bulk state ───────────────────────────────────────────────
-  const [selectedObIds, setSelectedObIds] = useState<Set<string>>(new Set())
+  // ── Bulk state (F2.3: la selección de obligaciones se delegó al DataTable) ──
   const [ocultarConBorrador, setOcultarConBorrador] = useState(false)
   const [bulkMessage, setBulkMessage] = useState<{ text: string; isError: boolean } | null>(null)
   const [selectedPagoIds, setSelectedPagoIds] = useState<Set<string>>(new Set())
@@ -291,54 +291,120 @@ export default function PagosClient({
   }, [gastosInfo])
 
   // ── Derived: which obligations already have a borrador pago ─────────────────
-  const gastoIdsEnBorrador = new Set(
-    pagos.filter(p => p.estado === 'borrador' && p.gasto_id).map(p => p.gasto_id as string)
+  // F2.3: memoizado para evitar loop con el onVisibleRowsChange del DataTable.
+  const gastoIdsEnBorrador = useMemo(
+    () => new Set(pagos.filter(p => p.estado === 'borrador' && p.gasto_id).map(p => p.gasto_id as string)),
+    [pagos]
   )
-  const recurrentesEnBorrador = new Set(
-    pagos.filter(p => p.estado === 'borrador' && p.gasto_recurrente_id).map(p => p.gasto_recurrente_id as string)
+  const recurrentesEnBorrador = useMemo(
+    () => new Set(pagos.filter(p => p.estado === 'borrador' && p.gasto_recurrente_id).map(p => p.gasto_recurrente_id as string)),
+    [pagos]
   )
 
-  function tieneBorrador(o: ObligacionPendiente): boolean {
+  const tieneBorrador = useMemo(() => (o: ObligacionPendiente): boolean => {
     if (o.gasto_id && gastoIdsEnBorrador.has(o.gasto_id)) return true
     if (o.gasto_recurrente_id && recurrentesEnBorrador.has(o.gasto_recurrente_id)) return true
     return false
-  }
+  }, [gastoIdsEnBorrador, recurrentesEnBorrador])
 
-  const obligacionesMostradas = ocultarConBorrador
-    ? obligaciones.filter(o => !tieneBorrador(o))
-    : obligaciones
-
-  // ── Selection helpers ───────────────────────────────────────────────────────
-  const selectedVisible = obligacionesMostradas.filter(o => selectedObIds.has(o.obligacion_id))
-  const allVisibleSelected = obligacionesMostradas.length > 0 &&
-    obligacionesMostradas.every(o => selectedObIds.has(o.obligacion_id))
-
-  const totalesPorMoneda: Map<string, number> = new Map()
-  for (const o of selectedVisible) {
-    totalesPorMoneda.set(o.moneda, (totalesPorMoneda.get(o.moneda) ?? 0) + o.monto_pendiente)
-  }
-
-  function toggleSelectAll() {
-    if (allVisibleSelected) {
-      setSelectedObIds(new Set())
-    } else {
-      setSelectedObIds(new Set(obligacionesMostradas.map(o => o.obligacion_id)))
-    }
-  }
-
-  function toggleSelectOb(id: string) {
-    setSelectedObIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
+  const obligacionesMostradas = useMemo(
+    () => (ocultarConBorrador ? obligaciones.filter(o => !tieneBorrador(o)) : obligaciones),
+    [obligaciones, ocultarConBorrador, tieneBorrador]
+  )
 
   function handleOcultarConBorradorChange(checked: boolean) {
     setOcultarConBorrador(checked)
-    setSelectedObIds(new Set())
+    // F2.3: cambiar el key del DataTable lo remonta y limpia la selección automáticamente
+    // (ver prop `key` en el JSX). No hay setSelectedObIds porque la selección la maneja DataTable.
   }
+
+  const obligacionesColumns = useMemo<Column<ObligacionPendiente>[]>(() => [
+    {
+      key: 'tipo',
+      label: 'Tipo',
+      accessor: o => o.tipo_obligacion,
+      render: o => (
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${OBLIGACION_TIPO_COLORS[o.tipo_obligacion]}`}>
+          {OBLIGACION_TIPO_LABELS[o.tipo_obligacion]}
+        </span>
+      ),
+      type: 'enum',
+      enumOptions: [
+        { value: 'gasto_total', label: OBLIGACION_TIPO_LABELS.gasto_total },
+        { value: 'anticipo', label: OBLIGACION_TIPO_LABELS.anticipo },
+        { value: 'saldo', label: OBLIGACION_TIPO_LABELS.saldo },
+        { value: 'recurrente', label: OBLIGACION_TIPO_LABELS.recurrente },
+      ],
+      className: 'hidden sm:table-cell',
+    },
+    {
+      key: 'proveedor',
+      label: 'Proveedor',
+      accessor: o => o.proveedor_nombre ?? '',
+      render: o => o.proveedor_nombre ?? <span className="text-gray-300">—</span>,
+      type: 'text',
+      className: 'hidden md:table-cell',
+    },
+    {
+      key: 'concepto',
+      label: 'Concepto',
+      accessor: o => o.concepto,
+      render: o => (
+        <div>
+          <div className="text-sm font-medium text-gray-900 max-w-[200px] truncate">{o.concepto}</div>
+          {tieneBorrador(o) && <span className="text-xs text-amber-600">En borrador</span>}
+        </div>
+      ),
+      type: 'text',
+    },
+    {
+      key: 'fondo',
+      label: 'Fondo',
+      accessor: o => o.fondo_nombre,
+      type: 'text',
+      className: 'hidden lg:table-cell',
+    },
+    {
+      key: 'vence',
+      label: 'Vence',
+      accessor: o => o.fecha_vencimiento ?? '',
+      render: o => o.fecha_vencimiento ?? <span className="text-gray-300">—</span>,
+      type: 'date',
+      className: 'hidden md:table-cell',
+    },
+    {
+      key: 'prioridad',
+      label: 'Prior.',
+      accessor: o => o.prioridad_pago,
+      render: o => (
+        <span className={PRIORIDAD_COLORS[o.prioridad_pago] ?? 'text-gray-500'}>
+          {PRIORIDAD_LABELS[o.prioridad_pago] ?? o.prioridad_pago}
+        </span>
+      ),
+      type: 'enum',
+      enumOptions: [
+        { value: '1', label: 'Crítica' },
+        { value: '2', label: 'Alta' },
+        { value: '3', label: 'Normal' },
+        { value: '4', label: 'Baja' },
+      ],
+      className: 'hidden sm:table-cell',
+    },
+    {
+      key: 'monto',
+      label: 'Monto',
+      accessor: o => o.monto_pendiente,
+      render: o => (
+        <span className="whitespace-nowrap font-semibold text-gray-900">
+          {formatMonto(o.monto_pendiente, o.moneda)}
+        </span>
+      ),
+      type: 'number',
+      align: 'right',
+    },
+  // tieneBorrador depende de gastoIdsEnBorrador/recurrentesEnBorrador (memoizados).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [tieneBorrador])
 
   function toggleSelectAllPagos() {
     if (allVisibleBorradoresSelected) {
@@ -422,9 +488,12 @@ export default function PagosClient({
     setModalOpen(true)
   }
 
-  function handleBulkCreate() {
-    const conProveedor = selectedVisible.filter(o => !!o.proveedor_id)
-    const sinProveedor = selectedVisible.filter(o => !o.proveedor_id)
+  // F2.3: recibe ids + clear desde el slot bulkActions del DataTable.
+  function handleBulkCreate(ids: string[], clear: () => void) {
+    const idSet = new Set(ids)
+    const seleccion = obligacionesMostradas.filter(o => idSet.has(o.obligacion_id))
+    const conProveedor = seleccion.filter(o => !!o.proveedor_id)
+    const sinProveedor = seleccion.filter(o => !o.proveedor_id)
 
     if (conProveedor.length === 0) {
       setBulkMessage({
@@ -466,7 +535,7 @@ export default function PagosClient({
         }
       }
 
-      setSelectedObIds(new Set())
+      clear()
 
       const partes: string[] = [
         `${creados} pago${creados !== 1 ? 's' : ''} registrado${creados !== 1 ? 's' : ''}.`,
@@ -769,133 +838,62 @@ export default function PagosClient({
           </label>
         </div>
 
-        {/* Selection summary + bulk action */}
-        {selectedVisible.length > 0 && (
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5">
-            <span className="text-sm font-medium text-slate-700">
-              {selectedVisible.length} seleccionada{selectedVisible.length !== 1 ? 's' : ''}
-            </span>
-            <span className="text-slate-300">·</span>
-            {Array.from(totalesPorMoneda.entries()).map(([moneda, total]) => (
-              <span key={moneda} className="text-sm font-semibold text-slate-800">
-                {formatMonto(total, moneda)}
-              </span>
-            ))}
-            <span className="hidden text-xs text-slate-400 sm:inline">— solo confirmar impacta el saldo</span>
-            {canWrite && (
-              <button
-                onClick={handleBulkCreate}
-                disabled={isPending}
-                className="ml-auto rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50 whitespace-nowrap"
-              >
-                Registrar pagos seleccionados ({selectedVisible.length})
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Bulk result message */}
+        {/* Bulk result message — externo al DataTable */}
         {bulkMessage && (
           <div className={`rounded-lg border px-3 py-2 text-sm ${bulkMessage.isError ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
             {bulkMessage.text}
           </div>
         )}
 
-        {/* Obligations table */}
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          {obligacionesMostradas.length === 0 ? (
-            <div className="p-10 text-center text-sm text-gray-400">
-              {obligaciones.length === 0
-                ? 'No hay obligaciones pendientes.'
-                : 'Todas las obligaciones tienen pago en borrador. Desmarcá "Ocultar con borrador" para verlas.'}
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="w-10 px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={allVisibleSelected}
-                        onChange={toggleSelectAll}
-                        className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
-                      />
-                    </th>
-                    <th className="hidden px-3 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">Tipo</th>
-                    <th className="hidden px-3 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Proveedor</th>
-                    <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Concepto</th>
-                    <th className="hidden px-3 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 lg:table-cell">Fondo</th>
-                    <th className="hidden px-3 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 md:table-cell">Vence</th>
-                    <th className="hidden px-3 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 sm:table-cell">Prior.</th>
-                    <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Monto</th>
-                    {canWrite && (
-                      <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Acción</th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {obligacionesMostradas.map(o => {
-                    const conBorrador = tieneBorrador(o)
-                    const isSelected = selectedObIds.has(o.obligacion_id)
-                    return (
-                      <tr
-                        key={o.obligacion_id}
-                        className={`transition-colors ${isSelected ? 'bg-slate-50' : 'hover:bg-gray-50'} ${conBorrador ? 'opacity-60' : ''}`}
-                      >
-                        <td className="px-4 py-2.5">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleSelectOb(o.obligacion_id)}
-                            className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
-                          />
-                        </td>
-                        <td className="hidden px-3 py-2.5 sm:table-cell">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${OBLIGACION_TIPO_COLORS[o.tipo_obligacion]}`}>
-                            {OBLIGACION_TIPO_LABELS[o.tipo_obligacion]}
-                          </span>
-                        </td>
-                        <td className="hidden px-3 py-2.5 text-sm text-gray-600 md:table-cell">
-                          {o.proveedor_nombre ?? <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <div className="text-sm font-medium text-gray-900 max-w-[200px] truncate">{o.concepto}</div>
-                          {conBorrador && (
-                            <span className="text-xs text-amber-600">En borrador</span>
-                          )}
-                        </td>
-                        <td className="hidden px-3 py-2.5 text-sm text-gray-500 lg:table-cell">
-                          {o.fondo_nombre}
-                        </td>
-                        <td className="hidden px-3 py-2.5 text-sm text-gray-500 md:table-cell whitespace-nowrap">
-                          {o.fecha_vencimiento ?? <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className={`hidden px-3 py-2.5 text-sm sm:table-cell ${PRIORIDAD_COLORS[o.prioridad_pago] ?? 'text-gray-500'}`}>
-                          {PRIORIDAD_LABELS[o.prioridad_pago] ?? o.prioridad_pago}
-                        </td>
-                        <td className="px-3 py-2.5 text-right text-sm font-semibold text-gray-900 whitespace-nowrap">
-                          {formatMonto(o.monto_pendiente, o.moneda)}
-                        </td>
-                        {canWrite && (
-                          <td className="px-3 py-2.5 text-right">
-                            <button
-                              onClick={() => openPagarObligation(o)}
-                              disabled={isPending}
-                              className="rounded px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50"
-                            >
-                              Pagar
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <DataTable<ObligacionPendiente>
+          // Cambiar el key al togglear "Ocultar con borrador" remonta el DataTable
+          // y limpia la selección automáticamente (preserva la UX previa).
+          key={ocultarConBorrador ? 'sin-borrador' : 'todo'}
+          rows={obligacionesMostradas}
+          getRowId={o => o.obligacion_id}
+          selectable={canWrite}
+          initialSort={{ key: 'prioridad', dir: 'asc' }}
+          rowClassName={o => (tieneBorrador(o) ? 'opacity-60' : '')}
+          emptyMessage={obligaciones.length === 0
+            ? 'No hay obligaciones pendientes.'
+            : 'Todas las obligaciones tienen pago en borrador. Desmarcá "Ocultar con borrador" para verlas.'}
+          columns={obligacionesColumns}
+          rowActions={canWrite ? (o) => (
+            <button
+              onClick={() => openPagarObligation(o)}
+              disabled={isPending}
+              className="rounded px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+            >
+              Pagar
+            </button>
+          ) : undefined}
+          bulkActions={canWrite ? (selectedIds, clear) => {
+            const idSet = selectedIds
+            const seleccionadas = obligacionesMostradas.filter(o => idSet.has(o.obligacion_id))
+            const totales = new Map<string, number>()
+            for (const o of seleccionadas) {
+              totales.set(o.moneda, (totales.get(o.moneda) ?? 0) + o.monto_pendiente)
+            }
+            const ids = Array.from(selectedIds)
+            return (
+              <>
+                {Array.from(totales.entries()).map(([moneda, total]) => (
+                  <span key={moneda} className="text-sm font-semibold text-emerald-900">
+                    {formatMonto(total, moneda)}
+                  </span>
+                ))}
+                <span className="hidden text-xs text-emerald-700 sm:inline">— confirmar impacta el saldo</span>
+                <button
+                  onClick={() => handleBulkCreate(ids, clear)}
+                  disabled={isPending}
+                  className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50 whitespace-nowrap"
+                >
+                  Registrar pagos seleccionados ({ids.length})
+                </button>
+              </>
+            )
+          } : undefined}
+        />
       </div>
 
       {/* ── SECTION 2: Pagos registrados ────────────────────────────────────── */}

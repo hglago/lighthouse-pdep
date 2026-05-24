@@ -39,6 +39,10 @@ interface Props<T> {
   /** Callback con las filas visibles tras filtros+orden. Útil para Exportar Excel
    *  desde el módulo respetando lo mostrado. */
   onVisibleRowsChange?: (rows: T[]) => void
+  /** Clase opcional aplicada a cada fila según el row. Se suma al base
+   *  (hover / selected). Útil para indicadores tipo opacity-60 en filas
+   *  "deshabilitadas". */
+  rowClassName?: (row: T) => string
   className?: string
 }
 
@@ -111,6 +115,7 @@ export default function DataTable<T>({
   emptyMessage = 'Sin resultados.',
   initialSort,
   onVisibleRowsChange,
+  rowClassName,
   className = '',
 }: Props<T>) {
   // ── Search + per-column filters ────────────────────────────────────────────
@@ -272,8 +277,9 @@ export default function DataTable<T>({
                 sorted.map(row => {
                   const id = getRowId(row)
                   const isSel = selectedIds.has(id)
+                  const extra = rowClassName ? rowClassName(row) : ''
                   return (
-                    <tr key={id} className={`transition-colors ${isSel ? 'bg-emerald-50' : 'hover:bg-gray-50'}`}>
+                    <tr key={id} className={`transition-colors ${isSel ? 'bg-emerald-50' : 'hover:bg-gray-50'} ${extra}`}>
                       {selectable && (
                         <td className="px-4 py-3">
                           <input
