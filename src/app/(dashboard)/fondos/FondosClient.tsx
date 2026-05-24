@@ -665,13 +665,15 @@ export default function FondosClient({
     setFinForm({ nombre: '', cuit: '', email: '', telefono: '', observaciones: '' })
   }
 
-  // FIN2.4: aporte con imputaciones múltiples (split MP + Terceros).
-  // Cada item lleva destino_tipo + fondo o financiador + monto.
+  // FIN2.4 / FIN2.4b: aporte con imputaciones múltiples (split MP + Terceros).
+  // montoEditado=true significa que el usuario tipeó el monto; el sistema NO
+  // lo va a pisar automáticamente al cambiar monto_total ni al agregar items.
   type AporteItemForm = {
-    destino_tipo: 'medios_propios' | 'tercero'
+    destino_tipo:   'medios_propios' | 'tercero'
     fondo_id:       string  // usado si destino_tipo='medios_propios'
     financiador_id: string  // usado si destino_tipo='tercero'
     monto:          string  // string para input controlado; se parsea al submit
+    montoEditado:   boolean // true si el user lo modificó manualmente
   }
   type AporteFormState = {
     fecha:         string
@@ -682,8 +684,23 @@ export default function FondosClient({
     items:         AporteItemForm[]
   }
 
-  function makeEmptyItem(): AporteItemForm {
-    return { destino_tipo: 'medios_propios', fondo_id: '', financiador_id: '', monto: '' }
+  function makeEmptyItem(monto: string = ''): AporteItemForm {
+    return {
+      destino_tipo: 'medios_propios',
+      fondo_id:     '',
+      financiador_id: '',
+      monto,
+      montoEditado: false,
+    }
+  }
+
+  // Parseo seguro de input numérico (acepta coma o punto).
+  function parseMonto(s: string): number {
+    const v = parseFloat(s.replace(',', '.'))
+    return Number.isFinite(v) ? v : 0
+  }
+  function sumaItems(items: AporteItemForm[]): number {
+    return items.reduce((s, it) => s + parseMonto(it.monto), 0)
   }
 
   const [aporteSocioForm, setAporteSocioForm] = useState<AporteFormState>({
@@ -705,15 +722,45 @@ export default function FondosClient({
     })
   }
 
+  // Update genérico de item (cambiar destino, fondo, financiador). NO marca
+  // montoEditado. Para cambios de monto desde input usar onChangeMontoManual.
   function updateItem(idx: number, patch: Partial<AporteItemForm>) {
     setAporteSocioForm(prev => ({
       ...prev,
       items: prev.items.map((it, i) => i === idx ? { ...it, ...patch } : it),
     }))
   }
-  function addItem() {
-    setAporteSocioForm(prev => ({ ...prev, items: [...prev.items, makeEmptyItem()] }))
+
+  // Marca montoEditado=true (el user tipeó).
+  function onChangeMontoManual(idx: number, monto: string) {
+    updateItem(idx, { monto, montoEditado: true })
   }
+
+  // FIN2.4b: cambiar monto_total puede autocompletar el monto del único item
+  // si ese item no fue editado manualmente.
+  function onChangeMontoTotal(v: string) {
+    setAporteSocioForm(prev => {
+      const next: AporteFormState = { ...prev, monto_total: v }
+      if (prev.items.length === 1 && !prev.items[0].montoEditado) {
+        // Sugerir 100% al único item (sin marcarlo como "editado").
+        next.items = [{ ...prev.items[0], monto: v, montoEditado: false }]
+      }
+      return next
+    })
+  }
+
+  // FIN2.4b: agregar item con monto sugerido = saldo pendiente de imputar.
+  // Si ya está todo cubierto (pendiente <= 0), agrega item vacío.
+  function addItem() {
+    setAporteSocioForm(prev => {
+      const total      = parseMonto(prev.monto_total)
+      const sumActual  = sumaItems(prev.items)
+      const pendiente  = total - sumActual
+      const sugerido   = pendiente > 0.01 ? pendiente.toFixed(2) : ''
+      return { ...prev, items: [...prev.items, makeEmptyItem(sugerido)] }
+    })
+  }
+
   function removeItem(idx: number) {
     setAporteSocioForm(prev => {
       const next = prev.items.filter((_, i) => i !== idx)
@@ -859,18 +906,61 @@ export default function FondosClient({
 
   // Total imputado viva para feedback del form.
   const totalImputado = useMemo(
-    () => aporteSocioForm.items.reduce((s, it) => {
-      const m = parseFloat(it.monto.replace(',', '.'))
-      return s + (Number.isFinite(m) ? m : 0)
-    }, 0),
+    () => sumaItems(aporteSocioForm.items),
     [aporteSocioForm.items],
   )
-  const montoTotalNum = useMemo(() => {
-    const v = parseFloat(aporteSocioForm.monto_total.replace(',', '.'))
-    return Number.isFinite(v) ? v : 0
-  }, [aporteSocioForm.monto_total])
+  const montoTotalNum = useMemo(
+    () => parseMonto(aporteSocioForm.monto_total),
+    [aporteSocioForm.monto_total],
+  )
   const diferencia = totalImputado - montoTotalNum  // <0 falta, >0 sobra, ==0 OK
   const sumaCoincide = Math.abs(diferencia) < 0.01 && montoTotalNum > 0
+
+  // FIN2.4b: validación item por item para habilitar el botón Registrar.
+  // - monto > 0
+  // - destino_tipo=tercero requiere financiador_id y monto ≤ deuda viva
+  const itemsValidos = useMemo(() => {
+    return aporteSocioForm.items.every(it => {
+      const m = parseMonto(it.monto)
+      if (m <= 0) return false
+      if (it.destino_tipo === 'tercero') {
+        if (!it.financiador_id) return false
+        const deuda = deudaPorFinanciador.get(`${it.financiador_id}-${aporteSocioForm.moneda}`) ?? 0
+        if (m > deuda + 0.01) return false
+      }
+      return true
+    })
+  }, [aporteSocioForm.items, aporteSocioForm.moneda, deudaPorFinanciador])
+
+  const puedeRegistrar =
+    !!aporteSocioForm.socio_id &&
+    montoTotalNum > 0 &&
+    aporteSocioForm.items.length > 0 &&
+    itemsValidos &&
+    sumaCoincide
+
+  // Razón principal por la que el submit está bloqueado (texto visible al user).
+  const razonBloqueo: string | null = (() => {
+    if (puedeRegistrar) return null
+    if (!aporteSocioForm.socio_id) return 'Seleccioná un socio.'
+    if (montoTotalNum <= 0) return 'Ingresá el monto total.'
+    // Items inválidos
+    for (let i = 0; i < aporteSocioForm.items.length; i++) {
+      const it = aporteSocioForm.items[i]
+      const m = parseMonto(it.monto)
+      if (m <= 0) return `Imputación ${i + 1}: ingresá un monto > 0.`
+      if (it.destino_tipo === 'tercero') {
+        if (!it.financiador_id) return `Imputación ${i + 1}: seleccioná un tercero.`
+        const deuda = deudaPorFinanciador.get(`${it.financiador_id}-${aporteSocioForm.moneda}`) ?? 0
+        if (m > deuda + 0.01) return `Imputación ${i + 1}: el monto supera la deuda viva del tercero.`
+      }
+    }
+    if (!sumaCoincide) {
+      if (diferencia < 0) return `Falta imputar ${aporteSocioForm.moneda} ${fmt(Math.abs(diferencia))}.`
+      return `Sobra ${aporteSocioForm.moneda} ${fmt(diferencia)} de imputación.`
+    }
+    return 'Revisá los datos del aporte.'
+  })()
 
   return (
     <div className="space-y-8">
@@ -1415,7 +1505,7 @@ export default function FondosClient({
                     type="text"
                     inputMode="decimal"
                     value={aporteSocioForm.monto_total}
-                    onChange={e => setAporteSocioForm({ ...aporteSocioForm, monto_total: e.target.value })}
+                    onChange={e => onChangeMontoTotal(e.target.value)}
                     className={`${inputCls} tabular-nums`}
                     placeholder="0.00"
                   />
@@ -1522,7 +1612,7 @@ export default function FondosClient({
                               type="text"
                               inputMode="decimal"
                               value={it.monto}
-                              onChange={e => updateItem(i, { monto: e.target.value })}
+                              onChange={e => onChangeMontoManual(i, e.target.value)}
                               className={`${inputCls} tabular-nums ${excedeDeuda ? 'border-red-400 bg-red-50' : ''}`}
                               placeholder="0.00"
                             />
@@ -1552,12 +1642,16 @@ export default function FondosClient({
                   })}
                 </div>
 
-                {/* Resumen de coincidencia */}
+                {/* Resumen de coincidencia (FIN2.4b: muestra siempre pendiente/sobra) */}
                 <div className={`mt-3 rounded-md border px-3 py-2 text-sm tabular-nums ${
                   sumaCoincide ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                   : montoTotalNum === 0 ? 'border-gray-200 bg-white text-gray-500'
                   : 'border-amber-200 bg-amber-50 text-amber-800'
                 }`}>
+                  <div className="flex items-center justify-between">
+                    <span>Monto total:</span>
+                    <span className="font-semibold">{aporteSocioForm.moneda} {fmt(montoTotalNum)}</span>
+                  </div>
                   <div className="flex items-center justify-between">
                     <span>Total imputado:</span>
                     <span className="font-semibold">{aporteSocioForm.moneda} {fmt(totalImputado)}</span>
@@ -1566,7 +1660,7 @@ export default function FondosClient({
                     <div className="mt-0.5 text-xs">
                       {sumaCoincide ? '✓ Coincide con monto total' :
                         diferencia < 0 ? `Falta imputar ${aporteSocioForm.moneda} ${fmt(Math.abs(diferencia))}` :
-                                          `Sobra ${aporteSocioForm.moneda} ${fmt(diferencia)}`}
+                                          `Sobra imputar ${aporteSocioForm.moneda} ${fmt(diferencia)}`}
                     </div>
                   )}
                 </div>
@@ -1584,11 +1678,17 @@ export default function FondosClient({
 
               {nuevoError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{nuevoError}</div>}
 
+              {!nuevoError && razonBloqueo && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {razonBloqueo}
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-1">
                 <button type="button" onClick={closeNuevoModal} disabled={isPending} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50">Cancelar</button>
                 <button
                   type="submit"
-                  disabled={isPending || !sumaCoincide || !aporteSocioForm.socio_id}
+                  disabled={isPending || !puedeRegistrar}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
                 >
                   {isPending ? 'Guardando…' : 'Registrar aporte'}
