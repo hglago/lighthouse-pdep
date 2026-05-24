@@ -760,19 +760,35 @@ export default function PagosClient({
   function handleExportPagos() {
     // Export incluye TODOS los pagos post-search (todos los estados), igual
     // que antes de F2.5. Cambiar este alcance requiere decisión del user.
-    const rows = filteredPagosBase.map(p => ({
-      nro_pago: p.nro_pago,
-      fecha: p.fecha_pago,
-      tipo: TIPO_LABELS[p.tipo] ?? p.tipo,
-      pago: MODALIDAD_LABELS[modalidadPorPagoId.get(p.id) ?? 'desconocida'],
-      fondo: p.fondos?.nombre ?? '',
-      proveedor: p.proveedores?.nombre ?? '',
-      concepto: p.concepto,
-      monto: p.monto,
-      moneda: p.moneda,
-      estado: ESTADO_LABELS[p.estado] ?? p.estado,
-      created_at: p.created_at,
-    }))
+    const rows = filteredPagosBase.map(p => {
+      // F2.5-export: canal de pago + tercero. Derivado del gasto vinculado
+      // (p.gastos.forma_cancelacion). Para pagos sin gasto vinculado (directo,
+      // saldo_anticipo standalone) → '—'.
+      const formaCancelacion = p.gastos?.forma_cancelacion ?? null
+      const canalPago =
+        formaCancelacion === 'risa'        ? 'Medios propios RISA' :
+        formaCancelacion === 'financiador' ? 'Tercero de la red' :
+                                              '—'
+      const tercero = p.gastos?.financiadores
+        ? `${p.gastos.financiadores.codigo ?? ''} ${p.gastos.financiadores.nombre}`.trim()
+        : ''
+
+      return {
+        nro_pago: p.nro_pago,
+        fecha: p.fecha_pago,
+        tipo: TIPO_LABELS[p.tipo] ?? p.tipo,
+        pago: MODALIDAD_LABELS[modalidadPorPagoId.get(p.id) ?? 'desconocida'],
+        canal_pago: canalPago,
+        tercero,
+        fondo: p.fondos?.nombre ?? '',
+        proveedor: p.proveedores?.nombre ?? '',
+        concepto: p.concepto,
+        monto: p.monto,
+        moneda: p.moneda,
+        estado: ESTADO_LABELS[p.estado] ?? p.estado,
+        created_at: p.created_at,
+      }
+    })
     exportToExcel(rows, `pagos_${todayForFile()}.xlsx`, 'Pagos')
   }
 
