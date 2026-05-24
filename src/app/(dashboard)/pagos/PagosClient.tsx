@@ -810,53 +810,66 @@ export default function PagosClient({
       )
     : pagos
 
-  // UX-1: modalidad por pago, calculada recorriendo el histórico de cada gasto.
-  // Por gasto se ordenan los pagos por created_at y se acumula `pagadoPrevio`
-  // contando SOLO los pagos en estado 'pagado' (los anulados no contaron).
-  // Cada pago compara su monto contra el saldo_pre = gasto.monto - pagadoPrevio.
+  // UX-1c: estado de la columna "Pago" por pago. Prioridad de resolución:
+  //   1. tipo='anticipo'                              → 'anticipo' (visible como —)
+  //   2. concepto contiene 'parcial'                  → 'parcial'
+  //   3. concepto contiene 'total' / 'saldo final' /
+  //      'pago recurrente'                            → 'total'
+  //   4. fallback: cálculo histórico contra gasto.monto + pagado_previo
+  //   5. sino                                          → 'desconocida' (visible como —)
+  //
+  // El cálculo histórico solo aplica cuando el pago vincula a un gasto (gasto_id)
+  // y trae gasto.monto en el join. Los pagos tipo 'saldo_anticipo' vinculan via
+  // anticipo_id y no traen gasto.monto, por eso el parsing del concepto es la
+  // ruta primaria — además es la fuente más fiable porque la UI genera el
+  // texto explícitamente con la modalidad elegida (generarConceptoAuto).
   const modalidadPorPagoId = useMemo(() => {
-    const map = new Map<string, Modalidad>()
+    // Cálculo histórico pre-computado por gasto (fallback)
+    const histPorPagoId = new Map<string, Modalidad>()
     const porGasto = new Map<string, PagoRow[]>()
     for (const p of pagos) {
-      if (p.tipo === 'anticipo') {
-        map.set(p.id, 'anticipo')
-      }
       if (p.gasto_id) {
         const arr = porGasto.get(p.gasto_id)
         if (arr) arr.push(p); else porGasto.set(p.gasto_id, [p])
-      } else if (p.tipo !== 'anticipo') {
-        map.set(p.id, 'desconocida')
       }
     }
     for (const lista of Array.from(porGasto.values())) {
       const sorted = [...lista].sort((a, b) => a.created_at.localeCompare(b.created_at))
       let pagadoPrevio = 0
       for (const p of sorted) {
-        if (p.tipo === 'anticipo') {
-          // Ya marcado 'anticipo' arriba. Igual lo acumulamos para los pagos
-          // siguientes del mismo gasto si estaba pagado.
-          if (p.estado === 'pagado') pagadoPrevio += Number(p.monto)
-          continue
-        }
         const gastoMonto = Number(p.gastos?.monto ?? 0)
         const monto = Number(p.monto)
-        if (!Number.isFinite(gastoMonto) || gastoMonto <= 0) {
-          map.set(p.id, 'desconocida')
-          if (p.estado === 'pagado') pagadoPrevio += monto
-          continue
-        }
-        const saldoPre = gastoMonto - pagadoPrevio
-        if (saldoPre <= 0) {
-          map.set(p.id, 'desconocida')
-        } else if (Math.abs(monto - saldoPre) < 0.01) {
-          map.set(p.id, 'total')
-        } else if (monto < saldoPre) {
-          map.set(p.id, 'parcial')
-        } else {
-          map.set(p.id, 'desconocida')
+        if (Number.isFinite(gastoMonto) && gastoMonto > 0) {
+          const saldoPre = gastoMonto - pagadoPrevio
+          if (saldoPre > 0) {
+            if (Math.abs(monto - saldoPre) < 0.01) histPorPagoId.set(p.id, 'total')
+            else if (monto < saldoPre) histPorPagoId.set(p.id, 'parcial')
+          }
         }
         if (p.estado === 'pagado') pagadoPrevio += monto
       }
+    }
+
+    // Decisión final por pago
+    const map = new Map<string, Modalidad>()
+    for (const p of pagos) {
+      if (p.tipo === 'anticipo') { map.set(p.id, 'anticipo'); continue }
+
+      const concepto = (p.concepto ?? '').toLowerCase()
+      // 'parcial' se chequea ANTES que 'total' porque "Pago parcial recurrente"
+      // contiene ambos conceptos.
+      if (concepto.includes('parcial')) { map.set(p.id, 'parcial'); continue }
+      if (
+        concepto.includes('saldo final') ||
+        concepto.includes('pago total') ||
+        concepto.includes('pago recurrente')
+      ) { map.set(p.id, 'total'); continue }
+
+      // Fallback: cálculo histórico
+      const hist = histPorPagoId.get(p.id)
+      if (hist) { map.set(p.id, hist); continue }
+
+      map.set(p.id, 'desconocida')
     }
     return map
   }, [pagos])
