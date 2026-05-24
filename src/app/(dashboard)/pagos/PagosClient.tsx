@@ -30,21 +30,45 @@ export interface PagoRow {
   created_at: string
   fondos: { nombre: string; moneda: string } | null
   proveedores: { nombre: string } | null
-  gastos: { descripcion: string } | null
+  // P4c.2: gasto joined trae info del canal de pago y monto original.
+  gastos: {
+    descripcion: string
+    codigo: string | null
+    monto: number
+    forma_cancelacion: 'risa' | 'financiador'
+    financiador_id: string | null
+    financiadores: { codigo: string | null; nombre: string } | null
+  } | null
   anticipos: { concepto: string } | null
 }
 
-// UiTipo: opciones visibles en el modal de pago. Distinto a PagoTipo (enum DB).
-//   anticipo / saldo / parcial / final → linkean a un gasto vía obligación
-//   recurrente → linkea a un gasto_recurrente_id
-//   directo → pago sin obligación, requiere nota justificativa
+// P4c.2: info de gastos vinculados a obligaciones, usada en el modal Registrar
+// pago para mostrar canal de pago en el bloque "Resumen de obligación".
+export interface GastoInfo {
+  id: string
+  codigo: string | null
+  descripcion: string
+  monto: number
+  forma_cancelacion: 'risa' | 'financiador'
+  financiador_id: string | null
+  financiadores: { codigo: string | null; nombre: string } | null
+}
+
+// UiTipo: parte de obligación inferida desde la obligación seleccionada.
+// Se conserva para mapear a pagos.tipo (enum DB). El usuario ya NO la elige
+// manualmente desde el modal (P4c.2).
 type UiTipo = 'anticipo' | 'saldo' | 'parcial' | 'final' | 'recurrente' | 'directo'
+
+// P4c.2: modalidad de pago elegida explícitamente por el usuario.
+// Total = saldo pendiente. Parcial = importe libre <= saldo pendiente.
+type ModalidadPago = 'total' | 'parcial'
 
 interface Props {
   pagos: PagoRow[]
   fondos: { id: string; nombre: string; moneda: string }[]
   proveedores: { id: string; nombre: string }[]
   obligaciones: ObligacionPendiente[]
+  gastosInfo: GastoInfo[]
   role: UserRole
   onCreatePagoYConfirmar: (data: PagoPayload) => Promise<{ ok: true } | { ok: false; error: string }>
   onUpdatePago: (id: string, data: PagoPayload) => Promise<void>
@@ -55,6 +79,7 @@ interface Props {
 
 interface FormState {
   ui_tipo: UiTipo
+  modalidad: ModalidadPago
   obligacion_id: string
   fondo_id: string
   proveedor_id: string
@@ -71,6 +96,7 @@ interface FormState {
 
 const EMPTY_FORM: FormState = {
   ui_tipo: 'final',
+  modalidad: 'total',
   obligacion_id: '',
   fondo_id: '',
   proveedor_id: '',
@@ -170,11 +196,62 @@ function deriveUiTipoFromObligation(tipo: ObligacionTipo): UiTipo {
   return 'final' // gasto_total → sugerimos pago final (full pending)
 }
 
+// P4c.2: descripción del canal de pago para mostrar en el resumen readonly
+// del modal Registrar pago. Usa info del gasto vinculado a la obligación.
+// Si el gasto es financiado, muestra "Tercero de la red — FIN-### Nombre".
+// Si es RISA (o no hay gasto vinculado, ej. recurrentes), muestra "Medios propios RISA".
+function describirCanalPago(gasto: GastoInfo | undefined): string {
+  if (gasto?.forma_cancelacion === 'financiador' && gasto.financiadores) {
+    const codigo = gasto.financiadores.codigo ?? 'Sin código'
+    return `Tercero de la red — ${codigo} — ${gasto.financiadores.nombre}`
+  }
+  if (gasto?.forma_cancelacion === 'financiador') {
+    return 'Tercero de la red'
+  }
+  return 'Medios propios RISA'
+}
+
+// P4c.2: genera el concepto del pago automáticamente desde la obligación
+// y la modalidad elegida. Reemplaza la edición manual del campo concepto.
+function generarConceptoAuto(
+  modalidad: ModalidadPago,
+  obligacionTipo: ObligacionTipo,
+  gastoCodigo: string | null | undefined,
+  conceptoObligacion: string,
+): string {
+  const ref = gastoCodigo ?? 'gasto'
+  const labelParte =
+    obligacionTipo === 'anticipo' ? 'Anticipo'
+    : obligacionTipo === 'saldo' ? (modalidad === 'parcial' ? 'Pago parcial de saldo' : 'Saldo final')
+    : obligacionTipo === 'recurrente' ? (modalidad === 'parcial' ? 'Pago parcial recurrente' : 'Pago recurrente')
+    : modalidad === 'parcial' ? 'Pago parcial' : 'Pago total'
+  return `${labelParte} de ${ref} — ${conceptoObligacion}`
+}
+
+// P4c.2: etiqueta visible en el dropdown de obligaciones. Incluye N° gasto,
+// concepto, proveedor, canal de pago y saldo pendiente.
+function etiquetaObligacion(
+  o: ObligacionPendiente,
+  proveedorNombre: string,
+  canalLabel: string,
+  monto: number,
+  moneda: string,
+  parte: string,
+  gastoCodigo: string | null,
+): string {
+  const ref = gastoCodigo ?? `[${parte}]`
+  const monedaFmt = new Intl.NumberFormat('es-AR', {
+    style: 'currency', currency: moneda === 'USD' ? 'USD' : 'ARS', minimumFractionDigits: 2,
+  }).format(monto)
+  return `${ref} ${o.concepto} — ${proveedorNombre} — ${canalLabel} — Saldo pendiente ${monedaFmt}`
+}
+
 export default function PagosClient({
   pagos,
   fondos,
   proveedores,
   obligaciones,
+  gastosInfo,
   role,
   onCreatePagoYConfirmar,
   onUpdatePago,
@@ -200,6 +277,14 @@ export default function PagosClient({
 
   const canWrite = role === 'admin' || role === 'contador'
   const isAdmin = role === 'admin'
+
+  // P4c.2: lookup rápido por gasto_id para mostrar canal de pago en el modal
+  // (Resumen de obligación) y al renderear pagos en tabla.
+  const gastoInfoPorId = useMemo(() => {
+    const m = new Map<string, GastoInfo>()
+    for (const g of gastosInfo) m.set(g.id, g)
+    return m
+  }, [gastosInfo])
 
   // ── Derived: which obligations already have a borrador pago ─────────────────
   const gastoIdsEnBorrador = new Set(
@@ -309,17 +394,20 @@ export default function PagosClient({
   function openPagarObligation(ob: ObligacionPendiente) {
     const ui_tipo = deriveUiTipoFromObligation(ob.tipo_obligacion)
     const fondo = fondos.find(f => f.id === ob.fondo_id)
+    const gasto = ob.gasto_id ? gastoInfoPorId.get(ob.gasto_id) : undefined
     setEditing(null)
     setForm({
       ui_tipo,
+      modalidad: 'total',                          // P4c.2: default Pago total
       obligacion_id: ob.obligacion_id,
       fondo_id: ob.fondo_id,
       proveedor_id: ob.proveedor_id ?? '',
       gasto_id: ob.gasto_id ?? '',
       gasto_recurrente_id: ob.gasto_recurrente_id ?? '',
       anticipo_id: '',
-      concepto: ob.concepto,
-      monto: String(ob.monto_pendiente),
+      // Concepto auto-generado (no editable en el modal nuevo).
+      concepto: generarConceptoAuto('total', ob.tipo_obligacion, gasto?.codigo ?? null, ob.concepto),
+      monto: String(ob.monto_pendiente),           // total = saldo pendiente
       moneda: fondo?.moneda ?? ob.moneda,
       fecha_pago: new Date().toISOString().slice(0, 10),
       comprobante_url: '',
@@ -389,108 +477,60 @@ export default function PagosClient({
     })
   }
 
-  // ── Obligation selector filter (modal) ──────────────────────────────────────
-  const obligacionesFiltradas = (() => {
-    if (form.ui_tipo === 'anticipo')   return obligaciones.filter(o => o.tipo_obligacion === 'anticipo')
-    if (form.ui_tipo === 'saldo')      return obligaciones.filter(o => o.tipo_obligacion === 'saldo')
-    if (form.ui_tipo === 'parcial' || form.ui_tipo === 'final') {
-      return obligaciones.filter(o => o.tipo_obligacion === 'gasto_total' || o.tipo_obligacion === 'saldo')
-    }
-    if (form.ui_tipo === 'recurrente') return obligaciones.filter(o => o.tipo_obligacion === 'recurrente')
-    return []  // directo
-  })()
-
-  // ── Modal handlers ──────────────────────────────────────────────────────────
-
-  // Encuentra una obligación "hermana" (mismo gasto/recurrente, distinto tipo)
-  // que matchee con el nuevo UiTipo. Permite cambiar tipo sin perder contexto.
-  function findSisterObligacion(currentOb: ObligacionPendiente, newUiTipo: UiTipo): ObligacionPendiente | undefined {
-    if (newUiTipo === 'recurrente') {
-      if (!currentOb.gasto_recurrente_id) return undefined
-      return obligaciones.find(o =>
-        o.gasto_recurrente_id === currentOb.gasto_recurrente_id
-        && o.tipo_obligacion === 'recurrente'
-      )
-    }
-    if (!currentOb.gasto_id) return undefined
-    if (newUiTipo === 'anticipo') {
-      return obligaciones.find(o => o.gasto_id === currentOb.gasto_id && o.tipo_obligacion === 'anticipo')
-    }
-    if (newUiTipo === 'saldo') {
-      return obligaciones.find(o => o.gasto_id === currentOb.gasto_id && o.tipo_obligacion === 'saldo')
-    }
-    if (newUiTipo === 'parcial' || newUiTipo === 'final') {
-      return obligaciones.find(o =>
-        o.gasto_id === currentOb.gasto_id
-        && (o.tipo_obligacion === 'gasto_total' || o.tipo_obligacion === 'saldo')
-      )
-    }
-    return undefined
-  }
-
-  function handleUiTipoChange(newUiTipo: UiTipo) {
-    setForm(prev => {
-      // Pago directo no requiere obligación → limpiamos contexto de obligación
-      if (newUiTipo === 'directo') {
-        return { ...EMPTY_FORM, fecha_pago: prev.fecha_pago, ui_tipo: 'directo' }
-      }
-
-      // Si hay obligación seleccionada, buscar hermana compatible con nuevo tipo
-      if (prev.obligacion_id) {
-        const currentOb = obligaciones.find(o => o.obligacion_id === prev.obligacion_id)
-        if (currentOb) {
-          const sister = findSisterObligacion(currentOb, newUiTipo)
-          if (sister) {
-            const fondo = fondos.find(f => f.id === sister.fondo_id)
-            // Pago parcial: dejamos monto vacío para que el usuario tipee
-            // Resto: sugerimos el pendiente total
-            const newMonto = newUiTipo === 'parcial' ? '' : String(sister.monto_pendiente)
-            return {
-              ...prev,
-              ui_tipo: newUiTipo,
-              obligacion_id: sister.obligacion_id,
-              gasto_id: sister.gasto_id ?? '',
-              gasto_recurrente_id: sister.gasto_recurrente_id ?? '',
-              fondo_id: sister.fondo_id,
-              moneda: fondo?.moneda ?? sister.moneda,
-              proveedor_id: sister.proveedor_id ?? prev.proveedor_id,
-              concepto: sister.concepto,
-              monto: newMonto,
-            }
-          }
-        }
-      }
-
-      // No hay obligación compatible: cambiar solo el tipo, limpiar obligacion_id
-      // pero conservar fondo/proveedor/concepto/monto si los hubo (por si tipea manual)
-      return { ...prev, ui_tipo: newUiTipo, obligacion_id: '' }
-    })
-  }
+  // P4c.2: el selector ui_tipo / pago directo / obligaciones filtradas + búsqueda
+  // de hermanas fue removido. Ahora el usuario solo elige una obligación pendiente;
+  // ui_tipo se infiere de ella, y modalidad (total/parcial) se decide vía radio buttons.
 
   function handleObligacionChange(obligacion_id: string) {
     const ob = obligaciones.find(o => o.obligacion_id === obligacion_id)
     if (!ob) {
-      setForm(prev => ({ ...prev, obligacion_id: '', gasto_id: '', gasto_recurrente_id: '', concepto: '', monto: '', moneda: '', fondo_id: '', proveedor_id: '' }))
+      setForm(prev => ({
+        ...prev,
+        obligacion_id: '',
+        gasto_id: '',
+        gasto_recurrente_id: '',
+        concepto: '',
+        monto: '',
+        moneda: '',
+        fondo_id: '',
+        proveedor_id: '',
+      }))
       return
     }
     const fondo = fondos.find(f => f.id === ob.fondo_id)
+    const gasto = ob.gasto_id ? gastoInfoPorId.get(ob.gasto_id) : undefined
+    const ui_tipo = deriveUiTipoFromObligation(ob.tipo_obligacion)
+    // P4c.2: al cambiar de obligación, default Pago total + concepto auto.
     setForm(prev => ({
       ...prev,
+      ui_tipo,
+      modalidad: 'total',
       obligacion_id,
       gasto_id: ob.gasto_id ?? '',
       gasto_recurrente_id: ob.gasto_recurrente_id ?? '',
       fondo_id: ob.fondo_id,
       moneda: fondo?.moneda ?? ob.moneda,
       proveedor_id: ob.proveedor_id ?? prev.proveedor_id,
-      concepto: ob.concepto,
-      monto: prev.ui_tipo === 'parcial' ? '' : String(ob.monto_pendiente),
-      fecha_pago: new Date().toISOString().slice(0, 10),
+      concepto: generarConceptoAuto('total', ob.tipo_obligacion, gasto?.codigo ?? null, ob.concepto),
+      monto: String(ob.monto_pendiente),
+      fecha_pago: prev.fecha_pago || new Date().toISOString().slice(0, 10),
     }))
   }
 
-  function handleFondoChange(fondo_id: string) {
-    const fondo = fondos.find(f => f.id === fondo_id)
-    setForm(prev => ({ ...prev, fondo_id, moneda: fondo?.moneda ?? '' }))
+  // P4c.2: handler para el toggle Pago total / Pago parcial. Setea monto
+  // automáticamente para total (= saldo pendiente) y lo deja vacío para parcial.
+  // También recalcula el concepto auto-generado.
+  function handleModalidadChange(modalidad: ModalidadPago) {
+    const ob = form.obligacion_id ? obligaciones.find(o => o.obligacion_id === form.obligacion_id) : null
+    const gasto = ob?.gasto_id ? gastoInfoPorId.get(ob.gasto_id) : undefined
+    setForm(prev => ({
+      ...prev,
+      modalidad,
+      monto: modalidad === 'total' ? (ob ? String(ob.monto_pendiente) : prev.monto) : '',
+      concepto: ob
+        ? generarConceptoAuto(modalidad, ob.tipo_obligacion, gasto?.codigo ?? null, ob.concepto)
+        : prev.concepto,
+    }))
   }
 
   function openNew() {
@@ -509,6 +549,7 @@ export default function PagosClient({
     else if (p.tipo === 'gasto') ui_tipo = 'final'
     setForm({
       ui_tipo,
+      modalidad: 'total',
       obligacion_id: '',
       fondo_id: p.fondo_id,
       proveedor_id: p.proveedor_id,
@@ -540,29 +581,50 @@ export default function PagosClient({
 
   // Crea pagos en estado 'pagado' atómicamente. El flujo "borrador" se eliminó
   // del UI; legacy borradores siguen siendo confirmables/editables desde la tabla.
+  // P4c.2: alta de pago siempre desde una obligación. Datos del gasto heredados
+  // (fondo, proveedor, concepto, moneda). El usuario solo elige modalidad + importe
+  // parcial + fecha + comprobante + notas.
   function executeSubmit() {
     setFormError('')
-    if (!form.fondo_id) { setFormError('Seleccioná un fondo.'); return }
-    if (!form.proveedor_id) { setFormError('Seleccioná un proveedor.'); return }
-    if (!form.concepto.trim()) { setFormError('El concepto es requerido.'); return }
-    const monto = parseFloat(form.monto)
-    if (!form.monto || isNaN(monto) || monto <= 0) { setFormError('El monto debe ser mayor a 0.'); return }
     if (!form.fecha_pago) { setFormError('La fecha es requerida.'); return }
-    const tiposRequierenGasto: UiTipo[] = ['anticipo', 'saldo', 'parcial', 'final']
-    if (tiposRequierenGasto.includes(form.ui_tipo) && !form.gasto_id) {
-      setFormError('Seleccioná la obligación vinculada.'); return
-    }
-    if (form.ui_tipo === 'recurrente' && !form.gasto_recurrente_id) {
-      setFormError('Seleccioná la obligación recurrente vinculada.'); return
-    }
-    if (form.ui_tipo === 'directo' && !form.notas.trim()) {
-      setFormError('Los pagos directos requieren justificación en el campo Notas.'); return
+
+    if (!editing) {
+      // Alta nueva: exige obligación seleccionada.
+      if (!form.obligacion_id) {
+        setFormError('Seleccioná una obligación pendiente.'); return
+      }
+      const selectedOb = obligaciones.find(o => o.obligacion_id === form.obligacion_id)
+      if (!selectedOb) {
+        setFormError('La obligación seleccionada ya no está disponible.'); return
+      }
+      const saldoPendiente = Number(selectedOb.monto_pendiente)
+      const monto = parseFloat(form.monto)
+      if (!form.monto || isNaN(monto) || monto <= 0) {
+        setFormError('El monto debe ser mayor a 0.'); return
+      }
+      if (monto > saldoPendiente + 0.001) {
+        setFormError('El importe a pagar no puede superar el saldo pendiente.'); return
+      }
+      // Coherencia: si modalidad=total, monto debe coincidir con saldo (tolerancia centavo).
+      if (form.modalidad === 'total' && Math.abs(monto - saldoPendiente) > 0.01) {
+        setFormError('Inconsistencia: cambia a "Pago parcial" o reseteá el importe.'); return
+      }
+    } else {
+      // Edición de borrador legacy: mantenemos validación mínima.
+      if (!form.fondo_id) { setFormError('Seleccioná un fondo.'); return }
+      if (!form.proveedor_id) { setFormError('Seleccioná un proveedor.'); return }
+      if (!form.concepto.trim()) { setFormError('El concepto es requerido.'); return }
+      const monto = parseFloat(form.monto)
+      if (!form.monto || isNaN(monto) || monto <= 0) {
+        setFormError('El monto debe ser mayor a 0.'); return
+      }
     }
 
     const selectedOb = obligaciones.find(o => o.obligacion_id === form.obligacion_id)
     const tipo = editing
       ? editing.tipo
       : resolveDbTipo(form.ui_tipo, selectedOb?.tipo_obligacion ?? null)
+    const monto = parseFloat(form.monto)
 
     const payload: PagoPayload = {
       fondo_id: form.fondo_id,
@@ -1029,192 +1091,272 @@ export default function PagosClient({
               {editing ? 'Editar pago' : 'Registrar pago'}
             </h2>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Fecha <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={form.fecha_pago}
-                    onChange={e => setForm({ ...form, fecha_pago: e.target.value })}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Tipo <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={form.ui_tipo}
-                    onChange={e => handleUiTipoChange(e.target.value as UiTipo)}
-                    disabled={!!editing}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 disabled:bg-gray-50 disabled:text-gray-500"
-                  >
-                    <option value="anticipo">Anticipo</option>
-                    <option value="saldo">Pagar saldo</option>
-                    <option value="parcial">Pago parcial</option>
-                    <option value="final">Pago final</option>
-                    <option value="recurrente">Recurrente</option>
-                    <option value="directo">Pago directo</option>
-                  </select>
-                </div>
-              </div>
-
-              {form.ui_tipo !== 'directo' && !editing && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Obligación pendiente <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={form.obligacion_id}
-                    onChange={e => handleObligacionChange(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  >
-                    <option value="">Seleccionar obligación...</option>
-                    {obligacionesFiltradas.map(o => (
-                      <option key={o.obligacion_id} value={o.obligacion_id}>
-                        [{OBLIGACION_TIPO_LABELS[o.tipo_obligacion]}] {o.concepto} — {o.fondo_nombre} — {formatMonto(o.monto_pendiente, o.moneda)}
-                      </option>
-                    ))}
-                  </select>
-                  {obligacionesFiltradas.length === 0 && (
-                    <p className="mt-1 text-xs text-gray-400">No hay obligaciones pendientes para este tipo.</p>
+            {/* P4c.2: modal Registrar pago rediseñado. Pago = confirmación de
+                 obligación pendiente. Datos del gasto heredados readonly.
+                 Editables: fecha, modalidad, importe (solo parcial), comprobante, notas.
+                 Modo edición (borrador legacy) mantiene un fallback abajo. */}
+            {(() => {
+              // Datos derivados para el resumen
+              const ob = !editing && form.obligacion_id
+                ? obligaciones.find(o => o.obligacion_id === form.obligacion_id)
+                : null
+              const gastoDeOb = ob?.gasto_id ? gastoInfoPorId.get(ob.gasto_id) : undefined
+              const gastoDelPagoEditado = editing?.gastos
+                ? {
+                    codigo: editing.gastos.codigo ?? null,
+                    descripcion: editing.gastos.descripcion,
+                    monto: editing.gastos.monto,
+                    forma_cancelacion: editing.gastos.forma_cancelacion,
+                    financiadores: editing.gastos.financiadores,
+                  }
+                : null
+              const gastoView = ob && gastoDeOb
+                ? {
+                    codigo: gastoDeOb.codigo,
+                    descripcion: gastoDeOb.descripcion,
+                    monto: gastoDeOb.monto,
+                    forma_cancelacion: gastoDeOb.forma_cancelacion,
+                    financiadores: gastoDeOb.financiadores,
+                  }
+                : gastoDelPagoEditado
+              const canalLabel = gastoView
+                ? gastoView.forma_cancelacion === 'financiador' && gastoView.financiadores
+                  ? `Tercero de la red — ${gastoView.financiadores.codigo ?? 'Sin código'} — ${gastoView.financiadores.nombre}`
+                  : gastoView.forma_cancelacion === 'financiador'
+                    ? 'Tercero de la red'
+                    : 'Medios propios RISA'
+                : 'Medios propios RISA'
+              const totalGasto = gastoView?.monto ?? 0
+              const saldoPendiente = ob ? Number(ob.monto_pendiente) : 0
+              const pagado = totalGasto - saldoPendiente
+              const parteLabel = ob ? OBLIGACION_TIPO_LABELS[ob.tipo_obligacion] : null
+              const proveedorNombre = ob?.proveedor_nombre ?? editing?.proveedores?.nombre ?? '—'
+              return (
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  {/* Selector de obligación — solo en alta nueva */}
+                  {!editing && (
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-gray-700">
+                        Obligación pendiente <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={form.obligacion_id}
+                        onChange={e => handleObligacionChange(e.target.value)}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                        autoFocus
+                      >
+                        <option value="">Seleccionar obligación pendiente...</option>
+                        {obligaciones.map(o => {
+                          const g = o.gasto_id ? gastoInfoPorId.get(o.gasto_id) : undefined
+                          const canal = describirCanalPago(g)
+                          const parte = OBLIGACION_TIPO_LABELS[o.tipo_obligacion]
+                          return (
+                            <option key={o.obligacion_id} value={o.obligacion_id}>
+                              {etiquetaObligacion(o, o.proveedor_nombre ?? '', canal, Number(o.monto_pendiente), o.moneda, parte, g?.codigo ?? null)}
+                            </option>
+                          )
+                        })}
+                      </select>
+                      {obligaciones.length === 0 && (
+                        <p className="mt-1 text-xs text-gray-400">No hay obligaciones pendientes.</p>
+                      )}
+                    </div>
                   )}
-                </div>
-              )}
 
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Fondo <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={form.fondo_id}
-                    onChange={e => handleFondoChange(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  >
-                    <option value="">Seleccionar fondo...</option>
-                    {fondos.map(f => (
-                      <option key={f.id} value={f.id}>{f.nombre} ({f.moneda})</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Proveedor <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={form.proveedor_id}
-                    onChange={e => setForm({ ...form, proveedor_id: e.target.value })}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  >
-                    <option value="">Seleccionar proveedor...</option>
-                    {proveedores.map(p => (
-                      <option key={p.id} value={p.id}>{p.nombre}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Concepto <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={form.concepto}
-                  onChange={e => setForm({ ...form, concepto: e.target.value })}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  placeholder="Descripción del pago"
-                  autoFocus
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Monto <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={form.monto}
-                    onChange={e => setForm({ ...form, monto: e.target.value })}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                    placeholder="0.00"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Moneda</label>
-                  <input
-                    type="text"
-                    value={form.moneda}
-                    readOnly
-                    className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 outline-none cursor-default"
-                    placeholder="Se completa con el fondo"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">URL comprobante</label>
-                <input
-                  type="text"
-                  value={form.comprobante_url}
-                  onChange={e => setForm({ ...form, comprobante_url: e.target.value })}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  placeholder="https://..."
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Notas
-                  {form.ui_tipo === 'directo' && <span className="ml-1 text-red-500">*</span>}
-                  {form.ui_tipo === 'directo' && (
-                    <span className="ml-1 text-xs font-normal text-gray-400">(requerida para pagos directos)</span>
+                  {/* Resumen de obligación — readonly */}
+                  {(ob || editing) && gastoView && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1.5 text-sm">
+                      <p className="font-semibold text-gray-800">Resumen de obligación</p>
+                      <dl className="grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-2">
+                        {gastoView.codigo && (
+                          <div>
+                            <dt className="inline text-gray-500">N° gasto: </dt>
+                            <dd className="inline font-mono text-gray-900">{gastoView.codigo}</dd>
+                          </div>
+                        )}
+                        {parteLabel && (
+                          <div>
+                            <dt className="inline text-gray-500">Parte: </dt>
+                            <dd className="inline font-medium text-gray-900">{parteLabel}</dd>
+                          </div>
+                        )}
+                        <div className="sm:col-span-2">
+                          <dt className="inline text-gray-500">Proveedor: </dt>
+                          <dd className="inline text-gray-900">{proveedorNombre}</dd>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <dt className="inline text-gray-500">Concepto: </dt>
+                          <dd className="inline text-gray-900">{gastoView.descripcion}</dd>
+                        </div>
+                        <div>
+                          <dt className="inline text-gray-500">Fondo operativo: </dt>
+                          <dd className="inline font-medium text-gray-900">RISA</dd>
+                        </div>
+                        <div>
+                          <dt className="inline text-gray-500">Moneda: </dt>
+                          <dd className="inline font-mono text-gray-900">{form.moneda || (ob?.moneda ?? '—')}</dd>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <dt className="inline text-gray-500">Canal de pago: </dt>
+                          <dd className={`inline font-medium ${gastoView.forma_cancelacion === 'financiador' ? 'text-amber-800' : 'text-slate-800'}`}>{canalLabel}</dd>
+                        </div>
+                        {ob && (
+                          <>
+                            <div>
+                              <dt className="inline text-gray-500">Importe total: </dt>
+                              <dd className="inline tabular-nums text-gray-900">{formatMonto(totalGasto, ob.moneda)}</dd>
+                            </div>
+                            <div>
+                              <dt className="inline text-gray-500">Pagado: </dt>
+                              <dd className="inline tabular-nums text-emerald-700">{formatMonto(Math.max(0, pagado), ob.moneda)}</dd>
+                            </div>
+                            <div className="sm:col-span-2">
+                              <dt className="inline text-gray-500">Saldo pendiente: </dt>
+                              <dd className="inline font-semibold tabular-nums text-amber-800">{formatMonto(saldoPendiente, ob.moneda)}</dd>
+                            </div>
+                          </>
+                        )}
+                      </dl>
+                      {gastoView.forma_cancelacion === 'financiador' ? (
+                        <p className="pt-1 text-xs text-amber-700">
+                          Este pago se registrará en la cuenta corriente del tercero. No afecta Medios Propios RISA.
+                        </p>
+                      ) : (
+                        <p className="pt-1 text-xs text-slate-600">
+                          Este pago afectará Medios Propios RISA.
+                        </p>
+                      )}
+                    </div>
                   )}
-                </label>
-                <textarea
-                  value={form.notas}
-                  onChange={e => setForm({ ...form, notas: e.target.value })}
-                  rows={2}
-                  className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                  placeholder={form.ui_tipo === 'directo' ? 'Justificación obligatoria para pagos directos' : 'Notas internas opcionales'}
-                />
-              </div>
 
-              {formError && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {formError}
-                </div>
-              )}
+                  {/* Modalidad de pago — solo en alta nueva con obligación seleccionada */}
+                  {!editing && ob && (
+                    <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                      <p className="text-sm font-semibold text-gray-800">Modalidad de pago</p>
+                      <div className="flex flex-col gap-2 text-sm sm:flex-row sm:gap-6">
+                        <label className="flex cursor-pointer items-start gap-2">
+                          <input
+                            type="radio"
+                            name="modalidad"
+                            value="total"
+                            checked={form.modalidad === 'total'}
+                            onChange={() => handleModalidadChange('total')}
+                            className="mt-0.5 h-4 w-4 border-gray-300 text-slate-900 focus:ring-slate-500"
+                          />
+                          <span className="font-medium text-gray-800">Pago total</span>
+                        </label>
+                        <label className="flex cursor-pointer items-start gap-2">
+                          <input
+                            type="radio"
+                            name="modalidad"
+                            value="parcial"
+                            checked={form.modalidad === 'parcial'}
+                            onChange={() => handleModalidadChange('parcial')}
+                            className="mt-0.5 h-4 w-4 border-gray-300 text-slate-900 focus:ring-slate-500"
+                          />
+                          <span className="font-medium text-gray-800">Pago parcial</span>
+                        </label>
+                      </div>
+                      {form.modalidad === 'total' && (
+                        <p className="text-xs text-gray-500">Se pagará el saldo pendiente completo.</p>
+                      )}
+                    </div>
+                  )}
 
-              <div className="flex justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  disabled={isPending}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
-                >
-                  {isPending
-                    ? 'Guardando...'
-                    : editing
-                      ? 'Guardar cambios'
-                      : 'Registrar pago'}
-                </button>
-              </div>
-            </form>
+                  {/* Fecha + Importe */}
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-gray-700">
+                        Fecha de pago <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={form.fecha_pago}
+                        onChange={e => setForm({ ...form, fecha_pago: e.target.value })}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-gray-700">
+                        Importe <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={form.monto}
+                        onChange={e => setForm({ ...form, monto: e.target.value })}
+                        readOnly={!editing && form.modalidad === 'total'}
+                        tabIndex={!editing && form.modalidad === 'total' ? -1 : undefined}
+                        className={
+                          !editing && form.modalidad === 'total'
+                            ? 'w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm tabular-nums text-gray-700 cursor-default'
+                            : 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm tabular-nums outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20'
+                        }
+                        placeholder="0.00"
+                      />
+                      {!editing && form.modalidad === 'parcial' && ob && (
+                        <p className="mt-0.5 text-xs text-gray-400">
+                          Máximo: {formatMonto(saldoPendiente, ob.moneda)} (saldo pendiente).
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* URL comprobante */}
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">URL comprobante</label>
+                    <input
+                      type="text"
+                      value={form.comprobante_url}
+                      onChange={e => setForm({ ...form, comprobante_url: e.target.value })}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                      placeholder="https://..."
+                    />
+                  </div>
+
+                  {/* Notas */}
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Notas</label>
+                    <textarea
+                      value={form.notas}
+                      onChange={e => setForm({ ...form, notas: e.target.value })}
+                      rows={2}
+                      className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                      placeholder="Notas internas opcionales"
+                    />
+                  </div>
+
+                  {formError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {formError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={closeModal}
+                      disabled={isPending}
+                      className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isPending || (!editing && !ob)}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
+                    >
+                      {isPending
+                        ? 'Guardando...'
+                        : editing
+                          ? 'Guardar cambios'
+                          : 'Registrar pago'}
+                    </button>
+                  </div>
+                </form>
+              )
+            })()}
           </div>
         </div>
       )}
