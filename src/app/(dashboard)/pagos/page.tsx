@@ -89,26 +89,41 @@ export default async function PagosPage() {
     pagosData = ((fallback.data ?? []) as PagoRaw[]).map(p => ({ ...p, codigo: null }))
   }
 
-  // Tolerancia gastosInfo: si forma_cancelacion/financiador_id aún no están en
-  // DB (P1 servicio por hora ya está, Etapa 1 también, pero por defensa retry).
+  // Tolerancia gastosInfo: dos errores conocidos por migraciones pendientes.
+  // 22P02 → enum gasto_estado sin 'pagado_parcial' (UX-PAGOS-CANAL-OBLIGACIONES-fix
+  //          2026-05-25). Retry con solo 'aprobado'.
+  // 42703 → columnas forma_cancelacion / financiador_id / codigo aún no en DB.
+  //          Retry base con hidratación de defaults.
   let gastosInfoData = gastosInfoResult.data
-  if (
-    gastosInfoResult.error?.code === '42703' &&
-    /forma_cancelacion|financiador_id|codigo/.test(gastosInfoResult.error.message ?? '')
-  ) {
-    console.warn('[pagos] columnas gastos extendidas no disponibles; retry base:', gastosInfoResult.error.message)
-    const fallback = await supabase
-      .from('gastos')
-      .select('id, monto, descripcion')
-      .is('deleted_at', null)
-      .in('estado', ['aprobado', 'pagado_parcial'])
-    gastosInfoData = (fallback.data ?? []).map(g => ({
-      ...g,
-      codigo: null,
-      forma_cancelacion: 'risa' as const,
-      financiador_id: null,
-      financiadores: null,
-    })) as unknown as typeof gastosInfoResult.data
+  if (gastosInfoResult.error) {
+    const errCode = gastosInfoResult.error.code
+    const errMsg = gastosInfoResult.error.message ?? ''
+    if (errCode === '22P02' && /pagado_parcial/.test(errMsg)) {
+      console.warn('[pagos] enum gasto_estado sin pagado_parcial; retry con solo aprobado:', errMsg)
+      const fallback = await supabase
+        .from('gastos')
+        .select('id, codigo, monto, descripcion, forma_cancelacion, financiador_id, financiadores:financiador_id(codigo, nombre)')
+        .is('deleted_at', null)
+        .in('estado', ['aprobado'])
+      gastosInfoData = fallback.data
+    } else if (
+      errCode === '42703' &&
+      /forma_cancelacion|financiador_id|codigo/.test(errMsg)
+    ) {
+      console.warn('[pagos] columnas gastos extendidas no disponibles; retry base:', errMsg)
+      const fallback = await supabase
+        .from('gastos')
+        .select('id, monto, descripcion')
+        .is('deleted_at', null)
+        .in('estado', ['aprobado'])
+      gastosInfoData = (fallback.data ?? []).map(g => ({
+        ...g,
+        codigo: null,
+        forma_cancelacion: 'risa' as const,
+        financiador_id: null,
+        financiadores: null,
+      })) as unknown as typeof gastosInfoResult.data
+    }
   }
 
   // OP: tolerancia D4. Si tabla ordenes_pago no existe (PGRST205 / 42P01),
