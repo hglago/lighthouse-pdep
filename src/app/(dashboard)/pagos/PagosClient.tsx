@@ -202,6 +202,23 @@ function formatMonto(monto: number, moneda: string) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency, minimumFractionDigits: 2 }).format(monto)
 }
 
+// PAGOS-UX-3 (2026-05-25): saca prefijos redundantes que Tipo + Pago ya
+// expresan. El separador esperado es " — " (en dash con espacios).
+// Si el concepto no matchea ningún prefijo conocido, se devuelve tal cual.
+const CONCEPTO_PREFIJOS_REDUNDANTES = [
+  'Pago total de saldo de gasto — ',
+  'Pago parcial de saldo de gasto — ',
+  'Pago total de gasto — ',
+  'Pago parcial de gasto — ',
+  'Anticipo de gasto — ',
+]
+function cleanConceptoPago(concepto: string): string {
+  for (const p of CONCEPTO_PREFIJOS_REDUNDANTES) {
+    if (concepto.startsWith(p)) return concepto.slice(p.length).trim()
+  }
+  return concepto
+}
+
 // Mapeo UI → DB. Preservamos los valores del enum PagoTipo existentes
 // (anticipo / saldo_anticipo / gasto / recurrente / directo).
 // parcial/final son distinciones de UI; en DB se mapean según la obligación.
@@ -832,6 +849,10 @@ export default function PagosClient({
   // F2.5: columnas para "Pagos registrados" (pagado + anulado).
   // PAGOS-UX-2 (2026-05-25): OP movida a la segunda posición — es el documento
   // operativo. Concepto + Proveedor con truncate + title para no dominar el ancho.
+  // PAGOS-UX-3 (2026-05-25): el concepto persistido suele tener prefijo
+  // redundante ("Pago total de gasto — Constitución"). Tipo + Pago ya lo
+  // expresan, así que en UI mostramos solo lo que viene después del separador.
+  // El concepto original se conserva en title para tooltip y en DB/OP intacto.
   const pagosRegistradosColumns = useMemo<Column<PagoRow>[]>(() => [
     {
       key: 'nro',
@@ -871,19 +892,24 @@ export default function PagosClient({
     {
       key: 'concepto',
       label: 'Concepto',
+      // accessor sobre el concepto completo para que la búsqueda libre siga
+      // matcheando contra el prefijo si el user lo tipea.
       accessor: p => p.concepto,
-      render: p => (
-        <div className="max-w-[180px]">
-          <div className="text-sm font-medium text-gray-900 truncate" title={p.concepto}>
-            {p.concepto}
+      render: p => {
+        const limpio = cleanConceptoPago(p.concepto)
+        return (
+          <div className="max-w-[180px]">
+            <div className="text-sm font-medium text-gray-900 truncate" title={p.concepto}>
+              {limpio}
+            </div>
+            {p.comprobante_url && (
+              <a href={p.comprobante_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+                Ver comprobante
+              </a>
+            )}
           </div>
-          {p.comprobante_url && (
-            <a href={p.comprobante_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
-              Ver comprobante
-            </a>
-          )}
-        </div>
-      ),
+        )
+      },
       type: 'text',
     },
     {
