@@ -2,7 +2,15 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import type { FondoEstado, TipoAporte } from '@/types'
+import { assertRole } from '@/lib/auth/guards'
+import type { FondoEstado, TipoAporte, UserRole } from '@/types'
+
+// Fase 2C.2c (2026-05-25): fondos, aportes y maestros financieros.
+// Operaciones (create/update/registrar) = admin + legacy contador.
+// Destructivas (delete fondo, anular aporte) = solo admin.
+// USER, OPERADOR, SUPERVISOR, REVISOR, VISUALIZADOR explícitamente excluidos.
+const ROLES_FONDOS_OPERACION: UserRole[] = ['admin', 'contador']
+const ROLES_FONDOS_DESTRUCTIVAS: UserRole[] = ['admin']
 
 function cleanDbError(msg: string): string {
   return msg.replace(/^ERROR:\s*/i, '').replace(/\s*CONTEXT:[\s\S]*$/i, '').trim()
@@ -14,6 +22,10 @@ export async function createFondo(data: {
   monto_inicial: number
   descripcion: string | null
 }) {
+  // Fase 2C.2c: estructural. Admin + contador legacy.
+  const guard = await assertRole(ROLES_FONDOS_OPERACION)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('No autenticado')
@@ -62,6 +74,10 @@ export async function updateFondo(
   id: string,
   data: { nombre: string; descripcion: string | null; estado: FondoEstado }
 ) {
+  // Fase 2C.2c: estructural. Admin + contador legacy.
+  const guard = await assertRole(ROLES_FONDOS_OPERACION)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const { error } = await supabase
     .from('fondos')
@@ -144,6 +160,10 @@ export async function getFondoDependencies(id: string): Promise<FondoDepsResult>
 // solo deja de estar disponible para nuevas operaciones.
 export async function deleteFondo(id: string, motivo?: string | null): Promise<FondoActionResult> {
   try {
+    // Fase 2C.2c: destructiva (baja lógica). Solo admin.
+    const guard = await assertRole(ROLES_FONDOS_DESTRUCTIVAS)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const { error } = await supabase.rpc('soft_delete_fondo', {
       fondo_id: id,
@@ -173,6 +193,11 @@ export type AportePayload = {
 }
 
 export async function registrarAporte(data: AportePayload) {
+  // Fase 2C.2c: aporte = financiera. Afecta fondos.saldo_actual + movimientos_fondo.
+  // Admin + contador legacy.
+  const guard = await assertRole(ROLES_FONDOS_OPERACION)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const { error } = await supabase.rpc('fn_registrar_aporte', {
     p_fondo_id:        data.fondo_id,
@@ -204,6 +229,10 @@ export type SocioActionResult =
 
 export async function crearSocio(data: SocioPayload): Promise<SocioActionResult> {
   try {
+    // Fase 2C.2c: maestro socios. Admin + contador legacy.
+    const guard = await assertRole(ROLES_FONDOS_OPERACION)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const auth = await supabase.auth.getUser()
     if (!auth.data?.user) return { ok: false, error: 'No autenticado' }
@@ -250,6 +279,10 @@ export type FinanciadorActionResult =
 
 export async function crearFinanciador(data: FinanciadorPayload): Promise<FinanciadorActionResult> {
   try {
+    // Fase 2C.2c: maestro terceros/financiadores. Admin + contador legacy.
+    const guard = await assertRole(ROLES_FONDOS_OPERACION)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const auth = await supabase.auth.getUser()
     if (!auth.data?.user) return { ok: false, error: 'No autenticado' }
@@ -304,6 +337,11 @@ export type AporteSocioActionResult =
 
 export async function registrarAporteSocio(data: AporteSocioPayload): Promise<AporteSocioActionResult> {
   try {
+    // Fase 2C.2c: aporte socio = financiera. Afecta MP + cuenta corriente terceros.
+    // Admin + contador legacy.
+    const guard = await assertRole(ROLES_FONDOS_OPERACION)
+    if (!guard.ok) return guard
+
     if (!Number.isFinite(data.importe) || data.importe <= 0) {
       return { ok: false, error: 'El importe debe ser mayor a 0.' }
     }
@@ -376,6 +414,11 @@ export async function registrarAporteSocioV2(
   data: AporteSocioV2Payload,
 ): Promise<AporteSocioActionResult> {
   try {
+    // Fase 2C.2c: aporte v2 con imputaciones múltiples. Afecta MP + terceros.
+    // Admin + contador legacy.
+    const guard = await assertRole(ROLES_FONDOS_OPERACION)
+    if (!guard.ok) return guard
+
     // Validaciones de borde (la RPC re-valida server-side, esto es feedback rápido)
     if (!Number.isFinite(data.monto_total) || data.monto_total <= 0) {
       return { ok: false, error: 'monto_total debe ser mayor a 0.' }
@@ -446,6 +489,11 @@ export async function anularAporteSocio(
   motivo?: string | null,
 ): Promise<AnularAporteSocioActionResult> {
   try {
+    // Fase 2C.2c: destructiva/reversa. Genera reversas en movimientos_fondo
+    // y movimientos_financiacion. Solo admin.
+    const guard = await assertRole(ROLES_FONDOS_DESTRUCTIVAS)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const { data: result, error } = await supabase.rpc('anular_aporte_socio', {
       p_aporte_id: aporte_id,
