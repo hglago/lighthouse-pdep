@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import PagosClient, { type PagoRow, type GastoInfo, type OrdenPagoLite } from './PagosClient'
 import type { UserRole, ObligacionPendiente } from '@/types'
-import { updatePago, confirmarPago, anularPago, confirmarPagosBulk, createPagoYConfirmar } from './actions'
+import { anularPago, createPagoYConfirmar } from './actions'
 
 export default async function PagosPage() {
   const supabase = createClient()
@@ -25,11 +25,15 @@ export default async function PagosPage() {
       .select('role')
       .eq('id', user.id)
       .single(),
+    // PAGOS-UX (2026-05-25): excluir borradores. El flujo nuevo crea
+    // pagos siempre confirmados via createPagoYConfirmar. Si quedaran
+    // borradores legacy, no se muestran en la UI principal.
     supabase
       .from('pagos')
       .select(
         'id, codigo, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion, codigo, monto, forma_cancelacion, financiador_id, financiadores:financiador_id(codigo, nombre)), anticipos(concepto)'
       )
+      .neq('estado', 'borrador')
       .order('fecha_pago', { ascending: false }),
     supabase
       .from('fondos')
@@ -77,6 +81,7 @@ export default async function PagosPage() {
       .select(
         'id, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
       )
+      .neq('estado', 'borrador')
       .order('fecha_pago', { ascending: false })
     pagosData = ((fallback.data ?? []) as PagoRaw[]).map(p => ({ ...p, codigo: null }))
   }
@@ -136,10 +141,7 @@ export default async function PagosPage() {
         ordenesPago={ordenesPago}
         role={role}
         onCreatePagoYConfirmar={createPagoYConfirmar}
-        onUpdatePago={updatePago}
-        onConfirmarPago={confirmarPago}
         onAnularPago={anularPago}
-        onConfirmarPagosBulk={confirmarPagosBulk}
       />
     </div>
   )

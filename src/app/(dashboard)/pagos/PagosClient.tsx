@@ -82,11 +82,10 @@ interface Props {
   // OP: array de OPs (un mapa pago_id → OP se construye en cliente).
   ordenesPago: OrdenPagoLite[]
   role: UserRole
+  // PAGOS-UX (2026-05-25): unico camino para crear pagos. El UI ya no
+  // tiene flujo "borrador → confirmar".
   onCreatePagoYConfirmar: (data: PagoPayload) => Promise<{ ok: true } | { ok: false; error: string }>
-  onUpdatePago: (id: string, data: PagoPayload) => Promise<void>
-  onConfirmarPago: (id: string) => Promise<void>
   onAnularPago: (id: string) => Promise<void>
-  onConfirmarPagosBulk: (ids: string[]) => Promise<{ confirmados: string[]; errores: { id: string; error: string }[] }>
 }
 
 interface FormState {
@@ -292,10 +291,7 @@ export default function PagosClient({
   ordenesPago,
   role,
   onCreatePagoYConfirmar,
-  onUpdatePago,
-  onConfirmarPago,
   onAnularPago,
-  onConfirmarPagosBulk,
 }: Props) {
   // OP: lookup pago_id → OrdenPagoLite. Si no existe OP para un pago, el
   // pago.estado != 'pagado' o la migración aún no se aplicó.
@@ -305,9 +301,13 @@ export default function PagosClient({
     return m
   }, [ordenesPago])
   // ── Modal / form state ──────────────────────────────────────────────────────
+  // PAGOS-UX (2026-05-25): se eliminó el flujo "borrador → editar → confirmar".
+  // El modal siempre crea + confirma vía createPagoYConfirmar. `editing` queda
+  // como constante null para que las ramas conditionales del modal siguan
+  // tipando — todas se evalúan al camino "alta nueva" en runtime.
+  const editing: PagoRow | null = null
   const [search, setSearch] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
-  const [editing, setEditing] = useState<PagoRow | null>(null)
   // P4c.2-fix: true cuando el modal se abre desde un botón "Pagar" de fila
   // (obligación pre-determinada, NO se puede cambiar). false cuando se abre
   // desde el botón "Nuevo pago" general (el usuario debe elegir obligación).
@@ -317,11 +317,8 @@ export default function PagosClient({
   const [actionError, setActionError] = useState('')
   const [isPending, startTransition] = useTransition()
 
-  // ── Bulk state (F2.3: la selección de obligaciones se delegó al DataTable) ──
-  const [ocultarConBorrador, setOcultarConBorrador] = useState(false)
+  // Bulk message para acciones masivas en obligaciones (Confirmar selección).
   const [bulkMessage, setBulkMessage] = useState<{ text: string; isError: boolean } | null>(null)
-  // F2.4: la selección de borradores la maneja el DataTable de la nueva sección.
-  const [bulkPagosMessage, setBulkPagosMessage] = useState<{ text: string; isError: boolean } | null>(null)
 
   const canWrite = role === 'admin' || role === 'contador'
   const isAdmin = role === 'admin'
@@ -334,33 +331,9 @@ export default function PagosClient({
     return m
   }, [gastosInfo])
 
-  // ── Derived: which obligations already have a borrador pago ─────────────────
-  // F2.3: memoizado para evitar loop con el onVisibleRowsChange del DataTable.
-  const gastoIdsEnBorrador = useMemo(
-    () => new Set(pagos.filter(p => p.estado === 'borrador' && p.gasto_id).map(p => p.gasto_id as string)),
-    [pagos]
-  )
-  const recurrentesEnBorrador = useMemo(
-    () => new Set(pagos.filter(p => p.estado === 'borrador' && p.gasto_recurrente_id).map(p => p.gasto_recurrente_id as string)),
-    [pagos]
-  )
-
-  const tieneBorrador = useMemo(() => (o: ObligacionPendiente): boolean => {
-    if (o.gasto_id && gastoIdsEnBorrador.has(o.gasto_id)) return true
-    if (o.gasto_recurrente_id && recurrentesEnBorrador.has(o.gasto_recurrente_id)) return true
-    return false
-  }, [gastoIdsEnBorrador, recurrentesEnBorrador])
-
-  const obligacionesMostradas = useMemo(
-    () => (ocultarConBorrador ? obligaciones.filter(o => !tieneBorrador(o)) : obligaciones),
-    [obligaciones, ocultarConBorrador, tieneBorrador]
-  )
-
-  function handleOcultarConBorradorChange(checked: boolean) {
-    setOcultarConBorrador(checked)
-    // F2.3: cambiar el key del DataTable lo remonta y limpia la selección automáticamente
-    // (ver prop `key` en el JSX). No hay setSelectedObIds porque la selección la maneja DataTable.
-  }
+  // PAGOS-UX: sin filtro por borrador — el SELECT de page.tsx ya los excluye,
+  // por lo que las obligaciones siempre se muestran tal como vienen.
+  const obligacionesMostradas = obligaciones
 
   const obligacionesColumns = useMemo<Column<ObligacionPendiente>[]>(() => [
     {
@@ -396,7 +369,6 @@ export default function PagosClient({
       render: o => (
         <div>
           <div className="text-sm font-medium text-gray-900 max-w-[200px] truncate">{o.concepto}</div>
-          {tieneBorrador(o) && <span className="text-xs text-amber-600">En borrador</span>}
         </div>
       ),
       type: 'text',
@@ -446,59 +418,13 @@ export default function PagosClient({
       type: 'number',
       align: 'right',
     },
-  // tieneBorrador depende de gastoIdsEnBorrador/recurrentesEnBorrador (memoizados).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [tieneBorrador])
-
-  // F2.4: la selección y el toggle del header son nativos del DataTable.
-  // handleBulkConfirmar recibe ids + clear desde el slot bulkActions.
-  function handleBulkConfirmar(ids: string[], clear: () => void) {
-    if (ids.length === 0) return
-    const idSet = new Set(ids)
-    const seleccionados = borradoresFiltrados.filter(p => idSet.has(p.id))
-    const totales = new Map<string, number>()
-    for (const p of seleccionados) {
-      totales.set(p.moneda, (totales.get(p.moneda) ?? 0) + p.monto)
-    }
-    const totalesStr = Array.from(totales.entries())
-      .map(([moneda, total]) => formatMonto(total, moneda))
-      .join(' / ')
-    if (
-      !confirm(
-        `Se confirmarán ${ids.length} pago${ids.length !== 1 ? 's' : ''} por un total de ${totalesStr}. Esto impactará los saldos de los fondos.`
-      )
-    ) return
-    setBulkPagosMessage(null)
-    setActionError('')
-    startTransition(async () => {
-      try {
-        const result = await onConfirmarPagosBulk(ids)
-        const nConfirm = result.confirmados.length
-        const nErr = result.errores.length
-        if (nConfirm > 0) {
-          clear()
-          setBulkMessage(null)
-        }
-        const partes: string[] = [
-          `${nConfirm} pago${nConfirm !== 1 ? 's' : ''} confirmado${nConfirm !== 1 ? 's' : ''}.`,
-        ]
-        if (nErr > 0) {
-          const detalle = result.errores.slice(0, 2).map(e => e.error || 'sin mensaje').join('; ')
-          partes.push(`${nErr} error${nErr !== 1 ? 'es' : ''}: ${detalle}`)
-        }
-        setBulkPagosMessage({ text: partes.join(' '), isError: nErr > 0 })
-      } catch (err) {
-        setActionError(err instanceof Error ? err.message : 'Error al confirmar pagos.')
-      }
-    })
-  }
+  ], [])
 
   // ── Obligation-driven helpers ───────────────────────────────────────────────
   function openPagarObligation(ob: ObligacionPendiente) {
     const ui_tipo = deriveUiTipoFromObligation(ob.tipo_obligacion)
     const fondo = fondos.find(f => f.id === ob.fondo_id)
     const gasto = ob.gasto_id ? gastoInfoPorId.get(ob.gasto_id) : undefined
-    setEditing(null)
     setObligacionPreseleccionada(true)            // P4c.2-fix: bloquear cambio de obligación
     setForm({
       ui_tipo,
@@ -641,44 +567,14 @@ export default function PagosClient({
   }
 
   function openNew() {
-    setEditing(null)
     setObligacionPreseleccionada(false)          // P4c.2-fix: usuario debe elegir
     setForm(EMPTY_FORM)
     setFormError('')
     setModalOpen(true)
   }
 
-  function openEdit(p: PagoRow) {
-    setEditing(p)
-    setObligacionPreseleccionada(false)          // P4c.2-fix: edición no usa el flag
-    let ui_tipo: UiTipo = 'directo'
-    if (p.tipo === 'anticipo') ui_tipo = 'anticipo'
-    else if (p.tipo === 'saldo_anticipo') ui_tipo = 'saldo'
-    else if (p.tipo === 'recurrente') ui_tipo = 'recurrente'
-    else if (p.tipo === 'gasto') ui_tipo = 'final'
-    setForm({
-      ui_tipo,
-      modalidad: 'total',
-      obligacion_id: '',
-      fondo_id: p.fondo_id,
-      proveedor_id: p.proveedor_id,
-      gasto_id: p.gasto_id ?? '',
-      gasto_recurrente_id: p.gasto_recurrente_id ?? '',
-      anticipo_id: p.anticipo_id ?? '',
-      concepto: p.concepto,
-      monto: String(p.monto),
-      moneda: p.moneda,
-      fecha_pago: p.fecha_pago,
-      comprobante_url: p.comprobante_url ?? '',
-      notas: p.notas ?? '',
-    })
-    setFormError('')
-    setModalOpen(true)
-  }
-
   function closeModal() {
     setModalOpen(false)
-    setEditing(null)
     setObligacionPreseleccionada(false)          // P4c.2-fix: reset al cerrar
     setForm(EMPTY_FORM)
     setFormError('')
@@ -689,20 +585,18 @@ export default function PagosClient({
     executeSubmit()
   }
 
-  // Crea pagos en estado 'pagado' atómicamente. El flujo "borrador" se eliminó
-  // del UI; legacy borradores siguen siendo confirmables/editables desde la tabla.
-  // P4c.2: alta de pago siempre desde una obligación. Datos del gasto heredados
-  // (fondo, proveedor, concepto, moneda). El usuario solo elige modalidad + importe
-  // parcial + fecha + comprobante + notas.
+  // PAGOS-UX (2026-05-25): el modal SIEMPRE crea + confirma vía
+  // createPagoYConfirmar. Sin flujo borrador, sin edit. El pago queda en
+  // estado 'pagado' y dispara la generación automática de OP.
   function executeSubmit() {
     setFormError('')
     if (!form.fecha_pago) { setFormError('La fecha es requerida.'); return }
 
-    if (!editing) {
-      // Alta nueva: exige obligación seleccionada.
-      if (!form.obligacion_id) {
-        setFormError('Seleccioná una obligación pendiente.'); return
-      }
+    // Alta nueva: exige obligación seleccionada.
+    if (!form.obligacion_id) {
+      setFormError('Seleccioná una obligación pendiente.'); return
+    }
+    {
       const selectedOb = obligaciones.find(o => o.obligacion_id === form.obligacion_id)
       if (!selectedOb) {
         setFormError('La obligación seleccionada ya no está disponible.'); return
@@ -719,21 +613,10 @@ export default function PagosClient({
       if (form.modalidad === 'total' && Math.abs(monto - saldoPendiente) > 0.01) {
         setFormError('Inconsistencia: cambia a "Pago parcial" o reseteá el importe.'); return
       }
-    } else {
-      // Edición de borrador legacy: mantenemos validación mínima.
-      if (!form.fondo_id) { setFormError('Seleccioná un fondo.'); return }
-      if (!form.proveedor_id) { setFormError('Seleccioná un proveedor.'); return }
-      if (!form.concepto.trim()) { setFormError('El concepto es requerido.'); return }
-      const monto = parseFloat(form.monto)
-      if (!form.monto || isNaN(monto) || monto <= 0) {
-        setFormError('El monto debe ser mayor a 0.'); return
-      }
     }
 
     const selectedOb = obligaciones.find(o => o.obligacion_id === form.obligacion_id)
-    const tipo = editing
-      ? editing.tipo
-      : resolveDbTipo(form.ui_tipo, selectedOb?.tipo_obligacion ?? null)
+    const tipo = resolveDbTipo(form.ui_tipo, selectedOb?.tipo_obligacion ?? null)
     const monto = parseFloat(form.monto)
 
     const payload: PagoPayload = {
@@ -753,28 +636,11 @@ export default function PagosClient({
 
     startTransition(async () => {
       try {
-        if (editing) {
-          await onUpdatePago(editing.id, payload)
-        } else {
-          // Alta nueva: siempre se crea ya pagado/confirmado (sin paso por borrador)
-          const result = await onCreatePagoYConfirmar(payload)
-          if (!result.ok) { setFormError(result.error); return }
-        }
+        const result = await onCreatePagoYConfirmar(payload)
+        if (!result.ok) { setFormError(result.error); return }
         closeModal()
       } catch (err: unknown) {
         setFormError(err instanceof Error ? err.message : 'Error al guardar.')
-      }
-    })
-  }
-
-  function handleConfirmar(id: string) {
-    setActionError('')
-    startTransition(async () => {
-      try {
-        await onConfirmarPago(id)
-        setBulkMessage(null)
-      } catch (err: unknown) {
-        setActionError(err instanceof Error ? err.message : 'Error al confirmar pago.')
       }
     })
   }
@@ -958,114 +824,12 @@ export default function PagosClient({
   // estados); el DataTable sub-filtra a no-borradores y aplica su propio sort.
 
   // F2.4: dividir la tabla anterior en dos secciones independientes.
-  //   - Borradores pendientes (DataTable, selectable, bulk Confirmar).
-  //   - Pagos registrados (tabla manual por ahora, solo pagado + anulado;
-  //     F2.5 la migrará a DataTable).
-  // Ambas comparten la misma búsqueda (input arriba de Pagos registrados).
-  const borradoresFiltrados = useMemo(
-    () => filteredPagosBase.filter(p => p.estado === 'borrador'),
-    [filteredPagosBase]
-  )
-  const noBorradoresFiltrados = useMemo(
-    () => filteredPagosBase.filter(p => p.estado !== 'borrador'),
-    [filteredPagosBase]
-  )
+  //   - Pagos registrados (DataTable, pagado + anulado).
+  // PAGOS-UX (2026-05-25): la sección "Borradores pendientes" se eliminó.
+  // El SELECT de page.tsx filtra estado='borrador', así que filteredPagosBase
+  // ya contiene solo pagos confirmados o anulados.
 
-  const borradoresColumns = useMemo<Column<PagoRow>[]>(() => [
-    {
-      key: 'nro',
-      label: 'Nro',
-      accessor: p => p.nro_pago,
-      render: p => <span className="text-xs text-slate-600 whitespace-nowrap font-mono tabular-nums">{p.nro_pago}</span>,
-      type: 'text',
-    },
-    {
-      key: 'fecha',
-      label: 'Fecha',
-      accessor: p => p.fecha_pago,
-      render: p => <span className="text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</span>,
-      type: 'date',
-    },
-    {
-      key: 'concepto',
-      label: 'Concepto',
-      accessor: p => p.concepto,
-      render: p => (
-        <div>
-          <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{p.concepto}</div>
-          {p.comprobante_url && (
-            <a href={p.comprobante_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
-              Ver comprobante
-            </a>
-          )}
-        </div>
-      ),
-      type: 'text',
-    },
-    {
-      key: 'tipo',
-      label: 'Tipo',
-      accessor: p => p.tipo,
-      render: p => (
-        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${TIPO_COLORS[p.tipo]}`}>
-          {TIPO_LABELS[p.tipo]}
-        </span>
-      ),
-      type: 'enum',
-      enumOptions: (Object.keys(TIPO_LABELS) as PagoTipo[]).map(k => ({ value: k, label: TIPO_LABELS[k] })),
-      className: 'hidden sm:table-cell',
-    },
-    {
-      key: 'pago',
-      label: 'Pago',
-      accessor: p => modalidadPorPagoId.get(p.id) ?? 'desconocida',
-      render: p => {
-        const m = modalidadPorPagoId.get(p.id) ?? 'desconocida'
-        return (
-          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${MODALIDAD_COLORS[m]}`}>
-            {MODALIDAD_LABELS[m]}
-          </span>
-        )
-      },
-      type: 'enum',
-      enumOptions: [
-        { value: 'total', label: 'Total' },
-        { value: 'parcial', label: 'Parcial' },
-        { value: 'anticipo', label: '—' },
-        { value: 'desconocida', label: '—' },
-      ],
-      className: 'hidden sm:table-cell',
-    },
-    {
-      key: 'fondo',
-      label: 'Fondo',
-      accessor: p => p.fondos?.nombre ?? '',
-      render: p => p.fondos?.nombre ?? <span className="text-gray-300">—</span>,
-      type: 'text',
-      className: 'hidden md:table-cell',
-    },
-    {
-      key: 'proveedor',
-      label: 'Proveedor',
-      accessor: p => p.proveedores?.nombre ?? '',
-      render: p => p.proveedores?.nombre ?? <span className="text-gray-300">—</span>,
-      type: 'text',
-      className: 'hidden md:table-cell',
-    },
-    {
-      key: 'monto',
-      label: 'Monto',
-      accessor: p => p.monto,
-      render: p => (
-        <span className="whitespace-nowrap font-medium text-gray-900">{formatMonto(p.monto, p.moneda)}</span>
-      ),
-      type: 'number',
-      align: 'right',
-    },
-  ], [modalidadPorPagoId])
-
-  // F2.5: columnas para "Pagos registrados" (pagado + anulado). Espejo de
-  // borradoresColumns pero con columna Estado adicional.
+  // F2.5: columnas para "Pagos registrados" (pagado + anulado).
   const pagosRegistradosColumns = useMemo<Column<PagoRow>[]>(() => [
     {
       key: 'nro',
@@ -1210,20 +974,9 @@ export default function PagosClient({
           <h2 className="text-base font-semibold text-gray-900">
             Obligaciones pendientes
             <span className="ml-2 text-sm font-normal text-gray-400">
-              ({obligaciones.length}{ocultarConBorrador && obligacionesMostradas.length < obligaciones.length
-                ? ` · ${obligacionesMostradas.length} mostradas`
-                : ''})
+              ({obligaciones.length})
             </span>
           </h2>
-          <label className="flex cursor-pointer items-center gap-1.5 text-sm text-gray-500">
-            <input
-              type="checkbox"
-              checked={ocultarConBorrador}
-              onChange={e => handleOcultarConBorradorChange(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-slate-900 focus:ring-slate-500"
-            />
-            Ocultar con borrador
-          </label>
         </div>
 
         {/* Bulk result message — externo al DataTable */}
@@ -1234,17 +987,11 @@ export default function PagosClient({
         )}
 
         <DataTable<ObligacionPendiente>
-          // Cambiar el key al togglear "Ocultar con borrador" remonta el DataTable
-          // y limpia la selección automáticamente (preserva la UX previa).
-          key={ocultarConBorrador ? 'sin-borrador' : 'todo'}
           rows={obligacionesMostradas}
           getRowId={o => o.obligacion_id}
           selectable={canWrite}
           initialSort={{ key: 'prioridad', dir: 'asc' }}
-          rowClassName={o => (tieneBorrador(o) ? 'opacity-60' : '')}
-          emptyMessage={obligaciones.length === 0
-            ? 'No hay obligaciones pendientes.'
-            : 'Todas las obligaciones tienen pago en borrador. Desmarcá "Ocultar con borrador" para verlas.'}
+          emptyMessage="No hay obligaciones pendientes."
           columns={obligacionesColumns}
           rowActions={canWrite ? (o) => (
             <button
@@ -1284,76 +1031,10 @@ export default function PagosClient({
         />
       </div>
 
-      {/* ── SECTION 2: Borradores pendientes (F2.4) ─────────────────────────── */}
-      {borradoresFiltrados.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-base font-semibold text-gray-900">
-            Borradores pendientes
-            <span className="ml-2 text-sm font-normal text-gray-400">({borradoresFiltrados.length})</span>
-          </h2>
+      {/* PAGOS-UX (2026-05-25): la sección "Borradores pendientes" se eliminó.
+          createPagoYConfirmar deja el pago directamente en estado 'pagado'. */}
 
-          {bulkPagosMessage && (
-            <div className={`rounded-lg border px-3 py-2 text-sm ${bulkPagosMessage.isError ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-              {bulkPagosMessage.text}
-            </div>
-          )}
-
-          <DataTable<PagoRow>
-            rows={borradoresFiltrados}
-            getRowId={p => p.id}
-            selectable={canWrite}
-            initialSort={{ key: 'fecha', dir: 'desc' }}
-            emptyMessage="No hay borradores pendientes."
-            columns={borradoresColumns}
-            rowActions={canWrite ? (p) => (
-              <>
-                <button
-                  onClick={() => openEdit(p)}
-                  disabled={isPending}
-                  className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
-                >
-                  Editar
-                </button>
-                <button
-                  onClick={() => handleConfirmar(p.id)}
-                  disabled={isPending}
-                  className="rounded px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50"
-                >
-                  Confirmar
-                </button>
-              </>
-            ) : undefined}
-            bulkActions={canWrite ? (selectedIds, clear) => {
-              const idSet = selectedIds
-              const seleccionados = borradoresFiltrados.filter(p => idSet.has(p.id))
-              const totales = new Map<string, number>()
-              for (const p of seleccionados) {
-                totales.set(p.moneda, (totales.get(p.moneda) ?? 0) + p.monto)
-              }
-              const ids = Array.from(selectedIds)
-              return (
-                <>
-                  {Array.from(totales.entries()).map(([moneda, total]) => (
-                    <span key={moneda} className="text-sm font-semibold text-emerald-900">
-                      {formatMonto(total, moneda)}
-                    </span>
-                  ))}
-                  <span className="text-xs font-medium text-amber-700">Confirmar impactará saldos</span>
-                  <button
-                    onClick={() => handleBulkConfirmar(ids, clear)}
-                    disabled={isPending}
-                    className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 transition-colors disabled:opacity-50 whitespace-nowrap"
-                  >
-                    Confirmar pagos seleccionados ({ids.length})
-                  </button>
-                </>
-              )
-            } : undefined}
-          />
-        </div>
-      )}
-
-      {/* ── SECTION 3: Pagos registrados (confirmados + anulados) ───────────── */}
+      {/* ── SECTION 2: Pagos registrados (confirmados + anulados) ───────────── */}
       <div className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-base font-semibold text-gray-900">
@@ -1393,7 +1074,7 @@ export default function PagosClient({
         )}
 
         <DataTable<PagoRow>
-          rows={noBorradoresFiltrados}
+          rows={filteredPagosBase}
           getRowId={p => p.id}
           initialSort={{ key: 'fecha', dir: 'desc' }}
           emptyMessage={search ? 'Sin resultados para esa búsqueda.' : 'No hay pagos registrados.'}
@@ -1439,20 +1120,11 @@ export default function PagosClient({
                  Editables: fecha, modalidad, importe (solo parcial), comprobante, notas.
                  Modo edición (borrador legacy) mantiene un fallback abajo. */}
             {(() => {
-              // Datos derivados para el resumen
-              const ob = !editing && form.obligacion_id
+              // PAGOS-UX (2026-05-25): solo alta nueva. Sin gastoDelPagoEditado.
+              const ob = form.obligacion_id
                 ? obligaciones.find(o => o.obligacion_id === form.obligacion_id)
                 : null
               const gastoDeOb = ob?.gasto_id ? gastoInfoPorId.get(ob.gasto_id) : undefined
-              const gastoDelPagoEditado = editing?.gastos
-                ? {
-                    codigo: editing.gastos.codigo ?? null,
-                    descripcion: editing.gastos.descripcion,
-                    monto: editing.gastos.monto,
-                    forma_cancelacion: editing.gastos.forma_cancelacion,
-                    financiadores: editing.gastos.financiadores,
-                  }
-                : null
               const gastoView = ob && gastoDeOb
                 ? {
                     codigo: gastoDeOb.codigo,
@@ -1461,7 +1133,7 @@ export default function PagosClient({
                     forma_cancelacion: gastoDeOb.forma_cancelacion,
                     financiadores: gastoDeOb.financiadores,
                   }
-                : gastoDelPagoEditado
+                : null
               const canalLabel = gastoView
                 ? gastoView.forma_cancelacion === 'financiador' && gastoView.financiadores
                   ? `Tercero de la red — ${gastoView.financiadores.codigo ?? 'Sin código'} — ${gastoView.financiadores.nombre}`
@@ -1473,7 +1145,7 @@ export default function PagosClient({
               const saldoPendiente = ob ? Number(ob.monto_pendiente) : 0
               const pagado = totalGasto - saldoPendiente
               const parteLabel = ob ? OBLIGACION_TIPO_LABELS[ob.tipo_obligacion] : null
-              const proveedorNombre = ob?.proveedor_nombre ?? editing?.proveedores?.nombre ?? '—'
+              const proveedorNombre = ob?.proveedor_nombre ?? '—'
               return (
                 <form onSubmit={handleSubmit} className="space-y-4">
                   {/* P4c.2-fix: dos modos de apertura.
