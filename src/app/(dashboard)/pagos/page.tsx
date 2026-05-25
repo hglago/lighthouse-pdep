@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import PagosClient, { type PagoRow, type GastoInfo } from './PagosClient'
+import PagosClient, { type PagoRow, type GastoInfo, type OrdenPagoLite } from './PagosClient'
 import type { UserRole, ObligacionPendiente } from '@/types'
 import { updatePago, confirmarPago, anularPago, confirmarPagosBulk, createPagoYConfirmar } from './actions'
 
@@ -18,6 +18,7 @@ export default async function PagosPage() {
     proveedoresResult,
     obligacionesResult,
     gastosInfoResult,
+    ordenesPagoResult,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -53,6 +54,13 @@ export default async function PagosPage() {
       .select('id, codigo, monto, descripcion, forma_cancelacion, financiador_id, financiadores:financiador_id(codigo, nombre)')
       .is('deleted_at', null)
       .in('estado', ['aprobado', 'pagado_parcial']),
+
+    // OP (2026-05-25): Ordenes de Pago para mostrar nro_op en tabla y action
+    // Ver OP. Tolerante: si la tabla aún no existe (migración pendiente),
+    // array vacío y la columna muestra "—".
+    supabase
+      .from('ordenes_pago')
+      .select('id, codigo, pago_id, estado'),
   ])
 
   // Tolerancia: si pagos.codigo (P######) no existe todavía en DB (migración pendiente),
@@ -95,6 +103,14 @@ export default async function PagosPage() {
     })) as unknown as typeof gastosInfoResult.data
   }
 
+  // OP: tolerancia D4. Si tabla ordenes_pago no existe (PGRST205 / 42P01),
+  // pasamos array vacío.
+  if (ordenesPagoResult.error) {
+    console.warn('[pagos] ordenes_pago no disponible aún; columna OP vacía.',
+      ordenesPagoResult.error.code, ordenesPagoResult.error.message)
+  }
+  const ordenesPago = (ordenesPagoResult.data ?? []) as OrdenPagoLite[]
+
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const pagos = (pagosData ?? []) as unknown as PagoRow[]
   const fondos = (fondosResult.data ?? []) as { id: string; nombre: string; moneda: string }[]
@@ -117,6 +133,7 @@ export default async function PagosPage() {
         proveedores={proveedores}
         obligaciones={obligaciones}
         gastosInfo={gastosInfo}
+        ordenesPago={ordenesPago}
         role={role}
         onCreatePagoYConfirmar={createPagoYConfirmar}
         onUpdatePago={updatePago}

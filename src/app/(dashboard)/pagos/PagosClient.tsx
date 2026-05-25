@@ -1,11 +1,21 @@
 'use client'
 
 import { useState, useTransition, useMemo } from 'react'
-import type { UserRole, PagoEstado, PagoTipo, ObligacionPendiente, ObligacionTipo } from '@/types'
+import type { UserRole, PagoEstado, PagoTipo, ObligacionPendiente, ObligacionTipo, OrdenPagoEstado } from '@/types'
 import type { PagoPayload } from './actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
 import DataTable, { type Column } from '@/components/DataTable'
 import RowActionMenu, { type RowActionItem } from '@/components/RowActionMenu'
+
+// OP (2026-05-25): proyección mínima de la OP para mostrar codigo+estado en la
+// fila del pago y habilitar "Ver OP". El detalle completo vive en
+// /ordenes-pago/[codigo].
+export interface OrdenPagoLite {
+  id: string
+  codigo: string
+  pago_id: string
+  estado: OrdenPagoEstado
+}
 
 export interface PagoRow {
   id: string
@@ -69,6 +79,8 @@ interface Props {
   proveedores: { id: string; nombre: string }[]
   obligaciones: ObligacionPendiente[]
   gastosInfo: GastoInfo[]
+  // OP: array de OPs (un mapa pago_id → OP se construye en cliente).
+  ordenesPago: OrdenPagoLite[]
   role: UserRole
   onCreatePagoYConfirmar: (data: PagoPayload) => Promise<{ ok: true } | { ok: false; error: string }>
   onUpdatePago: (id: string, data: PagoPayload) => Promise<void>
@@ -277,6 +289,7 @@ export default function PagosClient({
   proveedores,
   obligaciones,
   gastosInfo,
+  ordenesPago,
   role,
   onCreatePagoYConfirmar,
   onUpdatePago,
@@ -284,6 +297,13 @@ export default function PagosClient({
   onAnularPago,
   onConfirmarPagosBulk,
 }: Props) {
+  // OP: lookup pago_id → OrdenPagoLite. Si no existe OP para un pago, el
+  // pago.estado != 'pagado' o la migración aún no se aplicó.
+  const opPorPagoId = useMemo(() => {
+    const m = new Map<string, OrdenPagoLite>()
+    for (const op of ordenesPago) m.set(op.pago_id, op)
+    return m
+  }, [ordenesPago])
   // ── Modal / form state ──────────────────────────────────────────────────────
   const [search, setSearch] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
@@ -804,6 +824,7 @@ export default function PagosClient({
       seccion: 'Obligación pendiente',
       estado: 'Pendiente',
       nro_pago: '',
+      nro_op: '',
       fecha: o.fecha_vencimiento ?? o.fecha_gasto ?? '',
       tipo: OBLIGACION_TIPO_LABELS[o.tipo_obligacion] ?? o.tipo_obligacion,
       pago: '—',
@@ -819,10 +840,13 @@ export default function PagosClient({
 
     const filasPagos = filteredPagosBase.map(p => {
       const esBorrador = p.estado === 'borrador'
+      const op = opPorPagoId.get(p.id)
       return {
         seccion: esBorrador ? 'Borrador pendiente' : 'Pago registrado',
         estado: ESTADO_LABELS[p.estado] ?? p.estado,
         nro_pago: p.nro_pago,
+        // OP: número de OP del pago confirmado. Vacío en borradores.
+        nro_op: op?.codigo ?? '',
         fecha: p.fecha_pago,
         tipo: TIPO_LABELS[p.tipo] ?? p.tipo,
         pago: MODALIDAD_LABELS[modalidadPorPagoId.get(p.id) ?? 'desconocida'],
@@ -1149,7 +1173,30 @@ export default function PagosClient({
       ],
       className: 'hidden lg:table-cell',
     },
-  ], [modalidadPorPagoId])
+    {
+      // OP (2026-05-25): N° OP del pago + badge de estado anulada si aplica.
+      // Si no hay OP (migración pendiente o pago pre-OP), muestra "—".
+      key: 'op',
+      label: 'OP',
+      accessor: p => opPorPagoId.get(p.id)?.codigo ?? '',
+      render: p => {
+        const op = opPorPagoId.get(p.id)
+        if (!op) return <span className="text-gray-300">—</span>
+        return (
+          <span className="inline-flex items-center gap-1 whitespace-nowrap">
+            <span className="font-mono text-xs text-slate-700">{op.codigo}</span>
+            {op.estado === 'anulada' && (
+              <span className="inline-flex rounded-full px-1.5 py-0 text-[10px] font-medium bg-red-50 text-red-700 ring-1 ring-red-200">
+                anulada
+              </span>
+            )}
+          </span>
+        )
+      },
+      type: 'text',
+      className: 'hidden md:table-cell',
+    },
+  ], [modalidadPorPagoId, opPorPagoId])
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -1351,20 +1398,31 @@ export default function PagosClient({
           initialSort={{ key: 'fecha', dir: 'desc' }}
           emptyMessage={search ? 'Sin resultados para esa búsqueda.' : 'No hay pagos registrados.'}
           columns={pagosRegistradosColumns}
-          rowActions={isAdmin ? (p) => {
+          rowActions={(p) => {
+            // OP (2026-05-25): "Ver OP" disponible para todos los roles si la
+            // OP existe. "Anular" solo admin.
             const items: RowActionItem[] = []
-            let tooltipBloqueo: string | undefined
-            if (p.estado === 'pagado') {
+            const op = opPorPagoId.get(p.id)
+            if (op) {
+              items.push({
+                label: `Ver OP ${op.codigo}`,
+                onClick: () => window.open(`/ordenes-pago/${op.codigo}`, '_blank'),
+              })
+            }
+            if (isAdmin && p.estado === 'pagado') {
               items.push({
                 label: 'Anular',
                 variant: 'danger',
                 onClick: () => handleAnular(p.id, p.concepto),
               })
-            } else if (p.estado === 'anulado') {
-              tooltipBloqueo = 'Pago ya anulado.'
+            }
+            let tooltipBloqueo: string | undefined
+            if (items.length === 0) {
+              if (p.estado === 'anulado') tooltipBloqueo = 'Pago anulado.'
+              else if (!op) tooltipBloqueo = 'OP aún no generada.'
             }
             return <RowActionMenu items={items} emptyTooltip={tooltipBloqueo} />
-          } : undefined}
+          }}
         />
       </div>
 

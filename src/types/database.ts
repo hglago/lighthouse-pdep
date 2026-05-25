@@ -423,6 +423,42 @@ export interface GoogleAllowedUser {
   created_by: string | null
 }
 
+// OP (2026-05-25): Orden de Pago — snapshot generado al confirmar pago.
+export type OrdenPagoEstado    = 'emitida' | 'anulada'
+export type OrdenPagoModalidad = 'total' | 'parcial' | 'no_aplica'
+export type OrdenPagoCanal     = 'risa' | 'tercero'
+
+export interface OrdenPago {
+  id: string
+  codigo: string                     // OP-YYYY-NNNNN (reset anual)
+  pago_id: string
+  gasto_id: string | null
+  proveedor_id: string | null
+  fecha_emision: string              // timestamptz
+  fecha_pago: string                 // date
+  moneda: string
+  importe: number
+  estado: OrdenPagoEstado
+  modalidad: OrdenPagoModalidad
+  canal_pago: OrdenPagoCanal
+  // Snapshots
+  tercero_codigo: string | null
+  tercero_nombre: string | null
+  concepto: string | null
+  proveedor_nombre: string | null
+  nro_gasto: string | null
+  nro_pago: string | null
+  tipo_gasto_codigo: string | null
+  tipo_gasto_nombre: string | null
+  periodo_analitico: string | null
+  saldo_pendiente: number | null
+  observaciones: string | null
+  created_by: string | null
+  created_at: string
+  anulada_en: string | null
+  anulada_por: string | null
+}
+
 export type MovimientoTipo = 'debito' | 'credito'
 
 export interface MovimientoFondo {

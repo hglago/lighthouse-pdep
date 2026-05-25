@@ -16,6 +16,8 @@ export type {
   PosicionGlobalRisaRow, PosicionGlobalDetalleFondo, PosicionGlobalDetalleTercero,
   // TIPOS-GASTO (2026-05-25): clasificación analítica de gastos
   TipoGasto,
+  // OP (2026-05-25): Orden de Pago — snapshot al confirmar
+  OrdenPago, OrdenPagoEstado, OrdenPagoModalidad, OrdenPagoCanal,
 } from './database'
 
 export const ROLE_LABELS: Record<string, string> = {
