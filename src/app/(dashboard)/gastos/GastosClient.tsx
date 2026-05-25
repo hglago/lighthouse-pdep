@@ -2285,6 +2285,10 @@ export default function GastosClient({
           datos readonly + bloque de archivo. No expone inputs financieros. */}
       {comprobanteOnlyGasto && (() => {
         const target = gastos.find(g => g.id === comprobanteOnlyGasto.id) ?? comprobanteOnlyGasto
+        // UX-GASTOS-COMPROBANTE-MODAL-ESTADO (2026-05-25): reusar el mismo
+        // helper visual que la tabla para evitar divergencia (aprobado con
+        // pagos parciales → "Pagado parcial").
+        const ui = estadoUI(target)
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
             <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
@@ -2310,8 +2314,8 @@ export default function GastosClient({
                 )}
                 <div className="flex justify-between gap-3">
                   <span className="text-gray-500">Estado:</span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ESTADO_COLORS[target.estado] ?? 'bg-gray-100 text-gray-600'}`}>
-                    {ESTADO_LABELS[target.estado] ?? target.estado}
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ui.cls}`}>
+                    {ui.label}
                   </span>
                 </div>
                 <div className="flex justify-between gap-3">
