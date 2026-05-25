@@ -830,12 +830,35 @@ export default function PagosClient({
   // ya contiene solo pagos confirmados o anulados.
 
   // F2.5: columnas para "Pagos registrados" (pagado + anulado).
+  // PAGOS-UX-2 (2026-05-25): OP movida a la segunda posición — es el documento
+  // operativo. Concepto + Proveedor con truncate + title para no dominar el ancho.
   const pagosRegistradosColumns = useMemo<Column<PagoRow>[]>(() => [
     {
       key: 'nro',
       label: 'Nro',
       accessor: p => p.nro_pago,
       render: p => <span className="text-xs text-slate-600 whitespace-nowrap font-mono tabular-nums">{p.nro_pago}</span>,
+      type: 'text',
+    },
+    {
+      // OP visible siempre (sin hidden) — es la columna clave operativa.
+      key: 'op',
+      label: 'OP',
+      accessor: p => opPorPagoId.get(p.id)?.codigo ?? '',
+      render: p => {
+        const op = opPorPagoId.get(p.id)
+        if (!op) return <span className="text-gray-300">—</span>
+        return (
+          <span className="inline-flex items-center gap-1 whitespace-nowrap">
+            <span className="font-mono text-xs text-slate-700">{op.codigo}</span>
+            {op.estado === 'anulada' && (
+              <span className="inline-flex rounded-full px-1.5 py-0 text-[10px] font-medium bg-red-50 text-red-700 ring-1 ring-red-200">
+                anulada
+              </span>
+            )}
+          </span>
+        )
+      },
       type: 'text',
     },
     {
@@ -850,8 +873,10 @@ export default function PagosClient({
       label: 'Concepto',
       accessor: p => p.concepto,
       render: p => (
-        <div>
-          <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{p.concepto}</div>
+        <div className="max-w-[180px]">
+          <div className="text-sm font-medium text-gray-900 truncate" title={p.concepto}>
+            {p.concepto}
+          </div>
           {p.comprobante_url && (
             <a href={p.comprobante_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
               Ver comprobante
@@ -901,13 +926,17 @@ export default function PagosClient({
       accessor: p => p.fondos?.nombre ?? '',
       render: p => p.fondos?.nombre ?? <span className="text-gray-300">—</span>,
       type: 'text',
-      className: 'hidden md:table-cell',
+      className: 'hidden lg:table-cell',
     },
     {
       key: 'proveedor',
       label: 'Proveedor',
       accessor: p => p.proveedores?.nombre ?? '',
-      render: p => p.proveedores?.nombre ?? <span className="text-gray-300">—</span>,
+      render: p => {
+        const nombre = p.proveedores?.nombre
+        if (!nombre) return <span className="text-gray-300">—</span>
+        return <span className="block max-w-[160px] truncate" title={nombre}>{nombre}</span>
+      },
       type: 'text',
       className: 'hidden md:table-cell',
     },
@@ -936,29 +965,6 @@ export default function PagosClient({
         { value: 'anulado', label: ESTADO_LABELS.anulado },
       ],
       className: 'hidden lg:table-cell',
-    },
-    {
-      // OP (2026-05-25): N° OP del pago + badge de estado anulada si aplica.
-      // Si no hay OP (migración pendiente o pago pre-OP), muestra "—".
-      key: 'op',
-      label: 'OP',
-      accessor: p => opPorPagoId.get(p.id)?.codigo ?? '',
-      render: p => {
-        const op = opPorPagoId.get(p.id)
-        if (!op) return <span className="text-gray-300">—</span>
-        return (
-          <span className="inline-flex items-center gap-1 whitespace-nowrap">
-            <span className="font-mono text-xs text-slate-700">{op.codigo}</span>
-            {op.estado === 'anulada' && (
-              <span className="inline-flex rounded-full px-1.5 py-0 text-[10px] font-medium bg-red-50 text-red-700 ring-1 ring-red-200">
-                anulada
-              </span>
-            )}
-          </span>
-        )
-      },
-      type: 'text',
-      className: 'hidden md:table-cell',
     },
   ], [modalidadPorPagoId, opPorPagoId])
 
