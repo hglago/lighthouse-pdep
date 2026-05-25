@@ -219,6 +219,7 @@ export default function FondosClient({
   //   - terceroDetalleId: id del tercero abierto en modal de detalle, o null.
   //   - aporteDetalleId: id del aporte abierto en modal de detalle, o null.
   const [risaCollapsed, setRisaCollapsed] = useState(true)
+  const [aportesCollapsed, setAportesCollapsed] = useState(true)
   const [terceroDetalleId, setTerceroDetalleId] = useState<string | null>(null)
   const [aporteDetalleId, setAporteDetalleId] = useState<string | null>(null)
 
@@ -1463,21 +1464,32 @@ export default function FondosClient({
         />
       </div>
 
-      {/* ── Aportes de socios ─────────────────────────────────────────────── */}
+      {/* ── Aportes de socios — collapse por default (UX-DETAILS-2c) ─────── */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-base font-semibold text-gray-900">Aportes de socios</h3>
-          <input
-            type="text"
-            value={searchAportes}
-            onChange={e => setSearchAportes(e.target.value)}
-            placeholder="Buscar… (APO-###, socio, tercero, destino)"
-            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            {!aportesCollapsed && (
+              <input
+                type="text"
+                value={searchAportes}
+                onChange={e => setSearchAportes(e.target.value)}
+                placeholder="Buscar… (APO-###, socio, tercero, destino)"
+                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => setAportesCollapsed(prev => !prev)}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap"
+            >
+              {aportesCollapsed ? '▸ Ver aportes' : '▾ Ocultar aportes'}
+            </button>
+          </div>
         </div>
 
         {/* UX-DETAILS-2: resumen acumulado de aportes (activos por moneda + counts).
-            Los anulados NO suman al total activo. */}
+            Los anulados NO suman al total activo. Siempre visible. */}
         {aportes.length > 0 && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
             <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
@@ -1506,35 +1518,37 @@ export default function FondosClient({
           </div>
         )}
 
-        <DataTable<AporteFondoRow>
-          rows={aportes}
-          columns={aportesColumns}
-          getRowId={a => a.id}
-          searchTerm={searchAportes}
-          searchKeys={['codigo', 'socio', 'destino', 'observaciones', 'moneda']}
-          initialSort={{ key: 'codigo', dir: 'desc' }}
-          rowClassName={a => a.deleted_at ? 'opacity-60' : ''}
-          emptyMessage={
-            aportes.length === 0
-              ? 'No hay aportes registrados.'
-              : 'No hay aportes que coincidan con los filtros.'
-          }
-          rowActions={(a) => {
-            // UX-DETAILS: "Ver detalle" disponible para todos los roles (read-only).
-            // "Anular" solo si canWrite y aporte no anulado.
-            const items: RowActionItem[] = [
-              { label: 'Ver detalle', onClick: () => setAporteDetalleId(a.id) },
-            ]
-            if (canWrite && !a.deleted_at) {
-              items.push({
-                label: 'Anular',
-                variant: 'danger',
-                onClick: () => handleAnularAporte(a.id, a.codigo),
-              })
+        {!aportesCollapsed && (
+          <DataTable<AporteFondoRow>
+            rows={aportes}
+            columns={aportesColumns}
+            getRowId={a => a.id}
+            searchTerm={searchAportes}
+            searchKeys={['codigo', 'socio', 'destino', 'observaciones', 'moneda']}
+            initialSort={{ key: 'codigo', dir: 'desc' }}
+            rowClassName={a => a.deleted_at ? 'opacity-60' : ''}
+            emptyMessage={
+              aportes.length === 0
+                ? 'No hay aportes registrados.'
+                : 'No hay aportes que coincidan con los filtros.'
             }
-            return <RowActionMenu items={items} />
-          }}
-        />
+            rowActions={(a) => {
+              // UX-DETAILS: "Ver detalle" disponible para todos los roles (read-only).
+              // "Anular" solo si canWrite y aporte no anulado.
+              const items: RowActionItem[] = [
+                { label: 'Ver detalle', onClick: () => setAporteDetalleId(a.id) },
+              ]
+              if (canWrite && !a.deleted_at) {
+                items.push({
+                  label: 'Anular',
+                  variant: 'danger',
+                  onClick: () => handleAnularAporte(a.id, a.codigo),
+                })
+              }
+              return <RowActionMenu items={items} />
+            }}
+          />
+        )}
       </div>
 
       {/* ── Socios ──────────────────────────────────────────────────────────── */}
