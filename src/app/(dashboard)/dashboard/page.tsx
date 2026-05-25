@@ -36,6 +36,17 @@ export default async function DashboardPage() {
   const auth = await supabase.auth.getUser()
   if (!auth.data?.user) redirect('/login')
 
+  // Fase 2C.3 (2026-05-25): dashboard restringido a admin. Otros roles
+  // (incluidos legacy contador/revisor/visualizador y nuevos supervisor/
+  // operador/user) son redirigidos a /gastos. Patrón page-guard
+  // consistente con /usuarios/page.tsx.
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', auth.data.user.id)
+    .single()
+  if (!profile || profile.role !== 'admin') redirect('/gastos')
+
   const today = new Date()
   const isoToday = today.toISOString().slice(0, 10)
   const isoIn7 = new Date(today.getTime() + 7 * 86400000).toISOString().slice(0, 10)

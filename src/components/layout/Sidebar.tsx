@@ -36,7 +36,8 @@ function IconUsers() {
 type NavItem = { label: string; href: string; Icon: React.ComponentType; requiresAdmin?: boolean }
 
 const navigation: NavItem[] = [
-  { label: 'Dashboard', href: '/dashboard', Icon: IconDashboard },
+  // Fase 2C.3 (2026-05-25): Dashboard solo admin (mismo gate que /usuarios).
+  { label: 'Dashboard', href: '/dashboard', Icon: IconDashboard, requiresAdmin: true },
   { label: 'Fondos', href: '/fondos', Icon: IconFondos },
   { label: 'Gastos', href: '/gastos', Icon: IconGastos },
   { label: 'Pagos', href: '/pagos', Icon: IconPagos },
