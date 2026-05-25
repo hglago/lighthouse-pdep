@@ -37,3 +37,10 @@ client_secret_*.apps.googleusercontent.com.json
 *.tsbuildinfo
 next-env.d.ts
 .claude/settings.local.json
+
+# Backups productivos — NUNCA commitear datos reales
+backups/
+doc/backups/
+*.dump
+*.backup
+*.sql.gz
