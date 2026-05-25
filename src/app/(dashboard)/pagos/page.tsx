@@ -76,10 +76,13 @@ export default async function PagosPage() {
     /codigo/.test(pagosResult.error.message ?? '')
   ) {
     console.warn('[pagos] columna codigo no disponible aún; retry con SELECT base:', pagosResult.error.message)
+    // UX-PAGOS-CANAL-COLUMNA-fix (2026-05-25): alinear el join `gastos` con el
+     // SELECT primario. Antes este fallback descartaba forma_cancelacion +
+     // financiadores, lo que rompía la columna Canal en /pagos.
     const fallback = await supabase
       .from('pagos')
       .select(
-        'id, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion), anticipos(concepto)'
+        'id, nro_pago, fondo_id, proveedor_id, gasto_id, anticipo_id, gasto_recurrente_id, tipo, concepto, monto, moneda, fecha_pago, comprobante_url, estado, notas, created_by, anulado_por, anulado_en, created_at, fondos(nombre, moneda), proveedores(nombre), gastos(descripcion, codigo, monto, forma_cancelacion, financiador_id, financiadores:financiador_id(codigo, nombre)), anticipos(concepto)'
       )
       .neq('estado', 'borrador')
       .order('fecha_pago', { ascending: false })

@@ -309,6 +309,10 @@ export default function GastosClient({
   const [comprobanteError, setComprobanteError] = useState('')
   const [comprobanteUploading, setComprobanteUploading] = useState(false)
   const [pendingComprobante, setPendingComprobante] = useState<File | null>(null)
+  // UX-GASTOS-COMPROBANTE-PAGADO-2 (2026-05-25): mini-modal dedicado para
+  // gestionar el comprobante de un gasto pagado/pagado_parcial sin abrir el
+  // modal de edición (que expondría inputs financieros editables).
+  const [comprobanteOnlyGasto, setComprobanteOnlyGasto] = useState<GastoRow | null>(null)
 
   // ── Quick crear proveedor (desde modal de gasto) ───────────────────────────
   const [localExtraProveedores, setLocalExtraProveedores] = useState<ProveedorParaGasto[]>([])
@@ -535,23 +539,9 @@ export default function GastosClient({
                 Servicio por hora
               </span>
             )}
-            {g.forma_cancelacion === 'financiador' ? (
-              <span
-                title="Gasto afrontado por un tercero de la red"
-                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-orange-100 text-orange-800"
-              >
-                {g.financiadores
-                  ? `Tercero: ${g.financiadores.codigo ?? 'Sin código'} ${g.financiadores.nombre}`
-                  : 'Tercero'}
-              </span>
-            ) : (
-              <span
-                title="Gasto afrontado con medios propios RISA"
-                className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-slate-100 text-slate-700"
-              >
-                Medios propios RISA
-              </span>
-            )}
+            {/* UX-GASTOS-CANAL-COLUMNA (2026-05-25): el badge de canal
+                (RISA / tercero) se movió a su propia columna después de
+                Proveedor. Acá solo quedan los badges de Servicio y Recurrente. */}
             {g.recurrente_id && (
               <span
                 title={`Generado automáticamente desde recurrente${g.periodo ? ` — período ${g.periodo}` : ''}`}
@@ -581,6 +571,32 @@ export default function GastosClient({
       render: g => g.proveedores?.nombre ?? <span className="text-gray-300">—</span>,
       type: 'text',
       className: 'hidden md:table-cell',
+    },
+    {
+      // UX-GASTOS-CANAL-COLUMNA (2026-05-25): canal de pago (RISA o tercero)
+      // sacado del badge debajo de Concepto a su propia columna.
+      key: 'canal',
+      label: 'Canal',
+      accessor: g => g.forma_cancelacion === 'financiador'
+        ? (g.financiadores?.nombre ?? g.financiadores?.codigo ?? 'Tercero')
+        : 'RISA',
+      render: g => g.forma_cancelacion === 'financiador' ? (
+        <span
+          title="Gasto afrontado por un tercero de la red"
+          className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-orange-100 text-orange-800"
+        >
+          {g.financiadores?.nombre ?? g.financiadores?.codigo ?? 'Tercero'}
+        </span>
+      ) : (
+        <span
+          title="Gasto afrontado con medios propios RISA"
+          className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-slate-100 text-slate-700"
+        >
+          RISA
+        </span>
+      ),
+      type: 'text',
+      className: 'hidden sm:table-cell',
     },
     {
       // TIPOS-GASTO: columna analítica con filtro enum por codigo.
@@ -1088,9 +1104,17 @@ export default function GastosClient({
 
   // ─── Comprobantes ────────────────────────────────────────────────────────────
 
+  // UX-GASTOS-COMPROBANTE-PAGADO-2: resolver el gasto target del comprobante.
+  // Prioridad: mini-modal (pagado/pagado_parcial) > edit modal grande.
+  function getActiveComprobanteGastoId(): string | null {
+    if (comprobanteOnlyGasto) return comprobanteOnlyGasto.id
+    if (editing?.tipo === 'gasto') return editing.row.id
+    return null
+  }
+
   async function handleUploadComprobante(file: File) {
-    if (!editing || editing.tipo !== 'gasto') return
-    const id = editing.row.id
+    const id = getActiveComprobanteGastoId()
+    if (!id) return
 
     if (!/\.(pdf|jpe?g|png|webp)$/i.test(file.name)) {
       setComprobanteError('Extensión no permitida. Aceptados: PDF, JPG, JPEG, PNG, WEBP.')
@@ -1111,6 +1135,8 @@ export default function GastosClient({
         .upload(path, file, { upsert: true, contentType: file.type })
       if (upErr) throw new Error(upErr.message)
       await onSetComprobante(id, { path, mime: file.type, nombre: file.name, size: file.size })
+      // Auto-close mini-modal después de upload exitoso.
+      if (comprobanteOnlyGasto) setComprobanteOnlyGasto(null)
     } catch (err) {
       setComprobanteError(err instanceof Error ? err.message : 'Error al subir.')
     } finally {
@@ -1134,12 +1160,15 @@ export default function GastosClient({
   }
 
   function handleRemoveComprobante() {
-    if (!editing || editing.tipo !== 'gasto') return
+    const id = getActiveComprobanteGastoId()
+    if (!id) return
     if (!confirm('¿Quitar el comprobante de este gasto?')) return
     setComprobanteError('')
     startTransition(async () => {
       try {
-        await onRemoveComprobante(editing.row.id)
+        await onRemoveComprobante(id)
+        // Auto-close mini-modal después de remove exitoso.
+        if (comprobanteOnlyGasto) setComprobanteOnlyGasto(null)
       } catch (err) {
         setComprobanteError(err instanceof Error ? err.message : 'Error al quitar.')
       }
@@ -1513,10 +1542,29 @@ export default function GastosClient({
                     items.push({ label: 'Eliminar', variant: 'danger', onClick: () => handleDeleteGasto(g.id, g.descripcion) })
                   }
                 } else {
-                  tooltipBloqueo = 'Tiene pagos asociados. Anulá los pagos primero.'
+                  // UX-GASTOS-COMPROBANTE-PAGADO-2 (2026-05-25): aprobado con
+                  // pagos activos sigue bloqueado para edición financiera, pero
+                  // permite gestionar comprobante (para rendición).
+                  if (canWrite) {
+                    items.push({
+                      label: g.comprobante_path ? 'Ver/Reemplazar comprobante' : 'Subir comprobante',
+                      onClick: () => setComprobanteOnlyGasto(g),
+                    })
+                  } else {
+                    tooltipBloqueo = 'Tiene pagos asociados. Anulá los pagos primero.'
+                  }
                 }
               } else if (g.estado === 'pagado_parcial' || g.estado === 'pagado') {
-                tooltipBloqueo = 'Anulá el pago desde /pagos.'
+                // UX-GASTOS-COMPROBANTE-PAGADO-2 (2026-05-25): permitir gestionar
+                // comprobante en estados pagados sin abrir el modal de edición.
+                if (canWrite) {
+                  items.push({
+                    label: g.comprobante_path ? 'Ver/Reemplazar comprobante' : 'Subir comprobante',
+                    onClick: () => setComprobanteOnlyGasto(g),
+                  })
+                } else {
+                  tooltipBloqueo = 'Anulá el pago desde /pagos.'
+                }
               }
               // rechazado: sin items ni tooltip
               return <RowActionMenu items={items} emptyTooltip={tooltipBloqueo} />
@@ -2092,8 +2140,11 @@ export default function GastosClient({
                     </div>
                   )}
 
-                  {/* ─── Comprobante (solo edit de gasto en borrador) ──────── */}
-                  {editingGastoLatest && !['pagado', 'rechazado'].includes(editingGastoLatest.estado) && (
+                  {/* ─── Comprobante ─────────────────────────────────────────
+                       UX-GASTOS-COMPROBANTE-PAGADO (2026-05-25): visible en
+                       todos los estados salvo "rechazado". Caso de uso: cargar
+                       la factura/recibo después del pago para rendición. */}
+                  {editingGastoLatest && editingGastoLatest.estado !== 'rechazado' && (
                     <div className="rounded-lg border border-gray-200 p-3 space-y-2">
                       <label className="block text-sm font-medium text-gray-700">Comprobante</label>
                       {editingGastoLatest.comprobante_path && editingGastoLatest.comprobante_nombre ? (
@@ -2228,6 +2279,114 @@ export default function GastosClient({
         onCreate={onCrearTipoGasto}
         onCreated={handleTipoGastoCreated}
       />
+
+      {/* UX-GASTOS-COMPROBANTE-PAGADO-2 (2026-05-25): mini-modal dedicado
+          a gestionar comprobante de un gasto pagado/pagado_parcial. Solo
+          datos readonly + bloque de archivo. No expone inputs financieros. */}
+      {comprobanteOnlyGasto && (() => {
+        const target = gastos.find(g => g.id === comprobanteOnlyGasto.id) ?? comprobanteOnlyGasto
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+              <h2 className="mb-1 text-lg font-semibold text-gray-900">Comprobante de gasto</h2>
+              <p className="mb-4 text-xs text-gray-500">Gestión del comprobante únicamente. Los datos del gasto no son editables.</p>
+
+              <div className="mb-4 rounded-lg bg-gray-50 p-3 space-y-1.5 text-sm">
+                {target.codigo && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-gray-500">Código:</span>
+                    <span className="font-medium text-gray-900">{target.codigo}</span>
+                  </div>
+                )}
+                <div className="flex justify-between gap-3">
+                  <span className="text-gray-500">Descripción:</span>
+                  <span className="font-medium text-gray-900 text-right truncate max-w-[60%]" title={target.descripcion}>{target.descripcion}</span>
+                </div>
+                {target.proveedores?.nombre && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-gray-500">Proveedor:</span>
+                    <span className="font-medium text-gray-900 text-right">{target.proveedores.nombre}</span>
+                  </div>
+                )}
+                <div className="flex justify-between gap-3">
+                  <span className="text-gray-500">Estado:</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ESTADO_COLORS[target.estado] ?? 'bg-gray-100 text-gray-600'}`}>
+                    {ESTADO_LABELS[target.estado] ?? target.estado}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-gray-500">Monto:</span>
+                  <span className="font-semibold text-gray-900">{formatMonto(Number(target.monto), target.moneda)}</span>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                <label className="block text-sm font-medium text-gray-700">Comprobante</label>
+                {target.comprobante_path && target.comprobante_nombre ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-gray-900 truncate">{target.comprobante_nombre}</p>
+                      <p className="text-xs text-gray-400">{formatBytes(target.comprobante_size_bytes ?? 0)}</p>
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleViewComprobante(target.comprobante_path!)}
+                        className="rounded px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 transition-colors"
+                      >
+                        Ver
+                      </button>
+                      <label className={`rounded px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors ${comprobanteUploading || isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                        {comprobanteUploading ? 'Subiendo...' : 'Reemplazar'}
+                        <input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          disabled={comprobanteUploading || isPending}
+                          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleUploadComprobante(f) }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleRemoveComprobante}
+                        disabled={isPending || comprobanteUploading}
+                        className="rounded px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                      >
+                        Quitar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label className={`block rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 transition-colors ${comprobanteUploading || isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                    {comprobanteUploading ? 'Subiendo...' : 'Adjuntar archivo (PDF, JPG, PNG, WEBP — max 10 MB)'}
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      disabled={comprobanteUploading || isPending}
+                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleUploadComprobante(f) }}
+                    />
+                  </label>
+                )}
+                {comprobanteError && (
+                  <p className="text-xs text-red-600">{comprobanteError}</p>
+                )}
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setComprobanteOnlyGasto(null); setComprobanteError('') }}
+                  disabled={comprobanteUploading || isPending}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Modal Quick Crear Proveedor — sibling overlay sobre el modal de gasto */}
       {quickProvOpen && (

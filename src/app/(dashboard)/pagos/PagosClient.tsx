@@ -391,9 +391,36 @@ export default function PagosClient({
       type: 'text',
     },
     {
-      key: 'fondo',
-      label: 'Fondo',
-      accessor: o => o.fondo_nombre,
+      // UX-PAGOS-CANAL-COLUMNA (2026-05-25): reemplaza columna "Fondo" por
+      // "Canal" (RISA o tercero) para alinear con /gastos. Deriva via
+      // gastoInfoPorId. Si la obligación no tiene gasto asociado (saldo_anticipo
+      // standalone), defaultea a RISA por convención G1.
+      key: 'canal',
+      label: 'Canal',
+      accessor: o => {
+        const g = o.gasto_id ? gastoInfoPorId.get(o.gasto_id) : undefined
+        return g?.forma_cancelacion === 'financiador'
+          ? (g.financiadores?.nombre ?? g.financiadores?.codigo ?? 'Tercero')
+          : 'RISA'
+      },
+      render: o => {
+        const g = o.gasto_id ? gastoInfoPorId.get(o.gasto_id) : undefined
+        return g?.forma_cancelacion === 'financiador' ? (
+          <span
+            title="Pago a tercero de la red"
+            className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-orange-100 text-orange-800"
+          >
+            {g.financiadores?.nombre ?? g.financiadores?.codigo ?? 'Tercero'}
+          </span>
+        ) : (
+          <span
+            title="Pago con medios propios RISA"
+            className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-slate-100 text-slate-700"
+          >
+            RISA
+          </span>
+        )
+      },
       type: 'text',
       className: 'hidden lg:table-cell',
     },
@@ -435,7 +462,7 @@ export default function PagosClient({
       type: 'number',
       align: 'right',
     },
-  ], [])
+  ], [gastoInfoPorId])
 
   // ── Obligation-driven helpers ───────────────────────────────────────────────
   function openPagarObligation(ob: ObligacionPendiente) {
@@ -815,8 +842,10 @@ export default function PagosClient({
     // Decisión final por pago
     const map = new Map<string, Modalidad>()
     for (const p of pagos) {
-      if (p.tipo === 'anticipo') { map.set(p.id, 'anticipo'); continue }
-
+      // UX-PAGOS-MODALIDAD-ANTICIPO (2026-05-25): los pagos tipo='anticipo'
+      // ya NO se corto-circuitan a '—'. Caen en la cascada normal (keywords
+      // → histórico por gasto → desconocida) para mostrar Total/Parcial
+      // cuando hay datos suficientes.
       const concepto = (p.concepto ?? '').toLowerCase()
       // 'parcial' se chequea ANTES que 'total' porque "Pago parcial recurrente"
       // contiene ambos conceptos.
@@ -947,10 +976,28 @@ export default function PagosClient({
       className: 'hidden sm:table-cell',
     },
     {
-      key: 'fondo',
-      label: 'Fondo',
-      accessor: p => p.fondos?.nombre ?? '',
-      render: p => p.fondos?.nombre ?? <span className="text-gray-300">—</span>,
+      // UX-PAGOS-CANAL-COLUMNA (2026-05-25): reemplaza columna "Fondo" por
+      // "Canal" (RISA o tercero) usando el join p.gastos.
+      key: 'canal',
+      label: 'Canal',
+      accessor: p => p.gastos?.forma_cancelacion === 'financiador'
+        ? (p.gastos.financiadores?.nombre ?? p.gastos.financiadores?.codigo ?? 'Tercero')
+        : 'RISA',
+      render: p => p.gastos?.forma_cancelacion === 'financiador' ? (
+        <span
+          title="Pago a tercero de la red"
+          className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-orange-100 text-orange-800"
+        >
+          {p.gastos.financiadores?.nombre ?? p.gastos.financiadores?.codigo ?? 'Tercero'}
+        </span>
+      ) : (
+        <span
+          title="Pago con medios propios RISA"
+          className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-slate-100 text-slate-700"
+        >
+          RISA
+        </span>
+      ),
       type: 'text',
       className: 'hidden lg:table-cell',
     },
