@@ -2,6 +2,24 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { assertRole } from '@/lib/auth/guards'
+import type { UserRole } from '@/types'
+
+// Fase 2C.2d (2026-05-25): proveedores = maestro operativo.
+// USER puede crear proveedores (carga desde su gasto), no editar ni eliminar.
+// Eliminar = admin/supervisor (+ contador legacy).
+const ROLES_PROVEEDORES_CREAR: UserRole[] = [
+  'admin', 'supervisor', 'operador', 'user',
+  'contador', // legacy
+]
+const ROLES_PROVEEDORES_EDITAR: UserRole[] = [
+  'admin', 'supervisor', 'operador',
+  'contador', // legacy
+]
+const ROLES_PROVEEDORES_ELIMINAR: UserRole[] = [
+  'admin', 'supervisor',
+  'contador', // legacy
+]
 
 export type ProveedorPayload = {
   nombre: string
@@ -69,6 +87,10 @@ export type ProveedorActionResult = { ok: true } | { ok: false; error: string }
 
 export async function createProveedor(data: ProveedorPayload): Promise<ProveedorActionResult> {
   try {
+    // Fase 2C.2d: maestro operativo. USER puede crear.
+    const guard = await assertRole(ROLES_PROVEEDORES_CREAR)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const authResult = await supabase.auth.getUser()
     const user = authResult.data?.user
@@ -100,6 +122,10 @@ export async function createProveedor(data: ProveedorPayload): Promise<Proveedor
 
 export async function updateProveedor(id: string, data: ProveedorPayload): Promise<ProveedorActionResult> {
   try {
+    // Fase 2C.2d: editar maestro. USER excluido.
+    const guard = await assertRole(ROLES_PROVEEDORES_EDITAR)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const fullPayload = normalizeProveedor(data)
 
@@ -146,19 +172,14 @@ export async function createProveedorQuick(data: {
   observaciones: string | null
 }): Promise<ProveedorQuickResult> {
   try {
+    // Fase 2C.2d: reemplaza check inline `admin/contador` por assertRole
+    // unificado. USER puede crear proveedores desde el modal de gasto.
+    const guard = await assertRole(ROLES_PROVEEDORES_CREAR)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const auth = await supabase.auth.getUser()
     if (!auth.data?.user) return { ok: false, error: 'No autenticado' }
-
-    const { data: profile, error: profileErr } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', auth.data.user.id)
-      .single()
-    if (profileErr) return { ok: false, error: profileErr.message }
-    if (profile?.role !== 'admin' && profile?.role !== 'contador') {
-      return { ok: false, error: 'Solo administradores o contadores pueden crear proveedores.' }
-    }
 
     const nombre = data.nombre.trim()
     if (!nombre) return { ok: false, error: 'El nombre es requerido.' }
@@ -252,6 +273,10 @@ export async function getProveedorDependencies(id: string): Promise<ProveedorDep
 // movimientos asociados quedan intactos para preservar trazabilidad histórica.
 export async function deleteProveedor(id: string): Promise<ProveedorActionResult> {
   try {
+    // Fase 2C.2d: destructiva (baja lógica). admin/supervisor (+ contador legacy).
+    const guard = await assertRole(ROLES_PROVEEDORES_ELIMINAR)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const { error } = await supabase.rpc('soft_delete_proveedor', { proveedor_id: id })
     if (error) {
