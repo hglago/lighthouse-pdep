@@ -2,6 +2,12 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { assertRole } from '@/lib/auth/guards'
+import type { UserRole } from '@/types'
+
+// Fase 2C.2a (2026-05-25): recurrentes = configuración estructural.
+// Admin + supervisor + legacy revisor.
+const ROLES_RECURRENTES: UserRole[] = ['admin', 'supervisor', 'revisor']
 
 export type GastoRecurrentePayload = {
   fondo_id: string
@@ -33,6 +39,10 @@ function stripTipoGasto<T extends Record<string, unknown>>(p: T): Record<string,
 }
 
 export async function createGastoRecurrente(data: GastoRecurrentePayload) {
+  // Fase 2C.2a: guard server-side.
+  const guard = await assertRole(ROLES_RECURRENTES)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const authResult = await supabase.auth.getUser()
   const user = authResult.data?.user
@@ -56,6 +66,10 @@ export async function createGastoRecurrente(data: GastoRecurrentePayload) {
 }
 
 export async function updateGastoRecurrente(id: string, data: GastoRecurrentePayload) {
+  // Fase 2C.2a: guard server-side.
+  const guard = await assertRole(ROLES_RECURRENTES)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const payload = { ...data, proveedor_id: data.proveedor_id || null }
   const { data: rows, error } = await supabase
@@ -85,6 +99,10 @@ export async function updateGastoRecurrente(id: string, data: GastoRecurrentePay
 }
 
 export async function deleteGastoRecurrente(id: string) {
+  // Fase 2C.2a: guard server-side.
+  const guard = await assertRole(ROLES_RECURRENTES)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const { data: rows, error } = await supabase
     .from('gastos_recurrentes')

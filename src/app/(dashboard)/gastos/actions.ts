@@ -2,6 +2,35 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { assertRole } from '@/lib/auth/guards'
+import type { UserRole } from '@/types'
+
+// Fase 2C.2a (2026-05-25) — listas de roles permitidos por categoría.
+// Incluyen roles nuevos (admin/supervisor/operador/user) y legacy
+// (contador/revisor/visualizador) por compatibilidad transitoria.
+// USER puede crear/editar sus propios gastos: el filtro de ownership va en
+// Fase 2D (server-side por created_by). Mientras tanto el role check evita
+// que roles sin autorización ejecuten estas actions.
+const ROLES_ESCRITURA_GASTOS: UserRole[] = [
+  'admin', 'supervisor', 'operador', 'user',
+  'contador', 'revisor', 'visualizador',
+]
+const ROLES_APROBAR_GASTOS: UserRole[] = [
+  'admin', 'supervisor',
+  'revisor', 'contador', // legacy
+]
+const ROLES_DELETE_GASTOS: UserRole[] = [
+  'admin',
+  'contador', // legacy con permisos full históricos
+]
+const ROLES_CONFIG_GASTOS: UserRole[] = [
+  'admin', 'supervisor',
+  'revisor', 'contador', // legacy
+]
+const ROLES_RECURRENTES: UserRole[] = [
+  'admin', 'supervisor',
+  'revisor', // legacy
+]
 
 export type GastoPayload = {
   fondo_id: string
@@ -127,6 +156,10 @@ export async function createGasto(
   data: GastoPayload,
   options?: { id?: string; comprobante?: { path: string; mime: string; nombre: string; size: number } }
 ) {
+  // Fase 2C.2a: guard server-side. USER puede crear sus propios; ownership en Fase 2D.
+  const guard = await assertRole(ROLES_ESCRITURA_GASTOS)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const authResult = await supabase.auth.getUser()
   const user = authResult.data?.user
@@ -192,6 +225,10 @@ async function getPagosCount(
 }
 
 export async function updateGasto(id: string, data: GastoPayload) {
+  // Fase 2C.2a: guard server-side. Ownership USER va en Fase 2D.
+  const guard = await assertRole(ROLES_ESCRITURA_GASTOS)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const normalized = normalizeGasto(data)
   if ('error' in normalized) {
@@ -249,6 +286,11 @@ export async function updateGasto(id: string, data: GastoPayload) {
 }
 
 export async function deleteGasto(id: string) {
+  // Fase 2C.2a: solo admin (+ contador legacy). Lógica interna ya bloquea
+  // si el gasto tiene pagos asociados.
+  const guard = await assertRole(ROLES_DELETE_GASTOS)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
 
   // GASTOS-UX: bloquear si el gasto tiene cualquier pago asociado (vivo o anulado),
@@ -296,6 +338,10 @@ export type RecurrenteActionResult = { ok: true } | { ok: false; error: string }
 
 export async function createGastoRecurrente(data: GastoRecurrentePayload): Promise<RecurrenteActionResult> {
   try {
+    // Fase 2C.2a: recurrentes = configuración. Solo admin + supervisor (+ revisor legacy).
+    const guard = await assertRole(ROLES_RECURRENTES)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const authResult = await supabase.auth.getUser()
     const user = authResult.data?.user
@@ -336,6 +382,10 @@ export async function createGastoRecurrente(data: GastoRecurrentePayload): Promi
 
 export async function updateGastoRecurrente(id: string, data: GastoRecurrentePayload): Promise<RecurrenteActionResult> {
   try {
+    // Fase 2C.2a: solo admin + supervisor (+ revisor legacy).
+    const guard = await assertRole(ROLES_RECURRENTES)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     // G1: el fondo no es editable. Quitar del update para conservar el existente.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -369,6 +419,10 @@ export async function updateGastoRecurrente(id: string, data: GastoRecurrentePay
 
 export async function deleteGastoRecurrente(id: string): Promise<RecurrenteActionResult> {
   try {
+    // Fase 2C.2a: solo admin + supervisor (+ revisor legacy).
+    const guard = await assertRole(ROLES_RECURRENTES)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const { data: rows, error } = await supabase
       .from('gastos_recurrentes')
@@ -398,6 +452,10 @@ export async function deleteGastoRecurrente(id: string): Promise<RecurrenteActio
 // Se invoca desde /gastos page.tsx al cargar el módulo (dev).
 // En producción se puede mover a pg_cron diario sin cambios.
 export async function generarGastosRecurrentes(): Promise<{ created: number; error: string | null }> {
+  // Fase 2C.2a: SIN guard de role. Esta función se invoca automáticamente al
+  // cargar /gastos (todos los roles autenticados). Es idempotente vía UNIQUE
+  // INDEX (recurrente_id, periodo), por lo que no representa riesgo. Si más
+  // adelante se decide restringir, agregar assertRole acá.
   try {
     const supabase = createClient()
     const { data, error } = await supabase.rpc('fn_generar_gastos_recurrentes')
@@ -416,6 +474,11 @@ export async function cambiarEstadoGasto(
   id: string,
   nuevoEstado: 'enviado' | 'aprobado' | 'rechazado'
 ) {
+  // Fase 2C.2a: aprobar/rechazar/cancelar requiere admin o supervisor
+  // (+ revisor, contador legacy).
+  const guard = await assertRole(ROLES_APROBAR_GASTOS)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
 
   // GASTOS-UX: salir de 'aprobado' (volver a pendiente o rechazar) requiere
@@ -451,6 +514,13 @@ export type BulkGastoResult = {
 // Cambia estado a 'aprobado' solo para gastos en 'borrador'/'enviado'.
 // Los que ya están aprobados/pagados/rechazados se omiten con error explicativo.
 export async function bulkAprobarGastos(ids: string[]): Promise<BulkGastoResult> {
+  // Fase 2C.2a: aprobación = admin/supervisor (+ revisor, contador legacy).
+  // Si el guard falla, rechazar todos los ids con el mismo error.
+  const guard = await assertRole(ROLES_APROBAR_GASTOS)
+  if (!guard.ok) {
+    return { procesados: [], errores: ids.map(id => ({ id, error: guard.error })) }
+  }
+
   const supabase = createClient()
   const procesados: string[] = []
   const errores: BulkGastoResult['errores'] = []
@@ -488,6 +558,12 @@ export async function bulkAprobarGastos(ids: string[]): Promise<BulkGastoResult>
 // Cancela (= rechaza) gastos. Bloquea si tienen pagos activos (no anulados);
 // el resultado parcial vuelve con los errores explicativos por gasto.
 export async function bulkRechazarGastos(ids: string[]): Promise<BulkGastoResult> {
+  // Fase 2C.2a: cancelación = admin/supervisor (+ revisor, contador legacy).
+  const guard = await assertRole(ROLES_APROBAR_GASTOS)
+  if (!guard.ok) {
+    return { procesados: [], errores: ids.map(id => ({ id, error: guard.error })) }
+  }
+
   const supabase = createClient()
   const procesados: string[] = []
   const errores: BulkGastoResult['errores'] = []
@@ -539,6 +615,12 @@ export async function bulkRechazarGastos(ids: string[]): Promise<BulkGastoResult
 // Soft-delete. Bloquea si el gasto tiene CUALQUIER pago asociado (cualquier estado),
 // para evitar dejar pagos huérfanos apuntando a un gasto borrado.
 export async function bulkDeleteGastos(ids: string[]): Promise<BulkGastoResult> {
+  // Fase 2C.2a: borrado masivo solo admin (+ contador legacy).
+  const guard = await assertRole(ROLES_DELETE_GASTOS)
+  if (!guard.ok) {
+    return { procesados: [], errores: ids.map(id => ({ id, error: guard.error })) }
+  }
+
   const supabase = createClient()
   const procesados: string[] = []
   const errores: BulkGastoResult['errores'] = []
@@ -591,6 +673,11 @@ export type ComprobantePayload = {
 }
 
 export async function setComprobanteGasto(id: string, data: ComprobantePayload) {
+  // Fase 2C.2a: comprobante = operativa amplia (incluye USER para propios).
+  // Ownership USER va en Fase 2D.
+  const guard = await assertRole(ROLES_ESCRITURA_GASTOS)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const authResult = await supabase.auth.getUser()
   const user = authResult.data?.user
@@ -617,6 +704,10 @@ export async function setComprobanteGasto(id: string, data: ComprobantePayload) 
 }
 
 export async function removeComprobanteGasto(id: string) {
+  // Fase 2C.2a: comprobante = operativa amplia. Ownership USER va en Fase 2D.
+  const guard = await assertRole(ROLES_ESCRITURA_GASTOS)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
 
   const { data: gasto, error: fetchErr } = await supabase
@@ -669,6 +760,10 @@ export type TipoGastoQuickResult =
 
 export async function crearTipoGasto(data: TipoGastoQuickPayload): Promise<TipoGastoQuickResult> {
   try {
+    // Fase 2C.2a: tipos de gasto = configuración. Admin/supervisor + legacy.
+    const guard = await assertRole(ROLES_CONFIG_GASTOS)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const authResult = await supabase.auth.getUser()
     const user = authResult.data?.user
