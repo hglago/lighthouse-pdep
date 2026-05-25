@@ -426,6 +426,46 @@ export default function GastosClient({
   // el DataTable internamente.
   const [visibleGastos, setVisibleGastos] = useState<GastoRow[]>(filteredGastosBase)
 
+  // TIPOS-GASTO: lista de tipos visible al usuario + alta inline. La prop
+  // `tiposGasto` puede crecer en runtime cuando el user crea uno nuevo.
+  // Se declara ANTES de los columns porque enumOptions lo consume.
+  const [localExtraTipos, setLocalExtraTipos] = useState<TipoGasto[]>([])
+  const [quickTipoOpen, setQuickTipoOpen] = useState(false)
+  const effectiveTipos = useMemo<TipoGasto[]>(
+    () => [...tiposGasto, ...localExtraTipos],
+    [tiposGasto, localExtraTipos]
+  )
+  const otroTipoId = useMemo(
+    () => effectiveTipos.find(t => t.codigo === 'OTRO')?.id ?? '',
+    [effectiveTipos]
+  )
+
+  function handleTipoGastoCreated(result: { id: string; codigo: string; nombre: string }) {
+    // Append a lista local + autoseleccionar en el form.
+    setLocalExtraTipos(prev =>
+      prev.some(t => t.id === result.id) ? prev : [...prev, {
+        id: result.id,
+        codigo: result.codigo,
+        nombre: result.nombre,
+        descripcion: null,
+        activo: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        created_by: null,
+      }]
+    )
+    setForm(prev => ({ ...prev, tipo_gasto_id: result.id }))
+    setQuickTipoOpen(false)
+  }
+
+  function handleTipoGastoSelectChange(value: string) {
+    if (value === '__NEW__') {
+      setQuickTipoOpen(true)
+      return
+    }
+    setForm(prev => ({ ...prev, tipo_gasto_id: value }))
+  }
+
   const gastosColumns = useMemo<Column<GastoRow>[]>(() => [
     {
       key: 'codigo',
@@ -647,45 +687,6 @@ export default function GastosClient({
   }, [fondos])
   const risaIdInicial = fondoRisa?.id ?? ''
   const risaMonedaInicial = fondoRisa?.moneda ?? 'ARS'
-
-  // TIPOS-GASTO: lista de tipos visible al usuario + alta inline. La prop
-  // `tiposGasto` puede crecer en runtime cuando el user crea uno nuevo.
-  const [localExtraTipos, setLocalExtraTipos] = useState<TipoGasto[]>([])
-  const [quickTipoOpen, setQuickTipoOpen] = useState(false)
-  const effectiveTipos = useMemo<TipoGasto[]>(
-    () => [...tiposGasto, ...localExtraTipos],
-    [tiposGasto, localExtraTipos]
-  )
-  const otroTipoId = useMemo(
-    () => effectiveTipos.find(t => t.codigo === 'OTRO')?.id ?? '',
-    [effectiveTipos]
-  )
-
-  function handleTipoGastoCreated(result: { id: string; codigo: string; nombre: string }) {
-    // Append a lista local + autoseleccionar en el form.
-    setLocalExtraTipos(prev =>
-      prev.some(t => t.id === result.id) ? prev : [...prev, {
-        id: result.id,
-        codigo: result.codigo,
-        nombre: result.nombre,
-        descripcion: null,
-        activo: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        created_by: null,
-      }]
-    )
-    setForm(prev => ({ ...prev, tipo_gasto_id: result.id }))
-    setQuickTipoOpen(false)
-  }
-
-  function handleTipoGastoSelectChange(value: string) {
-    if (value === '__NEW__') {
-      setQuickTipoOpen(true)
-      return
-    }
-    setForm(prev => ({ ...prev, tipo_gasto_id: value }))
-  }
 
   function handleEsRecurrenteToggle(checked: boolean) {
     setForm((prev) => ({
