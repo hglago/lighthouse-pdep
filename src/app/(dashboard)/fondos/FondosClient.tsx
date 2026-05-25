@@ -518,40 +518,73 @@ export default function FondosClient({
       },
     },
     {
+      // FIN2.7b (2026-05-25): Destino derivado de las imputaciones:
+      //   - 0 imputaciones (legacy): usa destino_aporte de la cabecera.
+      //   - 1 imputación MP → "RISA" (azul).
+      //   - 1 imputación Tercero → nombre del tercero (índigo).
+      //   - 2+ imputaciones → "Mixto" (violeta).
       key: 'destino', label: 'Destino',
-      accessor: a => a.destino_aporte,
+      accessor: a => {
+        const list = imputacionesPorAporte.get(a.id) ?? []
+        if (list.length === 0) return a.destino_aporte === 'risa' ? 'risa' : 'tercero'
+        if (list.length === 1) return list[0].destino_tipo === 'medios_propios' ? 'risa' : 'tercero'
+        return 'mixto'
+      },
       type: 'enum',
       enumOptions: [
-        { value: 'risa', label: 'RISA' },
-        { value: 'cancelacion_financiacion', label: 'Cancelación deuda tercero' },
+        { value: 'risa',   label: 'RISA' },
+        { value: 'tercero', label: 'Tercero' },
+        { value: 'mixto',  label: 'Mixto' },
       ],
-      render: a => (
-        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${a.destino_aporte === 'risa' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'}`}>
-          {destinoLabel(a.destino_aporte)}
-        </span>
-      ),
+      render: a => {
+        const list = imputacionesPorAporte.get(a.id) ?? []
+        if (list.length === 0) {
+          // Legacy: usar la cabecera. Reuso el estilo previo.
+          return (
+            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${a.destino_aporte === 'risa' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'}`}>
+              {destinoLabel(a.destino_aporte)}
+            </span>
+          )
+        }
+        if (list.length === 1) {
+          const i = list[0]
+          if (i.destino_tipo === 'medios_propios') {
+            return (
+              <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-blue-50 text-blue-700 ring-1 ring-blue-200">
+                RISA
+              </span>
+            )
+          }
+          const cod = i.financiadores?.codigo
+          const nom = i.financiadores?.nombre ?? 'Tercero'
+          return (
+            <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200" title={nom}>
+              {cod ? `${cod} · ${nom}` : nom}
+            </span>
+          )
+        }
+        return (
+          <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-purple-50 text-purple-700 ring-1 ring-purple-200">
+            Mixto
+          </span>
+        )
+      },
     },
     {
-      key: 'financiador', label: 'Tercero',
-      accessor: a => a.financiadores?.nombre ?? '',
-      type: 'text',
-      render: a => a.financiadores
-        ? <span><span className="font-mono text-xs text-slate-500">{a.financiadores.codigo}</span> · {a.financiadores.nombre}</span>
-        : <span className="text-gray-300">—</span>,
-    },
-    {
-      // FIN2.7: detalle inline del split de imputaciones (Medios Propios + Terceros).
-      // Visible incluso para aportes anulados (las imputaciones son snapshot).
+      // FIN2.7b: detalle inline solo cuando aporta info adicional (split MP+T).
+      // Para aportes simples (1 imputación) muestra "—" porque Destino ya cubre.
+      // Visible también para aportes anulados — snapshot.
       key: 'imputaciones', label: 'Detalle',
       accessor: a => {
         const list = imputacionesPorAporte.get(a.id) ?? []
+        if (list.length < 2) return ''
         return list.map(i => `${i.destino_tipo === 'medios_propios' ? 'MP' : 'T'} ${i.fondos?.nombre ?? i.financiadores?.nombre ?? ''} ${i.monto}`).join(' | ')
       },
       type: 'text',
       filterable: false,
       render: a => {
         const list = imputacionesPorAporte.get(a.id) ?? []
-        if (list.length === 0) return <span className="text-gray-300">—</span>
+        if (list.length < 2) return <span className="text-gray-300">—</span>
         return (
           <ul className="space-y-0.5 text-xs text-gray-700">
             {list.map(i => {
@@ -1424,7 +1457,7 @@ export default function FondosClient({
           columns={aportesColumns}
           getRowId={a => a.id}
           searchTerm={searchAportes}
-          searchKeys={['codigo', 'socio', 'financiador', 'destino', 'observaciones', 'moneda']}
+          searchKeys={['codigo', 'socio', 'destino', 'observaciones', 'moneda']}
           initialSort={{ key: 'codigo', dir: 'desc' }}
           rowClassName={a => a.deleted_at ? 'opacity-60' : ''}
           emptyMessage={
