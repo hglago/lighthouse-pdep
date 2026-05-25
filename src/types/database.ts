@@ -352,6 +352,32 @@ export interface SaldoFinanciadorRow {
   saldo_pendiente: number
 }
 
+// FIN2.6 (2026-05-24): fila agregada de v_posicion_global_risa.
+// Única fuente de verdad para PG = MP + MT por moneda. mp_detalle y
+// mt_detalle son jsonb con los fondos y terceros que componen el agregado.
+export interface PosicionGlobalDetalleFondo {
+  fondo_id: string
+  codigo: string | null
+  nombre: string
+  saldo_actual: number
+}
+
+export interface PosicionGlobalDetalleTercero {
+  financiador_id: string
+  codigo: string | null
+  nombre: string
+  saldo_pendiente: number
+}
+
+export interface PosicionGlobalRisaRow {
+  moneda: string
+  mp_total: number
+  mt_total: number          // signo negativo cuando hay deuda con terceros
+  pg_total: number          // mp_total + mt_total
+  mp_detalle: PosicionGlobalDetalleFondo[]
+  mt_detalle: PosicionGlobalDetalleTercero[]
+}
+
 export interface GoogleAllowedUser {
   id: string
   email: string

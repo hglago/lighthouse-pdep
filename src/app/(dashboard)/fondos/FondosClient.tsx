@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition, useRef, useMemo } from 'react'
-import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo, Socio, Financiador, SaldoFinanciadorRow, MovimientoTipo, DestinoAporte } from '@/types'
+import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo, Socio, Financiador, SaldoFinanciadorRow, MovimientoTipo, DestinoAporte, PosicionGlobalRisaRow } from '@/types'
 import type {
   AportePayload, FondoActionResult, FondoDepsResult,
   SocioPayload, SocioActionResult,
@@ -149,6 +149,9 @@ interface Props {
   financiadores: Financiador[]
   saldosFinanciadores: SaldoFinanciadorRow[]
   movimientos: MovimientoFondoRow[]
+  // FIN2.6: Posición Global RISA (MP+MT=PG) por moneda. Si la view aún no
+  // existe, llega array vacío y se cae al cálculo cliente legacy.
+  posicionGlobal: PosicionGlobalRisaRow[]
   role: UserRole
   onCreateFondo: (data: { nombre: string; moneda: string; monto_inicial: number; descripcion: string | null }) => Promise<void>
   onUpdateFondo: (id: string, data: { nombre: string; descripcion: string | null; estado: FondoEstado }) => Promise<void>
@@ -174,6 +177,7 @@ export default function FondosClient({
   financiadores,
   saldosFinanciadores,
   movimientos,
+  posicionGlobal,
   role,
   onCreateFondo,
   onUpdateFondo,
@@ -1114,26 +1118,37 @@ export default function FondosClient({
     sumaCoincide
 
   // Razón principal por la que el submit está bloqueado (texto visible al user).
-  // ── FIN2.6-pre: encabezado MP + MT = RISA ──────────────────────────────────
-  // Una sola moneda (la de RISA, default ARS). Multi-moneda llega con la vista
-  // SQL v_posicion_global_risa en FIN2.6 propiamente dicha.
+  // ── FIN2.6: encabezado MP + MT = RISA desde v_posicion_global_risa ─────────
+  // Fuente de verdad: vista SQL agrupada por moneda. Fallback: cálculo cliente
+  // si la view aún no se aplicó (posicionGlobal vacío).
   const monedaPG = risa?.moneda ?? 'ARS'
-  // MP = SUM(fondos activos no soft-deleted) en monedaPG.
-  const mpTotal = useMemo(() => {
-    return fondos
+
+  const posicionGlobalEffective: PosicionGlobalRisaRow[] = useMemo(() => {
+    if (posicionGlobal.length > 0) return posicionGlobal
+    // Fallback legacy: replicar el cálculo de FIN2.6-pre para monedaPG.
+    const mp = fondos
       .filter(f => !f.deleted_at && f.estado === 'activo' && f.moneda === monedaPG)
       .reduce((s, f) => s + Number(f.saldo_actual), 0)
-  }, [fondos, monedaPG])
-  // Terceros con deuda > 0 en monedaPG.
-  const tercerosConDeudaMoneda = useMemo(() => {
-    return saldosFinanciadores
+    const tercerosDeuda = saldosFinanciadores
       .filter(s => s.moneda === monedaPG && s.saldo_pendiente > 0 && !s.financiador_deleted_at)
       .sort((a, b) => b.saldo_pendiente - a.saldo_pendiente)
-  }, [saldosFinanciadores, monedaPG])
-  const mtTotal = useMemo(() => {
-    return -tercerosConDeudaMoneda.reduce((s, t) => s + Number(t.saldo_pendiente), 0)
-  }, [tercerosConDeudaMoneda])
-  const pgTotal = mpTotal + mtTotal
+    const mtDeuda = tercerosDeuda.reduce((s, t) => s + Number(t.saldo_pendiente), 0)
+    return [{
+      moneda: monedaPG,
+      mp_total: mp,
+      mt_total: -mtDeuda,
+      pg_total: mp - mtDeuda,
+      mp_detalle: fondos
+        .filter(f => !f.deleted_at && f.estado === 'activo' && f.moneda === monedaPG)
+        .map(f => ({ fondo_id: f.id, codigo: f.codigo, nombre: f.nombre, saldo_actual: Number(f.saldo_actual) })),
+      mt_detalle: tercerosDeuda.map(t => ({
+        financiador_id:   t.financiador_id,
+        codigo:           t.financiador_codigo,
+        nombre:           t.financiador_nombre,
+        saldo_pendiente:  Number(t.saldo_pendiente),
+      })),
+    }]
+  }, [posicionGlobal, fondos, saldosFinanciadores, monedaPG])
 
   const razonBloqueo: string | null = (() => {
     if (puedeRegistrar) return null
@@ -1164,80 +1179,97 @@ export default function FondosClient({
           Etapa 2A — Caja RISA y terceros (read-only)
           ═══════════════════════════════════════════════════════════════════════ */}
 
-      {/* ── Encabezado: MP + MT = RISA (FIN2.6-pre) ─────────────────────────── */}
+      {/* ── Encabezado: MP + MT = RISA (FIN2.6 — v_posicion_global_risa) ────── */}
       {!risa ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           ⚠ Fondo RISA no encontrado. Verificá que la migración de Etapa 1 se haya aplicado en Supabase y que exista un fondo con código <span className="font-mono">FON-001</span>.
         </div>
+      ) : posicionGlobalEffective.length === 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+          Sin movimientos para mostrar.
+        </div>
       ) : (
-        <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr]">
-
-          {/* Tarjeta 1 — MP */}
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Medios Propios</p>
-            <p className={`mt-2 text-2xl font-semibold tabular-nums ${mpTotal < 0 ? 'text-red-700' : 'text-gray-900'}`}>
-              {monedaPG} {fmt(mpTotal)}
+        <div className="space-y-3">
+          {posicionGlobalEffective.length > 1 && (
+            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+              Posición global por moneda
             </p>
-            <p className="mt-1 text-[11px] text-gray-400">
-              Σ saldo_actual de fondos activos
-            </p>
-          </div>
-
-          {/* Signo + */}
-          <div className="hidden lg:flex items-center justify-center text-3xl font-light text-slate-400 select-none">
-            +
-          </div>
-
-          {/* Tarjeta 2 — MT */}
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Medios de Terceros</p>
-            <p className={`mt-2 text-2xl font-semibold tabular-nums ${mtTotal < 0 ? 'text-red-700' : 'text-gray-900'}`}>
-              {monedaPG} {fmt(mtTotal)}
-            </p>
-            {tercerosConDeudaMoneda.length === 0 ? (
-              <p className="mt-2 text-[11px] text-gray-400">Sin deuda con terceros</p>
-            ) : (
-              <ul className="mt-2 space-y-0.5 text-[11px] text-gray-600">
-                {tercerosConDeudaMoneda.slice(0, 3).map(t => (
-                  <li key={t.financiador_id} className="flex items-center justify-between gap-2">
-                    <span className="truncate">
-                      {t.financiador_codigo ? `${t.financiador_codigo} ` : ''}{t.financiador_nombre}
-                    </span>
-                    <span className="tabular-nums whitespace-nowrap">
-                      deuda {monedaPG} {fmt(t.saldo_pendiente)}
-                    </span>
-                  </li>
-                ))}
-                {tercerosConDeudaMoneda.length > 3 && (
-                  <li className="text-gray-400">
-                    + {tercerosConDeudaMoneda.length - 3} tercero{tercerosConDeudaMoneda.length - 3 !== 1 ? 's' : ''} más
-                  </li>
-                )}
-              </ul>
-            )}
-          </div>
-
-          {/* Signo = */}
-          <div className="hidden lg:flex items-center justify-center text-3xl font-light text-slate-400 select-none">
-            =
-          </div>
-
-          {/* Tarjeta 3 — RISA (PG) */}
-          <div className="rounded-xl border border-slate-300 bg-slate-50 p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">RISA</p>
-                <p className="text-[11px] text-gray-400">Posición global</p>
+          )}
+          {posicionGlobalEffective.map(pg => (
+            <div
+              key={pg.moneda}
+              className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr]"
+            >
+              {/* Tarjeta 1 — MP */}
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-xs uppercase tracking-wide text-slate-500">Medios Propios</p>
+                <p className={`mt-2 text-2xl font-semibold tabular-nums ${pg.mp_total < 0 ? 'text-red-700' : 'text-gray-900'}`}>
+                  {pg.moneda} {fmt(pg.mp_total)}
+                </p>
+                <p className="mt-1 text-[11px] text-gray-400">
+                  Σ saldo_actual de fondos activos
+                </p>
               </div>
-              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${FONDO_ESTADO_COLORS[risa.estado]}`}>
-                {FONDO_ESTADO_LABELS[risa.estado]}
-              </span>
+
+              {/* Signo + */}
+              <div className="hidden lg:flex items-center justify-center text-3xl font-light text-slate-400 select-none">
+                +
+              </div>
+
+              {/* Tarjeta 2 — MT */}
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-xs uppercase tracking-wide text-slate-500">Medios de Terceros</p>
+                <p className={`mt-2 text-2xl font-semibold tabular-nums ${pg.mt_total < 0 ? 'text-red-700' : 'text-gray-900'}`}>
+                  {pg.moneda} {fmt(pg.mt_total)}
+                </p>
+                {pg.mt_detalle.length === 0 ? (
+                  <p className="mt-2 text-[11px] text-gray-400">Sin deuda con terceros</p>
+                ) : (
+                  <ul className="mt-2 space-y-0.5 text-[11px] text-gray-600">
+                    {pg.mt_detalle.slice(0, 3).map(t => (
+                      <li key={t.financiador_id} className="flex items-center justify-between gap-2">
+                        <span className="truncate">
+                          {t.codigo ? `${t.codigo} ` : ''}{t.nombre}
+                        </span>
+                        <span className="tabular-nums whitespace-nowrap">
+                          deuda {pg.moneda} {fmt(t.saldo_pendiente)}
+                        </span>
+                      </li>
+                    ))}
+                    {pg.mt_detalle.length > 3 && (
+                      <li className="text-gray-400">
+                        + {pg.mt_detalle.length - 3} tercero{pg.mt_detalle.length - 3 !== 1 ? 's' : ''} más
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </div>
+
+              {/* Signo = */}
+              <div className="hidden lg:flex items-center justify-center text-3xl font-light text-slate-400 select-none">
+                =
+              </div>
+
+              {/* Tarjeta 3 — RISA (PG) */}
+              <div className="rounded-xl border border-slate-300 bg-slate-50 p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-500">RISA</p>
+                    <p className="text-[11px] text-gray-400">Posición global</p>
+                  </div>
+                  {pg.moneda === monedaPG && (
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${FONDO_ESTADO_COLORS[risa.estado]}`}>
+                      {FONDO_ESTADO_LABELS[risa.estado]}
+                    </span>
+                  )}
+                </div>
+                <p className={`mt-2 text-2xl font-semibold tabular-nums ${pg.pg_total < 0 ? 'text-red-700' : 'text-gray-900'}`}>
+                  {pg.moneda} {fmt(pg.pg_total)}
+                </p>
+                <p className="mt-1 text-[11px] text-gray-400">PG = MP + MT</p>
+              </div>
             </div>
-            <p className={`mt-2 text-2xl font-semibold tabular-nums ${pgTotal < 0 ? 'text-red-700' : 'text-gray-900'}`}>
-              {monedaPG} {fmt(pgTotal)}
-            </p>
-            <p className="mt-1 text-[11px] text-gray-400">PG = MP + MT</p>
-          </div>
+          ))}
         </div>
       )}
 

@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import FondosClient, { type AporteFondoRow, type MovimientoFondoRow } from './FondosClient'
-import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole } from '@/types'
+import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole, PosicionGlobalRisaRow } from '@/types'
 import {
   createFondo, updateFondo, deleteFondo, registrarAporte, getFondoDependencies,
   crearSocio, crearFinanciador, registrarAporteSocio, registrarAporteSocioV2,
@@ -23,6 +23,7 @@ export default async function FondosPage() {
     financiadoresResult,
     saldosFinResult,
     movimientosResult,
+    posicionGlobalResult,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -74,6 +75,14 @@ export default async function FondosPage() {
       .select('id, fondo_id, pago_id, aporte_id, tipo, monto, saldo_anterior, saldo_resultante, concepto, fecha, created_by, created_at')
       .order('fecha', { ascending: false })
       .order('created_at', { ascending: false }),
+
+    // FIN2.6: vista única de Posición Global RISA por moneda. Si la
+    // migración no se aplicó (PGRST205 / 42P01), el cliente cae al cálculo
+    // local con array vacío + fallback.
+    supabase
+      .from('v_posicion_global_risa')
+      .select('moneda, mp_total, mt_total, pg_total, mp_detalle, mt_detalle')
+      .order('moneda'),
   ])
 
   // Tolerancia: si socios.codigo aún no existe (Etapa 2B SQL pendiente), retry
@@ -137,6 +146,14 @@ export default async function FondosPage() {
   const saldosFinanciadores = (saldosFinResult.data ?? []) as SaldoFinanciadorRow[]
   const movimientos = (movimientosData ?? []) as MovimientoFondoRow[]
 
+  // FIN2.6: si la view no existe aún (PGRST205 / 42P01 / 42703), pasamos array
+  // vacío y el cliente cae a su cálculo local de MP+MT=PG (compat).
+  if (posicionGlobalResult.error) {
+    console.warn('[fondos] v_posicion_global_risa no disponible; fallback a cálculo cliente.',
+      posicionGlobalResult.error.code, posicionGlobalResult.error.message)
+  }
+  const posicionGlobal = (posicionGlobalResult.data ?? []) as PosicionGlobalRisaRow[]
+
   return (
     <div className="space-y-6">
       <div>
@@ -153,6 +170,7 @@ export default async function FondosPage() {
         financiadores={financiadores}
         saldosFinanciadores={saldosFinanciadores}
         movimientos={movimientos}
+        posicionGlobal={posicionGlobal}
         role={role}
         onCreateFondo={createFondo}
         onUpdateFondo={updateFondo}

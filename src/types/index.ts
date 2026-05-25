@@ -10,6 +10,8 @@ export type {
   FormaCancelacion,
   // FIN2.2: detalle de imputaciones del aporte (split MP + Terceros)
   AporteImputacion, DestinoImputacion,
+  // FIN2.6: vista única de Posición Global RISA multi-moneda
+  PosicionGlobalRisaRow, PosicionGlobalDetalleFondo, PosicionGlobalDetalleTercero,
 } from './database'
 
 export const ROLE_LABELS: Record<string, string> = {
