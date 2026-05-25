@@ -116,6 +116,10 @@ export interface Gasto {
   valor_hora_aplicado: number | null
   porcentaje_uplift_snapshot: number
   importe_base_servicio: number | null
+  // PG-PERIODO (2026-05-25): YYYY-MM derivado por columna GENERATED en DB.
+  // Prioridad: periodo_servicio_desde → periodo (recurrente) → fecha_gasto.
+  // No editable desde UI; PG la recalcula al cambiar los campos fuente.
+  periodo_analitico: string | null
   created_by: string
   aprobado_por: string | null
   aprobado_en: string | null

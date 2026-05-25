@@ -50,6 +50,8 @@ export interface GastoRow {
   valor_hora_aplicado: number | null
   porcentaje_uplift_snapshot: number
   importe_base_servicio: number | null
+  // PG-PERIODO: YYYY-MM derivado por DB. No editable.
+  periodo_analitico: string | null
   comprobante_path: string | null
   comprobante_nombre: string | null
   comprobante_mime: string | null
@@ -440,6 +442,21 @@ export default function GastosClient({
       accessor: g => g.fecha_gasto,
       render: g => <span className="text-sm text-gray-500 whitespace-nowrap">{g.fecha_gasto}</span>,
       type: 'date',
+    },
+    {
+      // PG-PERIODO: YYYY-MM derivado en DB. Solo lectura. Útil para filtrar
+      // mensualmente sin tocar el rango fecha_gasto.
+      key: 'periodo_analitico',
+      label: 'Período',
+      accessor: g => g.periodo_analitico ?? '',
+      render: g => g.periodo_analitico
+        ? <span className="text-xs font-mono tabular-nums text-slate-600 whitespace-nowrap">{g.periodo_analitico}</span>
+        : <span className="text-gray-300">—</span>,
+      type: 'enum',
+      enumOptions: Array.from(
+        new Set(gastos.map(g => g.periodo_analitico).filter((p): p is string => !!p))
+      ).sort().reverse().map(p => ({ value: p, label: p })),
+      className: 'hidden md:table-cell',
     },
     {
       key: 'descripcion',
@@ -1139,6 +1156,8 @@ export default function GastosClient({
     const source = visibleGastos.length > 0 ? visibleGastos : filteredGastosBase
     const rows = source.map(g => ({
       fecha: g.fecha_gasto,
+      // PG-PERIODO: YYYY-MM analítico para agregaciones mensuales.
+      periodo_analitico: g.periodo_analitico ?? '',
       proveedor: g.proveedores?.nombre ?? '',
       concepto: g.descripcion,
       // TIPOS-GASTO: clasificación analítica.

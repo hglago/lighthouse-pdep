@@ -5,8 +5,8 @@
 
 export const APP_VERSION = {
   tag: "v0.2.0-risa-fondos",
-  commit: "33360f6",
-  buildTime: "2026-05-25T09:11:56.250Z",
+  commit: "7a614c9",
+  buildTime: "2026-05-25T09:36:42.514Z",
   env: process.env.NODE_ENV ?? 'development',
 } as const
 
