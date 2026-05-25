@@ -493,6 +493,23 @@ export default function FondosClient({
     return m
   }, [imputaciones])
 
+  // UX-DETAILS-2 (2026-05-25): resumen de aportes para mostrar antes de la
+  // tabla. Total activo por moneda (excluye anulados) + counts.
+  const aportesSummary = useMemo(() => {
+    const totalesActivos = new Map<string, number>()
+    let activos = 0
+    let anulados = 0
+    for (const a of aportes) {
+      if (a.deleted_at) {
+        anulados++
+      } else {
+        activos++
+        totalesActivos.set(a.moneda, (totalesActivos.get(a.moneda) ?? 0) + Number(a.monto))
+      }
+    }
+    return { totalesActivos, activos, anulados }
+  }, [aportes])
+
   // ─── Etapa F1: búsqueda local por tabla ────────────────────────────────────
   const [searchAportes, setSearchAportes] = useState('')
   const [searchMovimientos, setSearchMovimientos] = useState('')
@@ -1458,6 +1475,37 @@ export default function FondosClient({
             className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
           />
         </div>
+
+        {/* UX-DETAILS-2: resumen acumulado de aportes (activos por moneda + counts).
+            Los anulados NO suman al total activo. */}
+        {aportes.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Total aportado activo</p>
+                {aportesSummary.totalesActivos.size === 0 ? (
+                  <p className="mt-0.5 text-gray-400">Sin aportes activos</p>
+                ) : (
+                  <ul className="mt-0.5 space-y-0.5">
+                    {Array.from(aportesSummary.totalesActivos.entries()).map(([moneda, total]) => (
+                      <li key={moneda} className="font-semibold tabular-nums text-slate-900">
+                        {moneda} {fmt(total)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="text-xs text-slate-600">
+                <span className="font-medium text-emerald-700">Activos: {aportesSummary.activos}</span>
+                <span className="mx-2 text-slate-300">·</span>
+                <span className={aportesSummary.anulados > 0 ? 'font-medium text-red-700' : 'text-slate-500'}>
+                  Anulados: {aportesSummary.anulados}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         <DataTable<AporteFondoRow>
           rows={aportes}
           columns={aportesColumns}
@@ -2478,25 +2526,47 @@ export default function FondosClient({
         )
       })()}
 
-      {/* ── UX-DETAILS: Modal Detalle Aporte ───────────────────────────────── */}
+      {/* ── UX-DETAILS-2: Modal Detalle Aporte (con movs asociados) ─────────── */}
       {aporteDetalleId && (() => {
         const aporte = aportes.find(a => a.id === aporteDetalleId)
         if (!aporte) return null
         const list = imputacionesPorAporte.get(aporte.id) ?? []
         const esMixto = list.length >= 2
+
+        // UX-DETAILS-2: enriquecer cada imputación con su movimiento asociado.
+        // El link es directo via movimiento_fondo_id / movimiento_financiacion_id
+        // que la RPC registrar_aporte_socio_v2 setea al crear cada imputación.
+        const imputacionesConMov = list.map(i => {
+          const movFondo = i.movimiento_fondo_id
+            ? movimientos.find(m => m.id === i.movimiento_fondo_id) ?? null
+            : null
+          const movFin = i.movimiento_financiacion_id
+            ? movimientosFinanciacion.find(m => m.id === i.movimiento_financiacion_id) ?? null
+            : null
+          return { imp: i, movFondo, movFin }
+        })
+
+        // UX-DETAILS-2: si el aporte está anulado, buscar movs de reversa por
+        // coincidencia de concepto/descripcion con el codigo del aporte.
+        // fn_anular_aporte_socio escribe:
+        //   - mov_fondo.concepto    = 'Reversa aporte {codigo} — MP'
+        //   - mov_financiacion.descripcion = 'Reversa aporte {codigo}'
+        const reversasMovFondo = aporte.deleted_at && aporte.codigo
+          ? movimientos.filter(m => (m.concepto ?? '').startsWith(`Reversa aporte ${aporte.codigo}`))
+          : []
+        const reversasMovFin = aporte.deleted_at && aporte.codigo
+          ? movimientosFinanciacion.filter(m => (m.descripcion ?? '').startsWith(`Reversa aporte ${aporte.codigo}`))
+          : []
+
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-            <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
               <div className="mb-4 flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs uppercase tracking-wide text-slate-500">Detalle del aporte</p>
                   <h2 className="text-lg font-semibold text-gray-900">
                     <span className="font-mono text-slate-600">{aporte.codigo ?? '—'}</span>
                   </h2>
-                  <p className="mt-0.5 text-xs text-gray-500">
-                    {aporte.fecha_aporte} · {aporte.socios?.nombre ?? aporte.aportante ?? '—'} · {aporte.moneda} {fmt(aporte.monto)}
-                    {aporte.deleted_at && <span className="ml-1 text-red-600 font-medium">· Anulado</span>}
-                  </p>
                 </div>
                 <button
                   type="button"
@@ -2507,27 +2577,92 @@ export default function FondosClient({
                 </button>
               </div>
 
+              {/* Cabecera */}
+              <dl className="mb-4 grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="inline text-gray-500">Fecha: </dt>
+                  <dd className="inline text-gray-900">{aporte.fecha_aporte}</dd>
+                </div>
+                <div>
+                  <dt className="inline text-gray-500">Socio: </dt>
+                  <dd className="inline text-gray-900">{aporte.socios?.nombre ?? aporte.aportante ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt className="inline text-gray-500">Importe total: </dt>
+                  <dd className="inline font-semibold tabular-nums text-gray-900">{aporte.moneda} {fmt(aporte.monto)}</dd>
+                </div>
+                <div>
+                  <dt className="inline text-gray-500">Estado: </dt>
+                  <dd className="inline">
+                    {aporte.deleted_at
+                      ? <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 ring-1 ring-red-200">Anulado</span>
+                      : <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">Activo</span>
+                    }
+                  </dd>
+                </div>
+              </dl>
+
+              {/* Imputaciones con mov asociado */}
               <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">
                 Imputaciones {esMixto ? `(${list.length})` : ''}
               </p>
-              {list.length === 0 ? (
+              {imputacionesConMov.length === 0 ? (
                 <p className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-gray-500">
                   Aporte sin imputaciones registradas (legacy pre-FIN2). Destino cabecera: <span className="font-medium">{destinoLabel(aporte.destino_aporte)}</span>.
                 </p>
               ) : (
-                <ul className="space-y-1.5">
-                  {list.map(i => {
+                <ul className="space-y-2">
+                  {imputacionesConMov.map(({ imp: i, movFondo, movFin }) => {
                     const nombreDestino = i.destino_tipo === 'medios_propios'
                       ? `Medios Propios${i.fondos?.nombre ? ` · ${i.fondos.nombre}` : ''}`
                       : `Tercero${i.financiadores ? ` · ${i.financiadores.codigo ? i.financiadores.codigo + ' ' : ''}${i.financiadores.nombre}` : ''}`
                     return (
-                      <li key={i.id} className="flex items-baseline justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                        <span className="font-medium text-gray-800">{nombreDestino}</span>
-                        <span className="tabular-nums text-gray-700">{i.moneda} {fmt(i.monto)}</span>
+                      <li key={i.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="font-medium text-gray-800">{nombreDestino}</span>
+                          <span className="tabular-nums text-gray-700">{i.moneda} {fmt(i.monto)}</span>
+                        </div>
+                        {movFondo && (
+                          <div className="mt-1 text-xs text-gray-500">
+                            <span className="uppercase tracking-wide">Mov. fondo:</span>{' '}
+                            <span className="text-gray-700">{movFondo.fecha} · {movFondo.tipo} · {movFondo.concepto}</span>
+                          </div>
+                        )}
+                        {movFin && (
+                          <div className="mt-1 text-xs text-gray-500">
+                            <span className="uppercase tracking-wide">Mov. financiación:</span>{' '}
+                            <span className="text-gray-700">{movFin.fecha} · {movFin.tipo_movimiento}{movFin.descripcion ? ` · ${movFin.descripcion}` : ''}</span>
+                          </div>
+                        )}
                       </li>
                     )
                   })}
                 </ul>
+              )}
+
+              {/* Movimientos de reversa (si anulado) */}
+              {aporte.deleted_at && (reversasMovFondo.length + reversasMovFin.length) > 0 && (
+                <div className="mt-4">
+                  <p className="mb-2 text-xs uppercase tracking-wide text-red-700">
+                    Movimientos de reversa ({reversasMovFondo.length + reversasMovFin.length})
+                  </p>
+                  <ul className="space-y-1">
+                    {reversasMovFondo.map(m => (
+                      <li key={m.id} className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+                        <span className="uppercase tracking-wide text-red-700">Mov. fondo:</span>{' '}
+                        {m.fecha} · {m.tipo} · {m.concepto}{' '}
+                        <span className="float-right tabular-nums">{fmt(m.monto)}</span>
+                      </li>
+                    ))}
+                    {reversasMovFin.map(m => (
+                      <li key={m.id} className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+                        <span className="uppercase tracking-wide text-red-700">Mov. financiación:</span>{' '}
+                        {m.fecha} · {m.tipo_movimiento}{m.descripcion ? ` · ${m.descripcion}` : ''}{' '}
+                        <span className="float-right tabular-nums">{m.moneda} {fmt(m.importe)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
 
               {aporte.observaciones && (
