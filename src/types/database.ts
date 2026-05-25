@@ -259,6 +259,11 @@ export interface AporteFondo {
   created_at: string
   updated_at: string
   deleted_at: string | null
+  // FIN2.5: trazabilidad de anulación. deleted_at se usa también para marcar
+  // aportes anulados (la RPC anular_aporte_socio popula los 3 campos).
+  anulado_por: string | null
+  anulado_en: string | null
+  motivo_anulacion: string | null
 }
 
 // FIN2.2: detalle de imputaciones de un aporte (split MP + uno o más Terceros).

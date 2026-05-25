@@ -8,10 +8,12 @@ import type {
   FinanciadorPayload, FinanciadorActionResult,
   AporteSocioPayload, AporteSocioActionResult,
   AporteSocioV2Payload,
+  AnularAporteSocioActionResult,
 } from './actions'
 import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
 import DataTable, { type Column } from '@/components/DataTable'
+import RowActionMenu, { type RowActionItem } from '@/components/RowActionMenu'
 
 export interface AporteFondoRow extends AporteFondo {
   fondos: { nombre: string } | null
@@ -159,6 +161,8 @@ interface Props {
   onRegistrarAporteSocio: (data: AporteSocioPayload) => Promise<AporteSocioActionResult>
   // FIN2.4: nueva firma con imputaciones múltiples (split MP + Terceros).
   onRegistrarAporteSocioV2: (data: AporteSocioV2Payload) => Promise<AporteSocioActionResult>
+  // FIN2.5: anula un aporte y genera reversas atómicas.
+  onAnularAporteSocio: (aporte_id: string, motivo?: string | null) => Promise<AnularAporteSocioActionResult>
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -180,6 +184,7 @@ export default function FondosClient({
   onCrearFinanciador,
   onRegistrarAporteSocio,
   onRegistrarAporteSocioV2,
+  onAnularAporteSocio,
 }: Props) {
   const [modal, setModal] = useState<ModalType>('none')
   const [editingFondo, setEditingFondo] = useState<Fondo | null>(null)
@@ -530,6 +535,30 @@ export default function FondosClient({
           {a.observaciones ?? <span className="text-gray-300">—</span>}
         </span>
       ),
+    },
+    {
+      key: 'estado', label: 'Estado',
+      // FIN2.5: derivado de deleted_at. anulado = soft-deleted con metadatos.
+      accessor: a => a.deleted_at ? 'anulado' : 'activo',
+      type: 'enum',
+      enumOptions: [
+        { value: 'activo',  label: 'Activo'  },
+        { value: 'anulado', label: 'Anulado' },
+      ],
+      render: a => a.deleted_at
+        ? (
+          <span
+            className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 ring-1 ring-red-200"
+            title={a.motivo_anulacion ? `Anulado: ${a.motivo_anulacion}` : 'Anulado'}
+          >
+            Anulado
+          </span>
+        )
+        : (
+          <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+            Activo
+          </span>
+        ),
     },
   ]
 
@@ -955,6 +984,22 @@ export default function FondosClient({
     })
   }
 
+  // FIN2.5: handler para anular un aporte vivo. Pide motivo opcional vía prompt.
+  function handleAnularAporte(aporte_id: string, codigo: string | null) {
+    const ref = codigo ?? 'aporte'
+    const motivo = prompt(`Motivo de anulación de ${ref} (opcional):`, '')
+    if (motivo === null) return  // usuario canceló el prompt
+    if (!confirm(`¿Anular ${ref}? Se generarán movimientos de reversa por cada imputación.`)) return
+    startTransition(async () => {
+      const result = await onAnularAporteSocio(aporte_id, motivo.trim() || null)
+      if (!result.ok) {
+        alert(`No se pudo anular: ${result.error}`)
+        return
+      }
+      alert(`${ref} anulado correctamente.`)
+    })
+  }
+
   // FIN2.4: handler que arma payload v2 y llama a registrar_aporte_socio_v2.
   // La RPC valida server-side y es transaccional; este handler solo da feedback
   // rápido al usuario sobre errores de forma.
@@ -1302,11 +1347,28 @@ export default function FondosClient({
           searchTerm={searchAportes}
           searchKeys={['codigo', 'socio', 'financiador', 'destino', 'observaciones', 'moneda']}
           initialSort={{ key: 'codigo', dir: 'desc' }}
+          rowClassName={a => a.deleted_at ? 'opacity-60' : ''}
           emptyMessage={
             aportes.length === 0
               ? 'No hay aportes registrados.'
               : 'No hay aportes que coincidan con los filtros.'
           }
+          rowActions={canWrite ? (a) => {
+            const items: RowActionItem[] = []
+            let tooltip: string | undefined
+            if (!a.deleted_at) {
+              items.push({
+                label: 'Anular',
+                variant: 'danger',
+                onClick: () => handleAnularAporte(a.id, a.codigo),
+              })
+            } else {
+              tooltip = a.motivo_anulacion
+                ? `Anulado: ${a.motivo_anulacion}`
+                : 'Aporte ya anulado.'
+            }
+            return <RowActionMenu items={items} emptyTooltip={tooltip} />
+          } : undefined}
         />
       </div>
 

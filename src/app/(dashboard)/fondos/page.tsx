@@ -5,6 +5,7 @@ import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole } from '@
 import {
   createFondo, updateFondo, deleteFondo, registrarAporte, getFondoDependencies,
   crearSocio, crearFinanciador, registrarAporteSocio, registrarAporteSocioV2,
+  anularAporteSocio,
 } from './actions'
 
 export default async function FondosPage() {
@@ -37,10 +38,12 @@ export default async function FondosPage() {
       .order('nombre'),
 
     // Etapa 1: incluye codigo, socio_id, destino_aporte, financiador_id + joins a socios/financiadores
+    // FIN2.5: SIN filtro deleted_at — los aportes anulados se muestran con
+    // estado visible "Anulado" para mantener trazabilidad. Incluimos
+    // anulado_por/anulado_en/motivo_anulacion.
     supabase
       .from('aportes_fondo')
-      .select('id, codigo, fondo_id, movimiento_id, fecha_aporte, monto, moneda, tipo_aporte, aportante, socio_id, destino_aporte, financiador_id, concepto, comprobante_url, observaciones, created_by, created_at, updated_at, deleted_at, fondos(nombre), socios(nombre), financiadores(nombre, codigo)')
-      .is('deleted_at', null)
+      .select('id, codigo, fondo_id, movimiento_id, fecha_aporte, monto, moneda, tipo_aporte, aportante, socio_id, destino_aporte, financiador_id, concepto, comprobante_url, observaciones, created_by, created_at, updated_at, deleted_at, anulado_por, anulado_en, motivo_anulacion, fondos(nombre), socios(nombre), financiadores(nombre, codigo)')
       .order('fecha_aporte', { ascending: false }),
 
     // Etapa 2B: SELECT con codigo. Si la migración de socios.codigo no se aplicó,
@@ -90,6 +93,26 @@ export default async function FondosPage() {
     sociosData = (fb.data ?? []).map(s => ({ ...s, codigo: null }))
   }
 
+  // FIN2.5: si aportes_fondo.anulado_por/anulado_en/motivo_anulacion aún
+  // no existen (migración FIN2.5 pendiente), retry sin ellas hidratando null.
+  let aportesData = aportesResult.data
+  if (
+    aportesResult.error?.code === '42703' &&
+    /anulado_por|anulado_en|motivo_anulacion/.test(aportesResult.error.message ?? '')
+  ) {
+    console.warn('[fondos] aportes_fondo columnas FIN2.5 no disponibles; retry base')
+    const fb = await supabase
+      .from('aportes_fondo')
+      .select('id, codigo, fondo_id, movimiento_id, fecha_aporte, monto, moneda, tipo_aporte, aportante, socio_id, destino_aporte, financiador_id, concepto, comprobante_url, observaciones, created_by, created_at, updated_at, deleted_at, fondos(nombre), socios(nombre), financiadores(nombre, codigo)')
+      .order('fecha_aporte', { ascending: false })
+    aportesData = (fb.data ?? []).map(a => ({
+      ...a,
+      anulado_por: null,
+      anulado_en: null,
+      motivo_anulacion: null,
+    })) as unknown as typeof aportesResult.data
+  }
+
   // Tolerancia: si movimientos_fondo.aporte_id aún no existe (Etapa 2D SQL
   // pendiente), retry sin aporte_id y hidratar null.
   let movimientosData = movimientosResult.data
@@ -108,7 +131,7 @@ export default async function FondosPage() {
 
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const fondos: Fondo[] = (fondosResult.data ?? []) as Fondo[]
-  const aportes = (aportesResult.data ?? []) as unknown as AporteFondoRow[]
+  const aportes = (aportesData ?? []) as unknown as AporteFondoRow[]
   const socios = (sociosData ?? []) as Socio[]
   const financiadores = (financiadoresResult.data ?? []) as Financiador[]
   const saldosFinanciadores = (saldosFinResult.data ?? []) as SaldoFinanciadorRow[]
@@ -140,6 +163,7 @@ export default async function FondosPage() {
         onCrearFinanciador={crearFinanciador}
         onRegistrarAporteSocio={registrarAporteSocio}
         onRegistrarAporteSocioV2={registrarAporteSocioV2}
+        onAnularAporteSocio={anularAporteSocio}
       />
     </div>
   )

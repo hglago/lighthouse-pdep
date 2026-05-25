@@ -428,3 +428,41 @@ export async function registrarAporteSocioV2(
     return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
   }
 }
+
+// ─── FIN2.5: anular_aporte_socio ────────────────────────────────────────────
+//
+// Llama a la RPC SECURITY DEFINER anular_aporte_socio(aporte_id, motivo).
+// La RPC genera reversas atómicas por cada imputación:
+//   destino_tipo='medios_propios' → movimientos_fondo tipo='debito'
+//   destino_tipo='tercero'        → movimientos_financiacion tipo='reversa'
+// y marca aportes_fondo.deleted_at + anulado_por + anulado_en + motivo.
+
+export type AnularAporteSocioActionResult =
+  | { ok: true; aporte_id: string }
+  | { ok: false; error: string }
+
+export async function anularAporteSocio(
+  aporte_id: string,
+  motivo?: string | null,
+): Promise<AnularAporteSocioActionResult> {
+  try {
+    const supabase = createClient()
+    const { data: result, error } = await supabase.rpc('anular_aporte_socio', {
+      p_aporte_id: aporte_id,
+      p_motivo:    motivo ?? null,
+    })
+    if (error) {
+      console.error('[anularAporteSocio] RPC error:', { code: error.code, message: error.message })
+      return { ok: false, error: cleanDbError(error.message) }
+    }
+    const out = result as { ok: boolean; aporte_id: string } | null
+    if (!out?.aporte_id) {
+      return { ok: false, error: 'La RPC no devolvió aporte_id.' }
+    }
+    revalidatePath('/fondos')
+    return { ok: true, aporte_id: out.aporte_id }
+  } catch (err) {
+    console.error('[anularAporteSocio] unhandled:', err)
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+  }
+}
