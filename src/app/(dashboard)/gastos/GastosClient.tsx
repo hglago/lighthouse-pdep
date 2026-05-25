@@ -6,6 +6,7 @@ import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, Recurren
 import type { ProveedorQuickResult } from '../proveedores/actions'
 import type { FinanciadorPayload, FinanciadorActionResult } from '../fondos/actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
+import { parseMoneyInput, reformatMoneyInput } from '@/lib/money'
 import { createClient as createSupabaseBrowser } from '@/lib/supabase/client'
 import DataTable, { type Column } from '@/components/DataTable'
 import RowActionMenu, { type RowActionItem } from '@/components/RowActionMenu'
@@ -741,13 +742,13 @@ export default function GastosClient({
       proveedor_id: g.proveedor_id ?? '',
       tipo_gasto_id: g.tipo_gasto_id ?? otroTipoId,
       descripcion: g.descripcion,
-      monto: String(g.monto),
+      monto: reformatMoneyInput(String(g.monto)),
       moneda: g.moneda,
       prioridad_pago: String(g.prioridad_pago),
       fecha_gasto: g.fecha_gasto,
       notas: g.notas ?? '',
       tiene_anticipo: g.tiene_anticipo,
-      monto_anticipo: g.monto_anticipo != null ? String(g.monto_anticipo) : '',
+      monto_anticipo: g.monto_anticipo != null ? reformatMoneyInput(String(g.monto_anticipo)) : '',
       fecha_prevista_pago_anticipo: g.fecha_prevista_pago_anticipo ?? '',
       fecha_comprometida_pago_saldo: g.fecha_comprometida_pago_saldo ?? '',
       condiciones_pago_notas: g.condiciones_pago_notas ?? '',
@@ -831,7 +832,7 @@ export default function GastosClient({
     if (isRecurrente) {
       if (!form.fondo_id) { setFormError('No se encontró el fondo operativo RISA. No se puede guardar.'); return }
       if (!form.descripcion.trim()) { setFormError('El concepto es requerido.'); return }
-      const monto = parseFloat(form.monto)
+      const monto = parseMoneyInput(form.monto)
       if (!form.monto || isNaN(monto) || monto <= 0) { setFormError('El monto debe ser mayor a 0.'); return }
       const dia = parseInt(form.dia_vencimiento)
       if (!form.dia_vencimiento || isNaN(dia) || dia < 1 || dia > 28) {
@@ -936,7 +937,7 @@ export default function GastosClient({
           importe_base_servicio: importeBase,
         }
       } else {
-        monto = parseFloat(form.monto)
+        monto = parseMoneyInput(form.monto)
         if (!form.monto || isNaN(monto) || monto <= 0) {
           setFormError('El monto debe ser mayor a 0.')
           return
@@ -946,7 +947,7 @@ export default function GastosClient({
       let monto_anticipo: number | null = null
       let porcentaje_anticipo: number | null = null
       if (form.tiene_anticipo) {
-        monto_anticipo = parseFloat(form.monto_anticipo)
+        monto_anticipo = parseMoneyInput(form.monto_anticipo)
         if (!form.monto_anticipo || isNaN(monto_anticipo) || monto_anticipo <= 0) {
           setFormError('El monto de anticipo debe ser mayor a 0.')
           return
@@ -1746,7 +1747,15 @@ export default function GastosClient({
                       title="Calculado en vivo: horas × valor hora"
                     />
                   ) : (
-                    <input type="number" min="0.01" step="0.01" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })} className={inputCls} placeholder="0.00" />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={form.monto}
+                      onChange={(e) => setForm({ ...form, monto: e.target.value })}
+                      onBlur={(e) => setForm(prev => ({ ...prev, monto: reformatMoneyInput(e.target.value) }))}
+                      className={inputCls}
+                      placeholder="0,00"
+                    />
                   )}
                 </div>
                 <div>
@@ -1995,12 +2004,25 @@ export default function GastosClient({
                             <label className="mb-1 block text-sm font-medium text-gray-700">
                               Monto anticipo <span className="text-red-500">*</span>
                             </label>
-                            <input type="number" min="0.01" step="0.01" value={form.monto_anticipo} onChange={(e) => setForm({ ...form, monto_anticipo: e.target.value })} className={inputCls} placeholder="0.00" />
-                            {form.monto && form.monto_anticipo && !isNaN(parseFloat(form.monto_anticipo)) && parseFloat(form.monto) > 0 && (
-                              <p className="mt-0.5 text-xs text-gray-400">
-                                {Math.round((parseFloat(form.monto_anticipo) / parseFloat(form.monto)) * 10000) / 100}% del total
-                              </p>
-                            )}
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={form.monto_anticipo}
+                              onChange={(e) => setForm({ ...form, monto_anticipo: e.target.value })}
+                              onBlur={(e) => setForm(prev => ({ ...prev, monto_anticipo: reformatMoneyInput(e.target.value) }))}
+                              className={inputCls}
+                              placeholder="0,00"
+                            />
+                            {form.monto && form.monto_anticipo && (() => {
+                              const mAnt  = parseMoneyInput(form.monto_anticipo)
+                              const mTot  = parseMoneyInput(form.monto)
+                              if (!Number.isFinite(mAnt) || !Number.isFinite(mTot) || mTot <= 0) return null
+                              return (
+                                <p className="mt-0.5 text-xs text-gray-400">
+                                  {Math.round((mAnt / mTot) * 10000) / 100}% del total
+                                </p>
+                              )
+                            })()}
                           </div>
                           <div>
                             <label className="mb-1 block text-sm font-medium text-gray-700">Fecha prevista pago anticipo</label>
