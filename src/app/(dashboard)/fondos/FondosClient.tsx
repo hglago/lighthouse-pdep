@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition, useRef, useMemo } from 'react'
-import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo, Socio, Financiador, SaldoFinanciadorRow, MovimientoTipo, DestinoAporte, PosicionGlobalRisaRow, AporteImputacionDetalleRow } from '@/types'
+import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo, Socio, Financiador, SaldoFinanciadorRow, MovimientoTipo, DestinoAporte, PosicionGlobalRisaRow, AporteImputacionDetalleRow, MovimientoFinanciacion } from '@/types'
 import type {
   AportePayload, FondoActionResult, FondoDepsResult,
   SocioPayload, SocioActionResult,
@@ -155,6 +155,9 @@ interface Props {
   // FIN2.7: imputaciones (read-only) con joins fondos/financiadores. Si la
   // tabla aún no existe, llega vacío y la columna Detalle muestra "—".
   imputaciones: AporteImputacionDetalleRow[]
+  // UX-DETAILS (2026-05-25): movimientos_financiacion para "Ver detalle" de
+  // tercero. Volumen bajo: el cliente filtra por financiador_id al abrir modal.
+  movimientosFinanciacion: MovimientoFinanciacion[]
   role: UserRole
   onCreateFondo: (data: { nombre: string; moneda: string; monto_inicial: number; descripcion: string | null }) => Promise<void>
   onUpdateFondo: (id: string, data: { nombre: string; descripcion: string | null; estado: FondoEstado }) => Promise<void>
@@ -182,6 +185,7 @@ export default function FondosClient({
   movimientos,
   posicionGlobal,
   imputaciones,
+  movimientosFinanciacion,
   role,
   onCreateFondo,
   onUpdateFondo,
@@ -209,6 +213,14 @@ export default function FondosClient({
   const [filterAportante, setFilterAportante] = useState('')
 
   const aportesSectionRef = useRef<HTMLDivElement>(null)
+
+  // UX-DETAILS (2026-05-25): "resumen primero, detalle bajo demanda".
+  //   - risaCollapsed: tabla de movimientos RISA escondida por default.
+  //   - terceroDetalleId: id del tercero abierto en modal de detalle, o null.
+  //   - aporteDetalleId: id del aporte abierto en modal de detalle, o null.
+  const [risaCollapsed, setRisaCollapsed] = useState(true)
+  const [terceroDetalleId, setTerceroDetalleId] = useState<string | null>(null)
+  const [aporteDetalleId, setAporteDetalleId] = useState<string | null>(null)
 
   const canWrite = role === 'admin' || role === 'contador'
   const canDelete = role === 'admin'
@@ -570,38 +582,8 @@ export default function FondosClient({
         )
       },
     },
-    {
-      // FIN2.7b: detalle inline solo cuando aporta info adicional (split MP+T).
-      // Para aportes simples (1 imputación) muestra "—" porque Destino ya cubre.
-      // Visible también para aportes anulados — snapshot.
-      key: 'imputaciones', label: 'Detalle',
-      accessor: a => {
-        const list = imputacionesPorAporte.get(a.id) ?? []
-        if (list.length < 2) return ''
-        return list.map(i => `${i.destino_tipo === 'medios_propios' ? 'MP' : 'T'} ${i.fondos?.nombre ?? i.financiadores?.nombre ?? ''} ${i.monto}`).join(' | ')
-      },
-      type: 'text',
-      filterable: false,
-      render: a => {
-        const list = imputacionesPorAporte.get(a.id) ?? []
-        if (list.length < 2) return <span className="text-gray-300">—</span>
-        return (
-          <ul className="space-y-0.5 text-xs text-gray-700">
-            {list.map(i => {
-              const nombreDestino = i.destino_tipo === 'medios_propios'
-                ? `Medios Propios${i.fondos?.nombre ? ` · ${i.fondos.nombre}` : ''}`
-                : `Tercero${i.financiadores ? ` · ${i.financiadores.codigo ? i.financiadores.codigo + ' ' : ''}${i.financiadores.nombre}` : ''}`
-              return (
-                <li key={i.id} className="flex items-baseline justify-between gap-3 whitespace-nowrap">
-                  <span className="truncate">{nombreDestino}</span>
-                  <span className="tabular-nums text-gray-600">{i.moneda} {fmt(i.monto)}</span>
-                </li>
-              )
-            })}
-          </ul>
-        )
-      },
-    },
+    // UX-DETAILS (2026-05-25): columna Detalle inline movida al modal
+    // "Ver detalle" (rowAction). Mantiene la tabla resumida.
     {
       key: 'monto', label: 'Importe',
       accessor: a => a.monto,
@@ -1384,33 +1366,52 @@ export default function FondosClient({
         </div>
       )}
 
-      {/* ── Cuenta corriente RISA ─────────────────────────────────────────── */}
+      {/* ── Cuenta corriente RISA — collapse por default (UX-DETAILS) ───── */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold text-gray-900">
-            Cuenta corriente RISA{risa?.codigo ? ` — ${risa.codigo}` : ''}
-          </h3>
-          <input
-            type="text"
-            value={searchMovimientos}
-            onChange={e => setSearchMovimientos(e.target.value)}
-            placeholder="Buscar… (APO-###, concepto, tipo)"
-            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
-          />
+          <div className="flex items-baseline gap-3">
+            <h3 className="text-base font-semibold text-gray-900">
+              Cuenta corriente RISA{risa?.codigo ? ` — ${risa.codigo}` : ''}
+            </h3>
+            <span className="text-sm text-gray-500">
+              {movimientosRisa.length} movimiento{movimientosRisa.length !== 1 ? 's' : ''}
+              {risa && ` · saldo ${risa.moneda} ${fmt(risa.saldo_actual)}`}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {!risaCollapsed && (
+              <input
+                type="text"
+                value={searchMovimientos}
+                onChange={e => setSearchMovimientos(e.target.value)}
+                placeholder="Buscar… (APO-###, concepto, tipo)"
+                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => setRisaCollapsed(prev => !prev)}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap"
+            >
+              {risaCollapsed ? '▸ Ver movimientos' : '▾ Ocultar movimientos'}
+            </button>
+          </div>
         </div>
-        <DataTable<MovimientoFondoRow>
-          rows={movimientosRisa}
-          columns={movimientosColumns}
-          getRowId={m => m.id}
-          searchTerm={searchMovimientos}
-          searchKeys={['nro_tx', 'concepto', 'tipo']}
-          initialSort={{ key: 'fecha', dir: 'desc' }}
-          emptyMessage={
-            movimientosRisa.length === 0
-              ? 'No hay movimientos en la cuenta corriente.'
-              : 'No hay movimientos que coincidan con los filtros.'
-          }
-        />
+        {!risaCollapsed && (
+          <DataTable<MovimientoFondoRow>
+            rows={movimientosRisa}
+            columns={movimientosColumns}
+            getRowId={m => m.id}
+            searchTerm={searchMovimientos}
+            searchKeys={['nro_tx', 'concepto', 'tipo']}
+            initialSort={{ key: 'fecha', dir: 'desc' }}
+            emptyMessage={
+              movimientosRisa.length === 0
+                ? 'No hay movimientos en la cuenta corriente.'
+                : 'No hay movimientos que coincidan con los filtros.'
+            }
+          />
+        )}
       </div>
 
       {/* ── Deuda pendiente con terceros (v_saldos_financiadores) ──────────── */}
@@ -1437,6 +1438,11 @@ export default function FondosClient({
               ? 'No hay deuda pendiente con terceros.'
               : 'No hay deuda con terceros que coincida con los filtros.'
           }
+          rowActions={(s) => (
+            <RowActionMenu items={[
+              { label: 'Ver detalle', onClick: () => setTerceroDetalleId(s.financiador_id) },
+            ]} />
+          )}
         />
       </div>
 
@@ -1465,22 +1471,21 @@ export default function FondosClient({
               ? 'No hay aportes registrados.'
               : 'No hay aportes que coincidan con los filtros.'
           }
-          rowActions={canWrite ? (a) => {
-            const items: RowActionItem[] = []
-            let tooltip: string | undefined
-            if (!a.deleted_at) {
+          rowActions={(a) => {
+            // UX-DETAILS: "Ver detalle" disponible para todos los roles (read-only).
+            // "Anular" solo si canWrite y aporte no anulado.
+            const items: RowActionItem[] = [
+              { label: 'Ver detalle', onClick: () => setAporteDetalleId(a.id) },
+            ]
+            if (canWrite && !a.deleted_at) {
               items.push({
                 label: 'Anular',
                 variant: 'danger',
                 onClick: () => handleAnularAporte(a.id, a.codigo),
               })
-            } else {
-              tooltip = a.motivo_anulacion
-                ? `Anulado: ${a.motivo_anulacion}`
-                : 'Aporte ya anulado.'
             }
-            return <RowActionMenu items={items} emptyTooltip={tooltip} />
-          } : undefined}
+            return <RowActionMenu items={items} />
+          }}
         />
       </div>
 
@@ -2390,6 +2395,158 @@ export default function FondosClient({
           </div>
         </div>
       )}
+
+      {/* ── UX-DETAILS: Modal Detalle Tercero ──────────────────────────────── */}
+      {terceroDetalleId && (() => {
+        const tercero = financiadores.find(f => f.id === terceroDetalleId)
+        const saldosDelTercero = saldosFinanciadores.filter(s => s.financiador_id === terceroDetalleId)
+        const movs = movimientosFinanciacion
+          .filter(m => m.financiador_id === terceroDetalleId)
+          .sort((a, b) => (b.fecha + b.created_at).localeCompare(a.fecha + a.created_at))
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+            <div className="w-full max-w-3xl rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+              <div className="mb-4 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Cuenta corriente de tercero</p>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {tercero?.codigo ? <span className="font-mono text-slate-600">{tercero.codigo} </span> : null}
+                    {tercero?.nombre ?? 'Tercero'}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTerceroDetalleId(null)}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  Cerrar
+                </button>
+              </div>
+
+              {saldosDelTercero.length > 0 && (
+                <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm space-y-1">
+                  {saldosDelTercero.map(s => (
+                    <div key={s.moneda} className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-xs uppercase tracking-wide text-slate-500">{s.moneda}</span>
+                      <span className="tabular-nums">
+                        Generada: <span className="text-gray-800">{fmt(s.total_deuda_generada)}</span>
+                        {' · '}Cancelada: <span className="text-emerald-700">{fmt(s.total_cancelado)}</span>
+                        {' · '}Saldo pendiente: <span className="font-semibold text-amber-800">{fmt(s.saldo_pendiente)}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">Movimientos ({movs.length})</p>
+              {movs.length === 0 ? (
+                <p className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-gray-500">
+                  Sin movimientos registrados.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Fecha</th>
+                        <th className="px-3 py-2 text-left">Tipo</th>
+                        <th className="px-3 py-2 text-left">Descripción</th>
+                        <th className="px-3 py-2 text-right">Importe</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {movs.map(m => (
+                        <tr key={m.id}>
+                          <td className="px-3 py-2 whitespace-nowrap text-gray-600">{m.fecha}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-700">
+                              {m.tipo_movimiento}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-gray-700">{m.descripcion ?? <span className="text-gray-300">—</span>}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {m.moneda} {fmt(m.importe)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ── UX-DETAILS: Modal Detalle Aporte ───────────────────────────────── */}
+      {aporteDetalleId && (() => {
+        const aporte = aportes.find(a => a.id === aporteDetalleId)
+        if (!aporte) return null
+        const list = imputacionesPorAporte.get(aporte.id) ?? []
+        const esMixto = list.length >= 2
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+            <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+              <div className="mb-4 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Detalle del aporte</p>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    <span className="font-mono text-slate-600">{aporte.codigo ?? '—'}</span>
+                  </h2>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    {aporte.fecha_aporte} · {aporte.socios?.nombre ?? aporte.aportante ?? '—'} · {aporte.moneda} {fmt(aporte.monto)}
+                    {aporte.deleted_at && <span className="ml-1 text-red-600 font-medium">· Anulado</span>}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAporteDetalleId(null)}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  Cerrar
+                </button>
+              </div>
+
+              <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">
+                Imputaciones {esMixto ? `(${list.length})` : ''}
+              </p>
+              {list.length === 0 ? (
+                <p className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-gray-500">
+                  Aporte sin imputaciones registradas (legacy pre-FIN2). Destino cabecera: <span className="font-medium">{destinoLabel(aporte.destino_aporte)}</span>.
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {list.map(i => {
+                    const nombreDestino = i.destino_tipo === 'medios_propios'
+                      ? `Medios Propios${i.fondos?.nombre ? ` · ${i.fondos.nombre}` : ''}`
+                      : `Tercero${i.financiadores ? ` · ${i.financiadores.codigo ? i.financiadores.codigo + ' ' : ''}${i.financiadores.nombre}` : ''}`
+                    return (
+                      <li key={i.id} className="flex items-baseline justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                        <span className="font-medium text-gray-800">{nombreDestino}</span>
+                        <span className="tabular-nums text-gray-700">{i.moneda} {fmt(i.monto)}</span>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+
+              {aporte.observaciones && (
+                <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Observaciones</p>
+                  <p className="mt-0.5 whitespace-pre-wrap text-gray-700">{aporte.observaciones}</p>
+                </div>
+              )}
+
+              {aporte.deleted_at && aporte.motivo_anulacion && (
+                <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm">
+                  <p className="text-xs uppercase tracking-wide text-red-700">Motivo de anulación</p>
+                  <p className="mt-0.5 whitespace-pre-wrap text-red-800">{aporte.motivo_anulacion}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

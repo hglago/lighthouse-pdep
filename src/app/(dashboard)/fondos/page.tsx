@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import FondosClient, { type AporteFondoRow, type MovimientoFondoRow } from './FondosClient'
-import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole, PosicionGlobalRisaRow, AporteImputacionDetalleRow } from '@/types'
+import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole, PosicionGlobalRisaRow, AporteImputacionDetalleRow, MovimientoFinanciacion } from '@/types'
 import {
   createFondo, updateFondo, deleteFondo, registrarAporte, getFondoDependencies,
   crearSocio, crearFinanciador, registrarAporteSocio, registrarAporteSocioV2,
@@ -25,6 +25,7 @@ export default async function FondosPage() {
     movimientosResult,
     posicionGlobalResult,
     imputacionesResult,
+    movFinanciacionResult,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -92,6 +93,15 @@ export default async function FondosPage() {
       .from('aporte_imputaciones')
       .select('id, aporte_id, destino_tipo, fondo_id, financiador_id, monto, moneda, movimiento_fondo_id, movimiento_financiacion_id, created_at, fondos(nombre), financiadores(codigo, nombre)')
       .order('created_at'),
+
+    // UX-DETAILS (2026-05-25): movimientos_financiacion para el modal
+    // "Ver detalle" de cada tercero. Volumen bajo en dev/early-stage, OK
+    // traer todos y filtrar por financiador_id en cliente. Joins mínimos.
+    supabase
+      .from('movimientos_financiacion')
+      .select('id, fecha, financiador_id, tipo_movimiento, importe, moneda, gasto_id, pago_id, aporte_id, socio_id, descripcion, created_by, created_at')
+      .order('fecha', { ascending: false })
+      .order('created_at', { ascending: false }),
   ])
 
   // Tolerancia: si socios.codigo aún no existe (Etapa 2B SQL pendiente), retry
@@ -171,6 +181,14 @@ export default async function FondosPage() {
   }
   const imputaciones = (imputacionesResult.data ?? []) as unknown as AporteImputacionDetalleRow[]
 
+  // UX-DETAILS: movimientos_financiacion para detalle por tercero. Tolerante:
+  // si la tabla aún no existe (Etapa 1 pendiente), array vacío.
+  if (movFinanciacionResult.error) {
+    console.warn('[fondos] movimientos_financiacion no disponible aún.',
+      movFinanciacionResult.error.code, movFinanciacionResult.error.message)
+  }
+  const movimientosFinanciacion = (movFinanciacionResult.data ?? []) as MovimientoFinanciacion[]
+
   return (
     <div className="space-y-6">
       <div>
@@ -189,6 +207,7 @@ export default async function FondosPage() {
         movimientos={movimientos}
         posicionGlobal={posicionGlobal}
         imputaciones={imputaciones}
+        movimientosFinanciacion={movimientosFinanciacion}
         role={role}
         onCreateFondo={createFondo}
         onUpdateFondo={updateFondo}
