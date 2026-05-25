@@ -2,7 +2,15 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import type { PagoTipo } from '@/types'
+import { assertRole } from '@/lib/auth/guards'
+import type { PagoTipo, UserRole } from '@/types'
+
+// Fase 2C.2b (2026-05-25): pagos = operación financiera crítica.
+// Registrar y anular pagos requieren admin o supervisor.
+// Legacy 'contador' incluido por compatibilidad histórica (operaba pagos).
+// USER, OPERADOR, REVISOR, VISUALIZADOR excluidos.
+const ROLES_PAGOS_ESCRITURA: UserRole[] = ['admin', 'supervisor', 'contador']
+const ROLES_PAGOS_ANULAR: UserRole[] = ['admin', 'supervisor', 'contador']
 
 export type PagoPayload = {
   fondo_id: string
@@ -102,6 +110,10 @@ export async function createPagoYConfirmar(
   data: PagoPayload
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
+    // Fase 2C.2b: guard server-side. Solo admin/supervisor (+ contador legacy).
+    const guard = await assertRole(ROLES_PAGOS_ESCRITURA)
+    if (!guard.ok) return guard
+
     const supabase = createClient()
     const auth = await supabase.auth.getUser()
     if (!auth.data?.user) return { ok: false, error: 'No autenticado' }
@@ -158,6 +170,11 @@ export async function createPagoYConfirmar(
 }
 
 export async function anularPago(id: string) {
+  // Fase 2C.2b: anular pago = reversa financiera. Solo admin/supervisor
+  // (+ contador legacy). USER y OPERADOR explícitamente excluidos.
+  const guard = await assertRole(ROLES_PAGOS_ANULAR)
+  if (!guard.ok) throw new Error(guard.error)
+
   const supabase = createClient()
   const { error } = await supabase.rpc('fn_anular_pago', { p_pago_id: id })
   if (error) throw new Error(cleanDbError(error.message))
