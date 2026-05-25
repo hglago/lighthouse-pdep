@@ -883,6 +883,8 @@ export default function PagosClient({
   // expresan, así que en UI mostramos solo lo que viene después del separador.
   // El concepto original se conserva en title para tooltip y en DB/OP intacto.
   const pagosRegistradosColumns = useMemo<Column<PagoRow>[]>(() => [
+    // UX-PAGOS-COLUMNAS-ORDEN (2026-05-25): orden alineado con Obligaciones
+    // pendientes — Tipo / Proveedor / Concepto / Canal como bloque central.
     {
       key: 'nro',
       label: 'Nro',
@@ -912,11 +914,29 @@ export default function PagosClient({
       type: 'text',
     },
     {
-      key: 'fecha',
-      label: 'Fecha',
-      accessor: p => p.fecha_pago,
-      render: p => <span className="text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</span>,
-      type: 'date',
+      key: 'tipo',
+      label: 'Tipo',
+      accessor: p => p.tipo,
+      render: p => (
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${TIPO_COLORS[p.tipo]}`}>
+          {TIPO_LABELS[p.tipo]}
+        </span>
+      ),
+      type: 'enum',
+      enumOptions: (Object.keys(TIPO_LABELS) as PagoTipo[]).map(k => ({ value: k, label: TIPO_LABELS[k] })),
+      className: 'hidden sm:table-cell',
+    },
+    {
+      key: 'proveedor',
+      label: 'Proveedor',
+      accessor: p => p.proveedores?.nombre ?? '',
+      render: p => {
+        const nombre = p.proveedores?.nombre
+        if (!nombre) return <span className="text-gray-300">—</span>
+        return <span className="block max-w-[160px] truncate" title={nombre}>{nombre}</span>
+      },
+      type: 'text',
+      className: 'hidden md:table-cell',
     },
     {
       key: 'concepto',
@@ -940,40 +960,6 @@ export default function PagosClient({
         )
       },
       type: 'text',
-    },
-    {
-      key: 'tipo',
-      label: 'Tipo',
-      accessor: p => p.tipo,
-      render: p => (
-        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${TIPO_COLORS[p.tipo]}`}>
-          {TIPO_LABELS[p.tipo]}
-        </span>
-      ),
-      type: 'enum',
-      enumOptions: (Object.keys(TIPO_LABELS) as PagoTipo[]).map(k => ({ value: k, label: TIPO_LABELS[k] })),
-      className: 'hidden sm:table-cell',
-    },
-    {
-      key: 'pago',
-      label: 'Pago',
-      accessor: p => modalidadPorPagoId.get(p.id) ?? 'desconocida',
-      render: p => {
-        const m = modalidadPorPagoId.get(p.id) ?? 'desconocida'
-        return (
-          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${MODALIDAD_COLORS[m]}`}>
-            {MODALIDAD_LABELS[m]}
-          </span>
-        )
-      },
-      type: 'enum',
-      enumOptions: [
-        { value: 'total', label: 'Total' },
-        { value: 'parcial', label: 'Parcial' },
-        { value: 'anticipo', label: '—' },
-        { value: 'desconocida', label: '—' },
-      ],
-      className: 'hidden sm:table-cell',
     },
     {
       // UX-PAGOS-CANAL-COLUMNA (2026-05-25): reemplaza columna "Fondo" por
@@ -1002,16 +988,32 @@ export default function PagosClient({
       className: 'hidden lg:table-cell',
     },
     {
-      key: 'proveedor',
-      label: 'Proveedor',
-      accessor: p => p.proveedores?.nombre ?? '',
+      key: 'fecha',
+      label: 'Fecha',
+      accessor: p => p.fecha_pago,
+      render: p => <span className="text-sm text-gray-500 whitespace-nowrap">{p.fecha_pago}</span>,
+      type: 'date',
+    },
+    {
+      key: 'pago',
+      label: 'Pago',
+      accessor: p => modalidadPorPagoId.get(p.id) ?? 'desconocida',
       render: p => {
-        const nombre = p.proveedores?.nombre
-        if (!nombre) return <span className="text-gray-300">—</span>
-        return <span className="block max-w-[160px] truncate" title={nombre}>{nombre}</span>
+        const m = modalidadPorPagoId.get(p.id) ?? 'desconocida'
+        return (
+          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${MODALIDAD_COLORS[m]}`}>
+            {MODALIDAD_LABELS[m]}
+          </span>
+        )
       },
-      type: 'text',
-      className: 'hidden md:table-cell',
+      type: 'enum',
+      enumOptions: [
+        { value: 'total', label: 'Total' },
+        { value: 'parcial', label: 'Parcial' },
+        { value: 'anticipo', label: '—' },
+        { value: 'desconocida', label: '—' },
+      ],
+      className: 'hidden sm:table-cell',
     },
     {
       key: 'monto',
