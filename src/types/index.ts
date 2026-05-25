@@ -14,6 +14,8 @@ export type {
   AporteImputacionDetalleRow,
   // FIN2.6: vista única de Posición Global RISA multi-moneda
   PosicionGlobalRisaRow, PosicionGlobalDetalleFondo, PosicionGlobalDetalleTercero,
+  // TIPOS-GASTO (2026-05-25): clasificación analítica de gastos
+  TipoGasto,
 } from './database'
 
 export const ROLE_LABELS: Record<string, string> = {

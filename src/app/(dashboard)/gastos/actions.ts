@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase/server'
 export type GastoPayload = {
   fondo_id: string
   proveedor_id: string
+  // TIPOS-GASTO: clasificación analítica. Null → trigger DB asigna OTRO.
+  tipo_gasto_id: string | null
   descripcion: string
   monto: number
   moneda: string
@@ -69,7 +71,8 @@ function normalizeGasto(data: GastoPayload): GastoPayload | { error: string } {
   return cleaned
 }
 
-// Detecta error 42703 sobre columnas snapshot servicio (P1) o forma_cancelacion (Etapa 1).
+// Detecta error 42703 sobre columnas snapshot servicio (P1), forma_cancelacion
+// (Etapa 1) o tipo_gasto_id (TIPOS-GASTO).
 function isOptionalColumnMissingError(err: { code?: string; message?: string } | null | undefined): boolean {
   if (!err) return false
   if (err.code !== '42703') return false
@@ -83,7 +86,8 @@ function isOptionalColumnMissingError(err: { code?: string; message?: string } |
     msg.includes('porcentaje_uplift_snapshot') ||
     msg.includes('importe_base_servicio') ||
     msg.includes('forma_cancelacion') ||
-    msg.includes('financiador_id')
+    msg.includes('financiador_id') ||
+    msg.includes('tipo_gasto_id')
   )
 }
 
@@ -96,6 +100,8 @@ function stripCamposOpcionales<T extends Record<string, unknown>>(p: T): Record<
     horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     forma_cancelacion, financiador_id,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    tipo_gasto_id,
     ...rest
   } = p
   return rest
@@ -271,7 +277,11 @@ export type GastoRecurrentePayload = {
   fondo_id: string
   proveedor_id: string | null
   concepto: string
+  // categoria (legacy): DEPRECADO en UI desde TIPOS-GASTO (2026-05-25). Se
+  // sigue aceptando en el payload por compatibilidad, pero la UI no la setea.
   categoria: string | null
+  // TIPOS-GASTO: clasificación analítica. Null → trigger DB asigna OTRO.
+  tipo_gasto_id: string | null
   monto: number
   moneda: string
   dia_vencimiento: number
@@ -643,4 +653,62 @@ export async function removeComprobanteGasto(id: string) {
   if (!rows || rows.length === 0)
     throw new Error('Sin permiso para limpiar comprobante.')
   revalidatePath('/gastos')
+}
+
+// ─── TIPOS-GASTO (2026-05-25) ─────────────────────────────────────────────────
+
+export type TipoGastoQuickPayload = {
+  codigo: string                 // ya viene trim + upper desde la UI
+  nombre: string                 // ya viene trim desde la UI
+  descripcion: string | null
+}
+
+export type TipoGastoQuickResult =
+  | { ok: true; id: string; codigo: string; nombre: string }
+  | { ok: false; error: string }
+
+export async function crearTipoGasto(data: TipoGastoQuickPayload): Promise<TipoGastoQuickResult> {
+  try {
+    const supabase = createClient()
+    const authResult = await supabase.auth.getUser()
+    const user = authResult.data?.user
+    if (!user) return { ok: false, error: 'No autenticado.' }
+
+    const codigo = data.codigo.trim().toUpperCase()
+    const nombre = data.nombre.trim()
+    const descripcion = data.descripcion?.trim() || null
+
+    // Validaciones inline (la UI ya valida; defensa adicional aquí).
+    if (!codigo) return { ok: false, error: 'El código es requerido.' }
+    if (!nombre) return { ok: false, error: 'El nombre es requerido.' }
+    if (codigo.length < 2 || codigo.length > 12) {
+      return { ok: false, error: 'El código debe tener entre 2 y 12 caracteres.' }
+    }
+    if (/\s/.test(codigo)) return { ok: false, error: 'El código no puede tener espacios.' }
+
+    const { data: row, error } = await supabase
+      .from('tipos_gasto')
+      .insert({ codigo, nombre, descripcion, created_by: user.id })
+      .select('id, codigo, nombre')
+      .single()
+
+    if (error) {
+      // 23505 = unique violation (codigo duplicado).
+      if (error.code === '23505') {
+        return { ok: false, error: `Ya existe un tipo de gasto con código "${codigo}".` }
+      }
+      // 42P01 = tabla no existe (migración no aplicada).
+      if (error.code === '42P01') {
+        return { ok: false, error: 'La tabla tipos_gasto no está disponible. Aplicá la migración TIPOS-GASTO primero.' }
+      }
+      return { ok: false, error: error.message }
+    }
+    if (!row) return { ok: false, error: 'Insert sin retorno.' }
+
+    revalidatePath('/gastos')
+    revalidatePath('/gastos-recurrentes')
+    return { ok: true, id: row.id, codigo: row.codigo, nombre: row.nombre }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Error desconocido.' }
+  }
 }

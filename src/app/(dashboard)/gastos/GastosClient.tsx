@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useTransition, useMemo } from 'react'
-import type { Fondo, Proveedor, Financiador, UserRole, GastoEstado, PagoEstado, PagoTipo } from '@/types'
-import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult, BulkGastoResult } from './actions'
+import type { Fondo, Proveedor, Financiador, UserRole, GastoEstado, PagoEstado, PagoTipo, TipoGasto } from '@/types'
+import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult, BulkGastoResult, TipoGastoQuickPayload, TipoGastoQuickResult } from './actions'
 import type { ProveedorQuickResult } from '../proveedores/actions'
 import type { FinanciadorPayload, FinanciadorActionResult } from '../fondos/actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
@@ -12,6 +12,7 @@ import RowActionMenu, { type RowActionItem } from '@/components/RowActionMenu'
 import DetalleServicioBlock from '@/components/DetalleServicioBlock'
 import FinanciadorSelect from '@/components/FinanciadorSelect'
 import FinanciadorQuickCreateModal from '@/components/FinanciadorQuickCreateModal'
+import TipoGastoQuickCreateModal from '@/components/TipoGastoQuickCreateModal'
 
 // Subconjunto del proveedor que necesita el modal: nombre + campos snapshot.
 type ProveedorParaGasto = Pick<Proveedor, 'id' | 'nombre' | 'permite_horas_servicio' | 'valor_hora' | 'tiene_uplift' | 'porcentaje_uplift'>
@@ -59,10 +60,14 @@ export interface GastoRow {
   periodo: string | null
   created_by: string
   created_at: string
+  // TIPOS-GASTO: clasificación analítica. Trigger DB asigna OTRO si NULL.
+  tipo_gasto_id: string | null
   fondos: { nombre: string; moneda: string } | null
   proveedores: { nombre: string } | null
   // P3a-fc: financiador joined (cuando forma_cancelacion='financiador').
   financiadores: { id: string; codigo: string | null; nombre: string } | null
+  // TIPOS-GASTO: joined del tipo (codigo + nombre para columna/export).
+  tipos_gasto: { id: string; codigo: string; nombre: string } | null
 }
 
 export interface PagoDeGasto {
@@ -81,7 +86,10 @@ export interface GastoRecurrenteRow {
   fondo_id: string
   proveedor_id: string | null
   concepto: string
+  // categoria (legacy): DEPRECADA en UI desde TIPOS-GASTO. Columna sigue en DB.
   categoria: string | null
+  // TIPOS-GASTO
+  tipo_gasto_id: string | null
   monto: number
   moneda: string
   dia_vencimiento: number
@@ -94,6 +102,7 @@ export interface GastoRecurrenteRow {
   created_at: string
   fondos: { nombre: string; moneda: string } | null
   proveedores: { nombre: string } | null
+  tipos_gasto: { id: string; codigo: string; nombre: string } | null
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -151,6 +160,8 @@ interface FormState {
   // common
   fondo_id: string
   proveedor_id: string
+  // TIPOS-GASTO: ID del tipo. '' inicial; openModal lo setea a OTRO si hay tipos.
+  tipo_gasto_id: string
   descripcion: string
   monto: string
   moneda: string
@@ -188,6 +199,7 @@ const EMPTY_FORM: FormState = {
   es_recurrente: false,
   fondo_id: '',
   proveedor_id: '',
+  tipo_gasto_id: '',
   descripcion: '',
   monto: '',
   moneda: '',
@@ -223,6 +235,9 @@ interface Props {
   fondos: Pick<Fondo, 'id' | 'codigo' | 'nombre' | 'moneda'>[]
   proveedores: ProveedorParaGasto[]
   financiadores: Financiador[]
+  // TIPOS-GASTO: tipos activos para el select del modal. Empty array si la
+  // migración aún no se aplicó (page.tsx tolera 42P01 con []).
+  tiposGasto: TipoGasto[]
   pagosDeGastos: PagoDeGasto[]
   role: UserRole
   onCreateGasto: (
@@ -248,6 +263,8 @@ interface Props {
   onBulkRechazar: (ids: string[]) => Promise<BulkGastoResult>
   onBulkDelete: (ids: string[]) => Promise<BulkGastoResult>
   onCrearFinanciador: (data: FinanciadorPayload) => Promise<FinanciadorActionResult>
+  // TIPOS-GASTO: alta inline desde el modal de gasto.
+  onCrearTipoGasto: (data: TipoGastoQuickPayload) => Promise<TipoGastoQuickResult>
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -258,6 +275,7 @@ export default function GastosClient({
   fondos,
   proveedores,
   financiadores,
+  tiposGasto,
   pagosDeGastos,
   role,
   onCreateGasto,
@@ -274,6 +292,7 @@ export default function GastosClient({
   onBulkRechazar,
   onBulkDelete,
   onCrearFinanciador,
+  onCrearTipoGasto,
 }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('gastos')
   const [searchGastos, setSearchGastos] = useState('')
@@ -506,6 +525,18 @@ export default function GastosClient({
       className: 'hidden md:table-cell',
     },
     {
+      // TIPOS-GASTO: columna analítica con filtro enum por codigo.
+      key: 'tipo_gasto',
+      label: 'Tipo',
+      accessor: g => g.tipos_gasto?.codigo ?? '',
+      render: g => g.tipos_gasto
+        ? <span className="inline-flex rounded px-1.5 py-0.5 text-xs font-medium bg-slate-100 text-slate-700" title={g.tipos_gasto.nombre}>{g.tipos_gasto.codigo}</span>
+        : <span className="text-gray-300">—</span>,
+      type: 'enum',
+      enumOptions: effectiveTipos.map(t => ({ value: t.codigo, label: `${t.codigo} — ${t.nombre}` })),
+      className: 'hidden sm:table-cell',
+    },
+    {
       key: 'monto',
       label: 'Monto',
       accessor: g => g.monto,
@@ -600,6 +631,45 @@ export default function GastosClient({
   const risaIdInicial = fondoRisa?.id ?? ''
   const risaMonedaInicial = fondoRisa?.moneda ?? 'ARS'
 
+  // TIPOS-GASTO: lista de tipos visible al usuario + alta inline. La prop
+  // `tiposGasto` puede crecer en runtime cuando el user crea uno nuevo.
+  const [localExtraTipos, setLocalExtraTipos] = useState<TipoGasto[]>([])
+  const [quickTipoOpen, setQuickTipoOpen] = useState(false)
+  const effectiveTipos = useMemo<TipoGasto[]>(
+    () => [...tiposGasto, ...localExtraTipos],
+    [tiposGasto, localExtraTipos]
+  )
+  const otroTipoId = useMemo(
+    () => effectiveTipos.find(t => t.codigo === 'OTRO')?.id ?? '',
+    [effectiveTipos]
+  )
+
+  function handleTipoGastoCreated(result: { id: string; codigo: string; nombre: string }) {
+    // Append a lista local + autoseleccionar en el form.
+    setLocalExtraTipos(prev =>
+      prev.some(t => t.id === result.id) ? prev : [...prev, {
+        id: result.id,
+        codigo: result.codigo,
+        nombre: result.nombre,
+        descripcion: null,
+        activo: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        created_by: null,
+      }]
+    )
+    setForm(prev => ({ ...prev, tipo_gasto_id: result.id }))
+    setQuickTipoOpen(false)
+  }
+
+  function handleTipoGastoSelectChange(value: string) {
+    if (value === '__NEW__') {
+      setQuickTipoOpen(true)
+      return
+    }
+    setForm(prev => ({ ...prev, tipo_gasto_id: value }))
+  }
+
   function handleEsRecurrenteToggle(checked: boolean) {
     setForm((prev) => ({
       ...prev,
@@ -638,6 +708,8 @@ export default function GastosClient({
       es_recurrente: tipo === 'recurrente',
       fecha_gasto: todayIso(),
       fecha_inicio: todayIso(),
+      // TIPOS-GASTO: pre-selección de OTRO si hay tipos cargados.
+      tipo_gasto_id: otroTipoId,
     })
     setFormError('')
     setModalOpen(true)
@@ -649,6 +721,7 @@ export default function GastosClient({
       es_recurrente: false,
       fondo_id: g.fondo_id,
       proveedor_id: g.proveedor_id ?? '',
+      tipo_gasto_id: g.tipo_gasto_id ?? otroTipoId,
       descripcion: g.descripcion,
       monto: String(g.monto),
       moneda: g.moneda,
@@ -687,6 +760,7 @@ export default function GastosClient({
       es_recurrente: true,
       fondo_id: r.fondo_id,
       proveedor_id: r.proveedor_id ?? '',
+      tipo_gasto_id: r.tipo_gasto_id ?? otroTipoId,
       descripcion: r.concepto,
       monto: String(r.monto),
       moneda: r.moneda,
@@ -752,7 +826,11 @@ export default function GastosClient({
         fondo_id: form.fondo_id,
         proveedor_id: form.proveedor_id || null,
         concepto: form.descripcion.trim(),
-        categoria: form.categoria.trim() || null,
+        // TIPOS-GASTO: categoria queda en null desde la UI (DEPRECADO).
+        // tipo_gasto_id la reemplaza. Si en edit el recurrente venía con
+        // categoria viva, se preserva en DB (no la pisamos a null).
+        categoria: editing && editing.tipo === 'recurrente' ? editing.row.categoria : null,
+        tipo_gasto_id: form.tipo_gasto_id || null,
         monto,
         moneda: form.moneda,
         dia_vencimiento: dia,
@@ -865,6 +943,7 @@ export default function GastosClient({
       const payload: GastoPayload = {
         fondo_id: form.fondo_id,
         proveedor_id: form.proveedor_id || '',
+        tipo_gasto_id: form.tipo_gasto_id || null,
         descripcion: form.descripcion.trim(),
         monto,
         moneda: form.moneda,
@@ -974,6 +1053,7 @@ export default function GastosClient({
         proveedor_id: r.proveedor_id,
         concepto: r.concepto,
         categoria: r.categoria,
+        tipo_gasto_id: r.tipo_gasto_id,
         monto: r.monto,
         moneda: r.moneda,
         dia_vencimiento: r.dia_vencimiento,
@@ -1061,6 +1141,9 @@ export default function GastosClient({
       fecha: g.fecha_gasto,
       proveedor: g.proveedores?.nombre ?? '',
       concepto: g.descripcion,
+      // TIPOS-GASTO: clasificación analítica.
+      tipo_gasto_codigo: g.tipos_gasto?.codigo ?? '',
+      tipo_gasto_nombre: g.tipos_gasto?.nombre ?? '',
       fondo: g.fondos?.nombre ?? '',
       monto: g.monto,
       moneda: g.moneda,
@@ -1080,6 +1163,10 @@ export default function GastosClient({
       fecha: r.fecha_inicio,
       proveedor: r.proveedores?.nombre ?? '',
       concepto: r.concepto,
+      // TIPOS-GASTO: clasificación analítica. La columna legacy "categoria"
+      // queda fuera del export (DEPRECADA).
+      tipo_gasto_codigo: r.tipos_gasto?.codigo ?? '',
+      tipo_gasto_nombre: r.tipos_gasto?.nombre ?? '',
       fondo: r.fondos?.nombre ?? '',
       monto: r.monto,
       moneda: r.moneda,
@@ -1118,7 +1205,8 @@ export default function GastosClient({
         <div>
           <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{r.concepto}</div>
           <div className="flex gap-1 mt-0.5 items-center">
-            {r.categoria && <span className="text-xs text-gray-400">{r.categoria}</span>}
+            {/* TIPOS-GASTO: categoria legacy ya no se muestra (DEPRECADO).
+                El Tipo va en su propia columna. */}
             {r.prioridad_pago <= 2 && (
               <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-700">{PRIORIDAD_LABELS[r.prioridad_pago]}</span>
             )}
@@ -1142,6 +1230,18 @@ export default function GastosClient({
       render: r => r.proveedores?.nombre ?? <span className="text-gray-300">—</span>,
       type: 'text',
       className: 'hidden md:table-cell',
+    },
+    {
+      // TIPOS-GASTO: columna analítica en recurrentes.
+      key: 'tipo_gasto',
+      label: 'Tipo',
+      accessor: r => r.tipos_gasto?.codigo ?? '',
+      render: r => r.tipos_gasto
+        ? <span className="inline-flex rounded px-1.5 py-0.5 text-xs font-medium bg-slate-100 text-slate-700" title={r.tipos_gasto.nombre}>{r.tipos_gasto.codigo}</span>
+        : <span className="text-gray-300">—</span>,
+      type: 'enum',
+      enumOptions: effectiveTipos.map(t => ({ value: t.codigo, label: `${t.codigo} — ${t.nombre}` })),
+      className: 'hidden sm:table-cell',
     },
     {
       key: 'dia',
@@ -1574,6 +1674,26 @@ export default function GastosClient({
                 </div>
               </div>
 
+              {/* TIPOS-GASTO: select Tipo de gasto + alta inline (solo modal gasto). */}
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Tipo de gasto <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={form.tipo_gasto_id}
+                  onChange={(e) => handleTipoGastoSelectChange(e.target.value)}
+                  className={inputCls}
+                >
+                  {effectiveTipos.length === 0 && <option value="">— sin tipos cargados —</option>}
+                  {effectiveTipos.map(t => (
+                    <option key={t.id} value={t.id}>{t.codigo} — {t.nombre}</option>
+                  ))}
+                  {canWrite && (
+                    <option value="__NEW__">+ Nuevo tipo de gasto…</option>
+                  )}
+                </select>
+              </div>
+
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
                   Concepto <span className="text-red-500">*</span>
@@ -1989,13 +2109,11 @@ export default function GastosClient({
               )}
 
               {/* ─── Campos exclusivos: Recurrente ────────────────────────── */}
+              {/* TIPOS-GASTO (2026-05-25): el campo Categoría libre fue
+                  reemplazado por el select Tipo de gasto (ya renderizado
+                  arriba con los demás campos comunes). */}
               {isRecurrenteMode && (
                 <>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Categoría</label>
-                    <input type="text" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })} className={inputCls} placeholder="Ej: Servicios, Alquileres" />
-                  </div>
-
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div>
                       <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -2059,6 +2177,14 @@ export default function GastosClient({
         onClose={() => setQuickFinanOpen(false)}
         onCreate={onCrearFinanciador}
         onCreated={handleFinanciadorCreated}
+      />
+
+      {/* TIPOS-GASTO: Modal Quick Crear Tipo de gasto */}
+      <TipoGastoQuickCreateModal
+        open={quickTipoOpen}
+        onClose={() => setQuickTipoOpen(false)}
+        onCreate={onCrearTipoGasto}
+        onCreated={handleTipoGastoCreated}
       />
 
       {/* Modal Quick Crear Proveedor — sibling overlay sobre el modal de gasto */}

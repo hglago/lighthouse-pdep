@@ -65,11 +65,27 @@ export interface Proveedor {
 // Genera deuda/movimientos solo cuando se carga el Pago — no acá.
 export type FormaCancelacion = 'risa' | 'financiador'
 
+// TIPOS-GASTO (2026-05-25): clasificación analítica de un gasto, ortogonal
+// al codigo operativo. UI exige selección con default OTRO. Trigger
+// fn_default_tipo_gasto_otro garantiza no-NULL incluso si la UI lo omite.
+export interface TipoGasto {
+  id: string
+  codigo: string       // INFRA, MKTG, RRHH, VIAT, ADM, SERV, OTRO + altas del user
+  nombre: string
+  descripcion: string | null
+  activo: boolean
+  created_at: string
+  updated_at: string
+  created_by: string | null
+}
+
 export interface Gasto {
   id: string
   codigo: string | null  // G000001, G000002... generado por trigger DB. Null hasta aplicar migración.
   fondo_id: string
   proveedor_id: string | null
+  // TIPOS-GASTO: nullable hasta aplicar migración; trigger DB asigna OTRO por default.
+  tipo_gasto_id: string | null
   // P3a-fc: forma de cancelación + financiador (FK opcional).
   // CHECK en DB: si forma='risa' → financiador_id IS NULL; si forma='financiador' → financiador_id IS NOT NULL.
   forma_cancelacion: FormaCancelacion
@@ -194,7 +210,12 @@ export interface GastoRecurrente {
   fondo_id: string
   proveedor_id: string | null
   concepto: string
+  // categoria (legacy 2026-Q1): DEPRECADO en UI desde TIPOS-GASTO (2026-05-25).
+  // Se mantiene la columna por compatibilidad/histórico, pero no se muestra
+  // ni edita desde la UI. tipo_gasto_id la reemplaza funcionalmente.
   categoria: string | null
+  // TIPOS-GASTO: nullable hasta aplicar migración; trigger DB asigna OTRO por default.
+  tipo_gasto_id: string | null
   monto: number
   moneda: string
   dia_vencimiento: number

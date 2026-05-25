@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import GastosClient, { type GastoRow, type GastoRecurrenteRow, type PagoDeGasto } from './GastosClient'
-import type { Fondo, Proveedor, Financiador, UserRole } from '@/types'
-import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente, setComprobanteGasto, removeComprobanteGasto, generarGastosRecurrentes, bulkAprobarGastos, bulkRechazarGastos, bulkDeleteGastos } from './actions'
+import type { Fondo, Proveedor, Financiador, UserRole, TipoGasto } from '@/types'
+import { createGasto, updateGasto, deleteGasto, cambiarEstadoGasto, createGastoRecurrente, updateGastoRecurrente, deleteGastoRecurrente, setComprobanteGasto, removeComprobanteGasto, generarGastosRecurrentes, bulkAprobarGastos, bulkRechazarGastos, bulkDeleteGastos, crearTipoGasto } from './actions'
 import { createProveedorQuick } from '../proveedores/actions'
 import { crearFinanciador } from '../fondos/actions'
 
@@ -17,7 +17,7 @@ export default async function GastosPage() {
   // antes de leer la lista — así los recién generados aparecen en la primera carga.
   await generarGastosRecurrentes()
 
-  const [profileResult, gastosResult, fondosResult, proveedoresResult, recurrentesResult, pagosDeGastosResult, financiadoresResult] = await Promise.all([
+  const [profileResult, gastosResult, fondosResult, proveedoresResult, recurrentesResult, pagosDeGastosResult, financiadoresResult, tiposGastoResult] = await Promise.all([
     supabase
       .from('profiles')
       .select('role')
@@ -25,7 +25,7 @@ export default async function GastosPage() {
       .single(),
     supabase
       .from('gastos')
-      .select('id, codigo, fondo_id, proveedor_id, forma_cancelacion, financiador_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta, horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre), financiadores:financiador_id(id, codigo, nombre)')
+      .select('id, codigo, fondo_id, proveedor_id, tipo_gasto_id, forma_cancelacion, financiador_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta, horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre), financiadores:financiador_id(id, codigo, nombre), tipos_gasto:tipo_gasto_id(id, codigo, nombre)')
       .is('deleted_at', null)
       .order('fecha_gasto', { ascending: false }),
     supabase
@@ -41,7 +41,7 @@ export default async function GastosPage() {
       .order('nombre', { ascending: true }),
     supabase
       .from('gastos_recurrentes')
-      .select('id, fondo_id, proveedor_id, concepto, categoria, monto, moneda, dia_vencimiento, fecha_inicio, fecha_fin, activo, prioridad_pago, observaciones, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
+      .select('id, fondo_id, proveedor_id, concepto, categoria, tipo_gasto_id, monto, moneda, dia_vencimiento, fecha_inicio, fecha_fin, activo, prioridad_pago, observaciones, created_by, created_at, fondos(nombre, moneda), proveedores(nombre), tipos_gasto:tipo_gasto_id(id, codigo, nombre)')
       .is('deleted_at', null)
       .order('concepto', { ascending: true }),
     supabase
@@ -55,6 +55,14 @@ export default async function GastosPage() {
       .select('id, codigo, nombre, cuit, email, telefono, observaciones, deleted_at, created_by, created_at, updated_at')
       .is('deleted_at', null)
       .order('nombre'),
+
+    // TIPOS-GASTO: tipos activos para el select del modal. Si tabla no existe
+    // aún (migración pendiente), tolerancia → array vacío.
+    supabase
+      .from('tipos_gasto')
+      .select('id, codigo, nombre, descripcion, activo, created_at, updated_at, created_by')
+      .eq('activo', true)
+      .order('nombre'),
   ])
 
   // Tolerancia: si alguna columna nueva no se aplicó todavía, retry sin ellas
@@ -64,7 +72,7 @@ export default async function GastosPage() {
   let gastosData = gastosResult.data
   if (
     gastosResult.error?.code === '42703' &&
-    /codigo|es_servicio_horas|descripcion_servicio|periodo_servicio|horas_servicio|valor_hora_aplicado|porcentaje_uplift_snapshot|importe_base_servicio|forma_cancelacion|financiador_id/.test(gastosResult.error.message ?? '')
+    /codigo|es_servicio_horas|descripcion_servicio|periodo_servicio|horas_servicio|valor_hora_aplicado|porcentaje_uplift_snapshot|importe_base_servicio|forma_cancelacion|financiador_id|tipo_gasto_id/.test(gastosResult.error.message ?? '')
   ) {
     console.warn('[gastos] columna nueva no disponible aún; retry con SELECT base:', gastosResult.error.message)
     const fallback = await supabase
@@ -86,6 +94,8 @@ export default async function GastosPage() {
       forma_cancelacion: 'risa' as const,
       financiador_id: null,
       financiadores: null,
+      tipo_gasto_id: null,
+      tipos_gasto: null,
     })) as unknown as typeof gastosResult.data
   }
 
@@ -112,13 +122,35 @@ export default async function GastosPage() {
     })) as unknown as typeof proveedoresResult.data
   }
 
+  // TIPOS-GASTO: tolerancia D4. Si la tabla aún no se aplicó, log + array vacío.
+  if (tiposGastoResult.error) {
+    console.warn('[gastos] tipos_gasto no disponible aún; select sin opciones:',
+      tiposGastoResult.error.code, tiposGastoResult.error.message)
+  }
+  // Tolerancia recurrentes: si tipo_gasto_id aún no existe (migración pendiente),
+  // retry sin esa columna + join.
+  let recurrentesData = recurrentesResult.data
+  if (
+    recurrentesResult.error?.code === '42703' &&
+    /tipo_gasto_id/.test(recurrentesResult.error.message ?? '')
+  ) {
+    console.warn('[gastos] gastos_recurrentes.tipo_gasto_id no disponible aún; retry sin él.')
+    const fb = await supabase
+      .from('gastos_recurrentes')
+      .select('id, fondo_id, proveedor_id, concepto, categoria, monto, moneda, dia_vencimiento, fecha_inicio, fecha_fin, activo, prioridad_pago, observaciones, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
+      .is('deleted_at', null)
+      .order('concepto', { ascending: true })
+    recurrentesData = (fb.data ?? []).map(r => ({ ...r, tipo_gasto_id: null, tipos_gasto: null })) as unknown as typeof recurrentesResult.data
+  }
+
   const role: UserRole = (profileResult.data?.role as UserRole) ?? 'visualizador'
   const gastos: GastoRow[] = (gastosData ?? []) as unknown as GastoRow[]
   const fondos = (fondosResult.data ?? []) as Pick<Fondo, 'id' | 'codigo' | 'nombre' | 'moneda'>[]
   const proveedores = (proveedoresData ?? []) as unknown as Pick<Proveedor, 'id' | 'nombre' | 'permite_horas_servicio' | 'valor_hora' | 'tiene_uplift' | 'porcentaje_uplift'>[]
-  const recurrentes: GastoRecurrenteRow[] = (recurrentesResult.data ?? []) as unknown as GastoRecurrenteRow[]
+  const recurrentes: GastoRecurrenteRow[] = (recurrentesData ?? []) as unknown as GastoRecurrenteRow[]
   const pagosDeGastos: PagoDeGasto[] = (pagosDeGastosResult.data ?? []) as PagoDeGasto[]
   const financiadores: Financiador[] = (financiadoresResult.data ?? []) as Financiador[]
+  const tiposGasto: TipoGasto[] = (tiposGastoResult.data ?? []) as TipoGasto[]
 
   return (
     <div className="space-y-6">
@@ -135,6 +167,7 @@ export default async function GastosPage() {
         fondos={fondos}
         proveedores={proveedores}
         financiadores={financiadores}
+        tiposGasto={tiposGasto}
         pagosDeGastos={pagosDeGastos}
         role={role}
         onCreateGasto={createGasto}
@@ -148,6 +181,7 @@ export default async function GastosPage() {
         onRemoveComprobante={removeComprobanteGasto}
         onCreateProveedorQuick={createProveedorQuick}
         onCrearFinanciador={crearFinanciador}
+        onCrearTipoGasto={crearTipoGasto}
         onBulkAprobar={bulkAprobarGastos}
         onBulkRechazar={bulkRechazarGastos}
         onBulkDelete={bulkDeleteGastos}

@@ -7,7 +7,11 @@ export type GastoRecurrentePayload = {
   fondo_id: string
   proveedor_id: string | null
   concepto: string
+  // categoria (legacy): DEPRECADO en UI desde TIPOS-GASTO (2026-05-25). Se
+  // sigue aceptando en el payload por compatibilidad, pero la UI no la setea.
   categoria: string | null
+  // TIPOS-GASTO: clasificación analítica. Null → trigger DB asigna OTRO.
+  tipo_gasto_id: string | null
   monto: number
   moneda: string
   dia_vencimiento: number
@@ -18,32 +22,65 @@ export type GastoRecurrentePayload = {
   observaciones: string | null
 }
 
+// TIPOS-GASTO: si la columna tipo_gasto_id aún no se aplicó (42703), retry sin ella.
+function isTipoGastoMissing(err: { code?: string; message?: string } | null | undefined): boolean {
+  return err?.code === '42703' && (err.message ?? '').toLowerCase().includes('tipo_gasto_id')
+}
+function stripTipoGasto<T extends Record<string, unknown>>(p: T): Record<string, unknown> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { tipo_gasto_id, ...rest } = p
+  return rest
+}
+
 export async function createGastoRecurrente(data: GastoRecurrentePayload) {
   const supabase = createClient()
   const authResult = await supabase.auth.getUser()
   const user = authResult.data?.user
   if (!user) throw new Error('No autenticado')
 
-  const { error } = await supabase.from('gastos_recurrentes').insert({
+  const payload = {
     ...data,
     proveedor_id: data.proveedor_id || null,
     created_by: user.id,
-  })
-  if (error) throw new Error(error.message)
+  }
+  const { error } = await supabase.from('gastos_recurrentes').insert(payload)
+  if (error) {
+    if (isTipoGastoMissing(error)) {
+      const retry = await supabase.from('gastos_recurrentes').insert(stripTipoGasto(payload))
+      if (retry.error) throw new Error(retry.error.message)
+    } else {
+      throw new Error(error.message)
+    }
+  }
   revalidatePath('/gastos-recurrentes')
 }
 
 export async function updateGastoRecurrente(id: string, data: GastoRecurrentePayload) {
   const supabase = createClient()
+  const payload = { ...data, proveedor_id: data.proveedor_id || null }
   const { data: rows, error } = await supabase
     .from('gastos_recurrentes')
-    .update({ ...data, proveedor_id: data.proveedor_id || null })
+    .update(payload)
     .eq('id', id)
     .is('deleted_at', null)
     .select('id')
-  if (error) throw new Error(error.message)
-  if (!rows || rows.length === 0)
+  if (error) {
+    if (isTipoGastoMissing(error)) {
+      const retry = await supabase
+        .from('gastos_recurrentes')
+        .update(stripTipoGasto(payload))
+        .eq('id', id)
+        .is('deleted_at', null)
+        .select('id')
+      if (retry.error) throw new Error(retry.error.message)
+      if (!retry.data || retry.data.length === 0)
+        throw new Error('Sin permiso para editar este gasto recurrente.')
+    } else {
+      throw new Error(error.message)
+    }
+  } else if (!rows || rows.length === 0) {
     throw new Error('Sin permiso para editar este gasto recurrente.')
+  }
   revalidatePath('/gastos-recurrentes')
 }
 

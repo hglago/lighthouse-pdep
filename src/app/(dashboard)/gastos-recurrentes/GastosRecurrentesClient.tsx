@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import type { Fondo, Proveedor, UserRole } from '@/types'
+import type { Fondo, Proveedor, UserRole, TipoGasto } from '@/types'
 import type { GastoRecurrentePayload } from './actions'
 
 export interface GastoRecurrenteRow {
@@ -9,7 +9,10 @@ export interface GastoRecurrenteRow {
   fondo_id: string
   proveedor_id: string | null
   concepto: string
+  // categoria (legacy): DEPRECADA en UI desde TIPOS-GASTO. Sigue en DB.
   categoria: string | null
+  // TIPOS-GASTO
+  tipo_gasto_id: string | null
   monto: number
   moneda: string
   dia_vencimiento: number
@@ -22,12 +25,15 @@ export interface GastoRecurrenteRow {
   created_at: string
   fondos: { nombre: string; moneda: string } | null
   proveedores: { nombre: string } | null
+  tipos_gasto: { id: string; codigo: string; nombre: string } | null
 }
 
 interface Props {
   recurrentes: GastoRecurrenteRow[]
   fondos: Pick<Fondo, 'id' | 'nombre' | 'moneda'>[]
   proveedores: Pick<Proveedor, 'id' | 'nombre'>[]
+  // TIPOS-GASTO: tipos activos para el select.
+  tiposGasto: TipoGasto[]
   role: UserRole
   onCreateRecurrente: (data: GastoRecurrentePayload) => Promise<void>
   onUpdateRecurrente: (id: string, data: GastoRecurrentePayload) => Promise<void>
@@ -38,7 +44,8 @@ interface FormState {
   fondo_id: string
   proveedor_id: string
   concepto: string
-  categoria: string
+  // TIPOS-GASTO: ID del tipo (reemplaza el field "categoria" libre).
+  tipo_gasto_id: string
   monto: string
   moneda: string
   dia_vencimiento: string
@@ -53,7 +60,7 @@ const EMPTY_FORM: FormState = {
   fondo_id: '',
   proveedor_id: '',
   concepto: '',
-  categoria: '',
+  tipo_gasto_id: '',
   monto: '',
   moneda: '',
   dia_vencimiento: '1',
@@ -83,11 +90,13 @@ export default function GastosRecurrentesClient({
   recurrentes,
   fondos,
   proveedores,
+  tiposGasto,
   role,
   onCreateRecurrente,
   onUpdateRecurrente,
   onDeleteRecurrente,
 }: Props) {
+  const otroTipoId = tiposGasto.find(t => t.codigo === 'OTRO')?.id ?? ''
   const [search, setSearch] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<GastoRecurrenteRow | null>(null)
@@ -106,7 +115,9 @@ export default function GastosRecurrentesClient({
           r.concepto.toLowerCase().includes(q) ||
           (r.fondos?.nombre ?? '').toLowerCase().includes(q) ||
           (r.proveedores?.nombre ?? '').toLowerCase().includes(q) ||
-          (r.categoria ?? '').toLowerCase().includes(q)
+          // TIPOS-GASTO: el search incluye el tipo nuevo. categoria legacy queda fuera.
+          (r.tipos_gasto?.codigo ?? '').toLowerCase().includes(q) ||
+          (r.tipos_gasto?.nombre ?? '').toLowerCase().includes(q)
       )
     : recurrentes
 
@@ -117,7 +128,7 @@ export default function GastosRecurrentesClient({
 
   function openNew() {
     setEditing(null)
-    setForm(EMPTY_FORM)
+    setForm({ ...EMPTY_FORM, tipo_gasto_id: otroTipoId })
     setFormError('')
     setModalOpen(true)
   }
@@ -128,7 +139,7 @@ export default function GastosRecurrentesClient({
       fondo_id: r.fondo_id,
       proveedor_id: r.proveedor_id ?? '',
       concepto: r.concepto,
-      categoria: r.categoria ?? '',
+      tipo_gasto_id: r.tipo_gasto_id ?? otroTipoId,
       monto: String(r.monto),
       moneda: r.moneda,
       dia_vencimiento: String(r.dia_vencimiento),
@@ -168,7 +179,10 @@ export default function GastosRecurrentesClient({
       fondo_id: form.fondo_id,
       proveedor_id: form.proveedor_id || null,
       concepto: form.concepto.trim(),
-      categoria: form.categoria.trim() || null,
+      // TIPOS-GASTO: categoria legacy no se setea desde UI. En edit
+      // preservamos el valor existente; en alta queda null.
+      categoria: editing?.categoria ?? null,
+      tipo_gasto_id: form.tipo_gasto_id || null,
       monto,
       moneda: form.moneda,
       dia_vencimiento: dia,
@@ -260,9 +274,12 @@ export default function GastosRecurrentesClient({
                   <tr key={r.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
                       <div className="text-sm font-medium text-gray-900 max-w-xs truncate">{r.concepto}</div>
-                      <div className="flex gap-1 mt-0.5">
-                        {r.categoria && (
-                          <span className="text-xs text-gray-400">{r.categoria}</span>
+                      <div className="flex gap-1 mt-0.5 items-center">
+                        {/* TIPOS-GASTO: categoria legacy queda fuera de UI. */}
+                        {r.tipos_gasto && (
+                          <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-slate-100 text-slate-700" title={r.tipos_gasto.nombre}>
+                            {r.tipos_gasto.codigo}
+                          </span>
                         )}
                         {r.prioridad_pago <= 2 && (
                           <span className="inline-flex rounded px-1.5 py-0 text-xs font-medium bg-amber-100 text-amber-700">{PRIORIDAD_LABELS[r.prioridad_pago]}</span>
@@ -374,14 +391,21 @@ export default function GastosRecurrentesClient({
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Categoría</label>
-                  <input
-                    type="text"
-                    value={form.categoria}
-                    onChange={e => setForm({ ...form, categoria: e.target.value })}
+                  {/* TIPOS-GASTO: reemplaza el "Categoría" libre. Alta inline
+                      solo desde /gastos modal (regla del scope). */}
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Tipo de gasto <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={form.tipo_gasto_id}
+                    onChange={e => setForm({ ...form, tipo_gasto_id: e.target.value })}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
-                    placeholder="Ej: Servicios, Alquileres"
-                  />
+                  >
+                    {tiposGasto.length === 0 && <option value="">— sin tipos cargados —</option>}
+                    {tiposGasto.map(t => (
+                      <option key={t.id} value={t.id}>{t.codigo} — {t.nombre}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Prioridad</label>
