@@ -14,6 +14,7 @@ import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
 import DataTable, { type Column } from '@/components/DataTable'
 import RowActionMenu, { type RowActionItem } from '@/components/RowActionMenu'
+import { exportWorkbookToExcel, todayForFile } from '@/lib/excel'
 
 export interface AporteFondoRow extends AporteFondo {
   fondos: { nombre: string } | null
@@ -1084,6 +1085,101 @@ export default function FondosClient({
     })
   }
 
+  // UX-EXPORT-FONDOS (2026-05-25): genera un xlsx con 5 hojas. Reutiliza los
+  // datos ya cargados en cliente (no nuevos SELECT). Aportes anulados se
+  // exportan con estado 'Anulado' y no se filtran.
+  function handleExportFondos() {
+    // Hoja 1 — Cuenta_RISA: movimientos_fondo (solo los del fondo RISA)
+    const cuentaRisa = movimientosRisa.map(m => ({
+      fecha: m.fecha,
+      nro_transaccion: m.aporte_id ? (aporteCodigoPorId.get(m.aporte_id) ?? '') : '',
+      tipo: m.tipo,
+      concepto: m.concepto,
+      ingreso: m.tipo === 'credito' ? Number(m.monto) : 0,
+      egreso:  m.tipo === 'debito'  ? Number(m.monto) : 0,
+      saldo_resultante: Number(m.saldo_resultante),
+      moneda: risa?.moneda ?? '',
+    }))
+
+    // Hoja 2 — Terceros_Resumen: v_saldos_financiadores
+    const tercerosResumen = saldosFinanciadores.map(s => ({
+      codigo: s.financiador_codigo ?? '',
+      tercero: s.financiador_nombre,
+      moneda: s.moneda,
+      deuda_generada: Number(s.total_deuda_generada),
+      cancelado_con_aportes: Number(s.total_cancelado),
+      saldo_pendiente: Number(s.saldo_pendiente),
+    }))
+
+    // Hoja 3 — Terceros_Movimientos: movimientos_financiacion
+    // Map auxiliar para resolver tercero_codigo/nombre desde financiador_id.
+    const finPorId = new Map<string, Financiador>()
+    for (const f of financiadores) finPorId.set(f.id, f)
+    // Map aporte_id → codigo APO ya existe (aporteCodigoPorId). No tenemos
+    // map directo pago_id → nro_pago a nivel /fondos; queda vacío salvo que
+    // el descripcion lo contenga (descripciones de fn_confirmar_pago
+    // incluyen "Pago {nro_pago} — concepto"). Lo dejamos en blanco.
+    const tercerosMovs = movimientosFinanciacion.map(m => {
+      const f = finPorId.get(m.financiador_id) ?? null
+      return {
+        fecha: m.fecha,
+        tercero_codigo: f?.codigo ?? '',
+        tercero_nombre: f?.nombre ?? '',
+        tipo_movimiento: m.tipo_movimiento,
+        descripcion: m.descripcion ?? '',
+        importe: Number(m.importe),
+        moneda: m.moneda,
+        nro_aporte: m.aporte_id ? (aporteCodigoPorId.get(m.aporte_id) ?? '') : '',
+      }
+    })
+
+    // Hoja 4 — Aportes
+    const aportesRows = aportes.map(a => ({
+      nro_aporte: a.codigo ?? '',
+      fecha: a.fecha_aporte,
+      socio: a.socios?.nombre ?? a.aportante ?? '',
+      importe: Number(a.monto),
+      moneda: a.moneda,
+      destino: destinoLabel(a.destino_aporte),
+      estado: a.deleted_at ? 'Anulado' : 'Activo',
+      observaciones: a.observaciones ?? '',
+      motivo_anulacion: a.motivo_anulacion ?? '',
+    }))
+
+    // Hoja 5 — Aporte_Imputaciones
+    const aporteCodigoPorAporteId = new Map<string, string>()
+    for (const a of aportes) if (a.codigo) aporteCodigoPorAporteId.set(a.id, a.codigo)
+    const socioPorAporteId = new Map<string, string>()
+    for (const a of aportes) socioPorAporteId.set(a.id, a.socios?.nombre ?? a.aportante ?? '')
+    const imputacionesRows = imputaciones.map(i => ({
+      nro_aporte: aporteCodigoPorAporteId.get(i.aporte_id) ?? '',
+      socio: socioPorAporteId.get(i.aporte_id) ?? '',
+      destino_tipo: i.destino_tipo === 'medios_propios' ? 'Medios Propios' : 'Tercero',
+      fondo: i.fondos?.nombre ?? '',
+      tercero: i.financiadores
+        ? `${i.financiadores.codigo ? i.financiadores.codigo + ' ' : ''}${i.financiadores.nombre}`
+        : '',
+      importe: Number(i.monto),
+      moneda: i.moneda,
+    }))
+
+    exportWorkbookToExcel(
+      [
+        { name: 'Cuenta_RISA',          rows: cuentaRisa,
+          headers: ['fecha', 'nro_transaccion', 'tipo', 'concepto', 'ingreso', 'egreso', 'saldo_resultante', 'moneda'] },
+        { name: 'Terceros_Resumen',     rows: tercerosResumen,
+          headers: ['codigo', 'tercero', 'moneda', 'deuda_generada', 'cancelado_con_aportes', 'saldo_pendiente'] },
+        { name: 'Terceros_Movimientos', rows: tercerosMovs,
+          headers: ['fecha', 'tercero_codigo', 'tercero_nombre', 'tipo_movimiento', 'descripcion', 'importe', 'moneda', 'nro_aporte'] },
+        { name: 'Aportes',              rows: aportesRows,
+          headers: ['nro_aporte', 'fecha', 'socio', 'importe', 'moneda', 'destino', 'estado', 'observaciones', 'motivo_anulacion'] },
+        { name: 'Aporte_Imputaciones',  rows: imputacionesRows,
+          headers: ['nro_aporte', 'socio', 'destino_tipo', 'fondo', 'tercero', 'importe', 'moneda'] },
+      ],
+      `fondos_${todayForFile()}.xlsx`,
+    )
+  }
+
   // FIN2.4: handler que arma payload v2 y llama a registrar_aporte_socio_v2.
   // La RPC valida server-side y es transaccional; este handler solo da feedback
   // rápido al usuario sobre errores de forma.
@@ -1354,35 +1450,45 @@ export default function FondosClient({
       )}
 
       {/* ── Acciones principales (Etapa 2B/2C) ────────────────────────────── */}
-      {canWrite && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Acciones</span>
-          <button
-            type="button"
-            onClick={() => openModal('newAporte')}
-            disabled={isPending}
-            className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
-          >
-            + Nuevo aporte
-          </button>
-          <button
-            type="button"
-            onClick={() => openModal('newSocio')}
-            disabled={isPending}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50"
-          >
-            + Nuevo socio
-          </button>
-          <button
-            type="button"
-            onClick={() => openModal('newFinanciador')}
-            disabled={isPending}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50"
-          >
-            + Nuevo tercero
-          </button>
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Acciones</span>
+        {canWrite && (
+          <>
+            <button
+              type="button"
+              onClick={() => openModal('newAporte')}
+              disabled={isPending}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
+            >
+              + Nuevo aporte
+            </button>
+            <button
+              type="button"
+              onClick={() => openModal('newSocio')}
+              disabled={isPending}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50"
+            >
+              + Nuevo socio
+            </button>
+            <button
+              type="button"
+              onClick={() => openModal('newFinanciador')}
+              disabled={isPending}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50"
+            >
+              + Nuevo tercero
+            </button>
+          </>
+        )}
+        {/* UX-EXPORT-FONDOS: disponible para todos los roles (lectura/auditoría). */}
+        <button
+          type="button"
+          onClick={handleExportFondos}
+          className="ml-auto rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+        >
+          Exportar Fondos
+        </button>
+      </div>
 
       {/* ── Cuenta corriente RISA — collapse por default (UX-DETAILS) ───── */}
       <div className="space-y-3">
