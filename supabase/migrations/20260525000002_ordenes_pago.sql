@@ -213,7 +213,7 @@ BEGIN
     v_modalidad, v_canal,
     v_tercero_cod, v_tercero_nom,
     v_pago.concepto, v_prov_nom,
-    v_nro_gasto, COALESCE(v_pago.codigo, v_pago.nro_pago),
+    v_nro_gasto, v_pago.nro_pago,
     v_tipo_cod, v_tipo_nom,
     v_periodo, v_saldo,
     v_pago.notas, COALESCE(v_pago.created_by, auth.uid())
