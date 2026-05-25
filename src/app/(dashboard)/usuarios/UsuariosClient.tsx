@@ -31,30 +31,31 @@ export interface GoogleAllowedRow {
   created_by: string | null
 }
 
-type RolUi = 'administrador' | 'supervisor' | 'usuario'
+// Fase 2A (2026-05-25): selects de rol exponen UserRole directo (los 7 valores).
+// Nuevos (preferidos) primero, legacy en <optgroup> al final.
+const NEW_ROLES: UserRole[] = ['admin', 'supervisor', 'operador', 'user']
+const LEGACY_ROLES: UserRole[] = ['contador', 'revisor', 'visualizador']
 
-const ROL_UI_TO_TECNICO: Record<RolUi, UserRole> = {
-  administrador: 'admin',
-  supervisor: 'contador',
-  usuario: 'visualizador',
-}
-
-function tecnicoToRolUi(r: UserRole): RolUi {
-  if (r === 'admin') return 'administrador'
-  if (r === 'visualizador') return 'usuario'
-  return 'supervisor'
-}
-
-const ROL_UI_LABELS: Record<RolUi, string> = {
-  administrador: 'Administrador',
+const ROLE_LABELS: Record<UserRole, string> = {
+  admin: 'Admin',
   supervisor: 'Supervisor',
-  usuario: 'Usuario',
+  operador: 'Operador',
+  user: 'User',
+  contador: 'Contador (legacy)',
+  revisor: 'Revisor (legacy)',
+  visualizador: 'Visualizador (legacy)',
 }
 
-const DEFAULTS_POR_ROL: Record<RolUi, { puede_exportar: boolean; puede_aprobar_gastos: boolean; puede_confirmar_pagos: boolean }> = {
-  administrador: { puede_exportar: true, puede_aprobar_gastos: true, puede_confirmar_pagos: true },
-  supervisor:    { puede_exportar: true, puede_aprobar_gastos: true, puede_confirmar_pagos: false },
-  usuario:       { puede_exportar: false, puede_aprobar_gastos: false, puede_confirmar_pagos: false },
+// Defaults sugeridos al cambiar de rol en el modal. No modifica comportamiento
+// de permisos en otras pantallas — son solo valores iniciales del form.
+const DEFAULTS_POR_ROLE: Record<UserRole, { puede_exportar: boolean; puede_aprobar_gastos: boolean; puede_confirmar_pagos: boolean }> = {
+  admin:        { puede_exportar: true,  puede_aprobar_gastos: true,  puede_confirmar_pagos: true },
+  supervisor:   { puede_exportar: true,  puede_aprobar_gastos: false, puede_confirmar_pagos: false },
+  operador:     { puede_exportar: true,  puede_aprobar_gastos: false, puede_confirmar_pagos: false },
+  user:         { puede_exportar: false, puede_aprobar_gastos: false, puede_confirmar_pagos: false },
+  contador:     { puede_exportar: true,  puede_aprobar_gastos: true,  puede_confirmar_pagos: false },
+  revisor:      { puede_exportar: true,  puede_aprobar_gastos: true,  puede_confirmar_pagos: false },
+  visualizador: { puede_exportar: false, puede_aprobar_gastos: false, puede_confirmar_pagos: false },
 }
 
 const USUARIO_LOGIN_REGEX = /^[a-z0-9._-]+$/
@@ -104,10 +105,10 @@ export default function UsuariosClient({
   const [crPwd, setCrPwd] = useState('')
   const [crPwd2, setCrPwd2] = useState('')
   const [crNombre, setCrNombre] = useState('')
-  const [crRolUi, setCrRolUi] = useState<RolUi>('supervisor')
-  const [crExp, setCrExp] = useState(DEFAULTS_POR_ROL.supervisor.puede_exportar)
-  const [crApr, setCrApr] = useState(DEFAULTS_POR_ROL.supervisor.puede_aprobar_gastos)
-  const [crConf, setCrConf] = useState(DEFAULTS_POR_ROL.supervisor.puede_confirmar_pagos)
+  const [crRole, setCrRole] = useState<UserRole>('user')
+  const [crExp, setCrExp] = useState(DEFAULTS_POR_ROLE.user.puede_exportar)
+  const [crApr, setCrApr] = useState(DEFAULTS_POR_ROLE.user.puede_aprobar_gastos)
+  const [crConf, setCrConf] = useState(DEFAULTS_POR_ROLE.user.puede_confirmar_pagos)
   const [crFondo, setCrFondo] = useState('')
   const [crError, setCrError] = useState('')
 
@@ -116,20 +117,20 @@ export default function UsuariosClient({
     setCrPwd('')
     setCrPwd2('')
     setCrNombre('')
-    setCrRolUi('supervisor')
-    setCrExp(DEFAULTS_POR_ROL.supervisor.puede_exportar)
-    setCrApr(DEFAULTS_POR_ROL.supervisor.puede_aprobar_gastos)
-    setCrConf(DEFAULTS_POR_ROL.supervisor.puede_confirmar_pagos)
+    setCrRole('user')
+    setCrExp(DEFAULTS_POR_ROLE.user.puede_exportar)
+    setCrApr(DEFAULTS_POR_ROLE.user.puede_aprobar_gastos)
+    setCrConf(DEFAULTS_POR_ROLE.user.puede_confirmar_pagos)
     setCrFondo('')
     setCrError('')
     setCrearOpen(true)
   }
 
-  function handleCrRolChange(r: RolUi) {
-    setCrRolUi(r)
-    setCrExp(DEFAULTS_POR_ROL[r].puede_exportar)
-    setCrApr(DEFAULTS_POR_ROL[r].puede_aprobar_gastos)
-    setCrConf(DEFAULTS_POR_ROL[r].puede_confirmar_pagos)
+  function handleCrRoleChange(r: UserRole) {
+    setCrRole(r)
+    setCrExp(DEFAULTS_POR_ROLE[r].puede_exportar)
+    setCrApr(DEFAULTS_POR_ROLE[r].puede_aprobar_gastos)
+    setCrConf(DEFAULTS_POR_ROLE[r].puede_confirmar_pagos)
   }
 
   function handleCrSubmit(e: React.FormEvent) {
@@ -143,14 +144,13 @@ export default function UsuariosClient({
     if (crPwd.length < 4) { setCrError('La contraseña debe tener al menos 4 caracteres.'); return }
     if (crPwd !== crPwd2) { setCrError('Las contraseñas no coinciden.'); return }
 
-    const role = ROL_UI_TO_TECNICO[crRolUi]
-    const adminLocked = crRolUi === 'administrador'
+    const adminLocked = crRole === 'admin'
     startTransition(async () => {
       const result = await onCrear({
         usuario_login: login,
         password: crPwd,
         full_name: crNombre.trim() || null,
-        role,
+        role: crRole,
         puede_exportar: adminLocked ? true : crExp,
         puede_aprobar_gastos: adminLocked ? true : crApr,
         puede_confirmar_pagos: adminLocked ? true : crConf,
@@ -164,7 +164,7 @@ export default function UsuariosClient({
 
   // ── Editar modal ───────────────────────────────────────────────────────────
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [edRolUi, setEdRolUi] = useState<RolUi>('usuario')
+  const [edRole, setEdRole] = useState<UserRole>('user')
   const [edActivo, setEdActivo] = useState(true)
   const [edExp, setEdExp] = useState(false)
   const [edApr, setEdApr] = useState(false)
@@ -176,8 +176,7 @@ export default function UsuariosClient({
   const editingUser = editingId ? usuarios.find(u => u.id === editingId) ?? null : null
 
   function openEdit(u: UsuarioRow) {
-    const rolUi = tecnicoToRolUi(u.role)
-    setEdRolUi(rolUi)
+    setEdRole(u.role)
     setEdActivo(u.activo)
     setEdExp(u.puede_exportar)
     setEdApr(u.puede_aprobar_gastos)
@@ -188,9 +187,9 @@ export default function UsuariosClient({
     setEditingId(u.id)
   }
 
-  function handleEdRolChange(r: RolUi) {
-    setEdRolUi(r)
-    if (r === 'administrador') {
+  function handleEdRoleChange(r: UserRole) {
+    setEdRole(r)
+    if (r === 'admin') {
       setEdExp(true); setEdApr(true); setEdConf(true)
     }
   }
@@ -199,11 +198,10 @@ export default function UsuariosClient({
     e.preventDefault()
     setEdError('')
     if (!editingUser) return
-    const role = ROL_UI_TO_TECNICO[edRolUi]
-    const adminLocked = edRolUi === 'administrador'
+    const adminLocked = edRole === 'admin'
     startTransition(async () => {
       const result = await onUpdate(editingUser.id, {
-        role,
+        role: edRole,
         activo: edActivo,
         puede_exportar: adminLocked ? true : edExp,
         puede_aprobar_gastos: adminLocked ? true : edApr,
@@ -259,7 +257,7 @@ export default function UsuariosClient({
   const [googleModalOpen, setGoogleModalOpen] = useState(false)
   const [editingGoogleId, setEditingGoogleId] = useState<string | null>(null)
   const [gEmail, setGEmail] = useState('')
-  const [gRolUi, setGRolUi] = useState<RolUi>('usuario')
+  const [gRole, setGRole] = useState<UserRole>('user')
   const [gUsuarioLogin, setGUsuarioLogin] = useState('')
   const [gNombre, setGNombre] = useState('')
   const [gActivo, setGActivo] = useState(true)
@@ -268,7 +266,7 @@ export default function UsuariosClient({
 
   function openGoogleCrear() {
     setEditingGoogleId(null)
-    setGEmail(''); setGRolUi('usuario'); setGUsuarioLogin(''); setGNombre('')
+    setGEmail(''); setGRole('user'); setGUsuarioLogin(''); setGNombre('')
     setGActivo(true); setGNotas(''); setGError('')
     setGoogleModalOpen(true)
   }
@@ -276,7 +274,7 @@ export default function UsuariosClient({
   function openGoogleEdit(g: GoogleAllowedRow) {
     setEditingGoogleId(g.id)
     setGEmail(g.email)
-    setGRolUi(tecnicoToRolUi(g.role))
+    setGRole(g.role)
     setGUsuarioLogin(g.usuario_login ?? '')
     setGNombre(g.full_name ?? '')
     setGActivo(g.activo)
@@ -290,7 +288,7 @@ export default function UsuariosClient({
     setGError('')
     const payload: GoogleAllowedPayload = {
       email: gEmail,
-      role: ROL_UI_TO_TECNICO[gRolUi],
+      role: gRole,
       usuario_login: gUsuarioLogin.trim() || null,
       full_name: gNombre.trim() || null,
       activo: gActivo,
@@ -374,7 +372,6 @@ export default function UsuariosClient({
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {usuarios.map(u => {
-                  const rolUi = tecnicoToRolUi(u.role)
                   const esYo = u.id === currentUserId
                   return (
                     <tr key={u.id} className="hover:bg-gray-50 transition-colors">
@@ -387,7 +384,7 @@ export default function UsuariosClient({
                       <td className="hidden px-4 py-2.5 text-xs text-gray-500 font-mono lg:table-cell">{u.email}</td>
                       <td className="hidden px-4 py-2.5 text-sm text-gray-600 md:table-cell">{u.full_name ?? <span className="text-gray-300">—</span>}</td>
                       <td className="px-4 py-2.5">
-                        <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-700">{ROL_UI_LABELS[rolUi]}</span>
+                        <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-700">{ROLE_LABELS[u.role] ?? u.role}</span>
                       </td>
                       <td className="px-4 py-2.5 text-center">
                         <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${u.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
@@ -459,38 +456,35 @@ export default function UsuariosClient({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {googleAllowed.map(g => {
-                    const rolUi = tecnicoToRolUi(g.role)
-                    return (
-                      <tr key={g.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-2.5 text-sm text-gray-900">{g.email}</td>
-                        <td className="px-4 py-2.5">
-                          <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-700">{ROL_UI_LABELS[rolUi]}</span>
-                        </td>
-                        <td className="hidden px-4 py-2.5 text-sm text-gray-600 md:table-cell">{g.usuario_login ?? <span className="text-gray-300">—</span>}</td>
-                        <td className="hidden px-4 py-2.5 text-sm text-gray-600 lg:table-cell">{g.full_name ?? <span className="text-gray-300">—</span>}</td>
-                        <td className="px-4 py-2.5 text-center">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${g.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
-                            {g.activo ? 'Activo' : 'Inactivo'}
-                          </span>
-                        </td>
-                        <td className="hidden px-4 py-2.5 text-sm text-gray-500 whitespace-nowrap sm:table-cell">{(g.created_at ?? '').slice(0, 10) || '—'}</td>
-                        <td className="px-4 py-2.5 text-right">
-                          <div className="flex justify-end gap-1">
-                            <button onClick={() => openGoogleEdit(g)} disabled={isPending} className="rounded px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">Editar</button>
-                            <button
-                              onClick={() => handleGoogleToggle(g)}
-                              disabled={isPending}
-                              className={`rounded px-2 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${g.activo ? 'text-amber-700 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'}`}
-                            >
-                              {g.activo ? 'Desactivar' : 'Activar'}
-                            </button>
-                            <button onClick={() => handleGoogleDelete(g)} disabled={isPending} className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">Eliminar</button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
+                  {googleAllowed.map(g => (
+                    <tr key={g.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-2.5 text-sm text-gray-900">{g.email}</td>
+                      <td className="px-4 py-2.5">
+                        <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-700">{ROLE_LABELS[g.role] ?? g.role}</span>
+                      </td>
+                      <td className="hidden px-4 py-2.5 text-sm text-gray-600 md:table-cell">{g.usuario_login ?? <span className="text-gray-300">—</span>}</td>
+                      <td className="hidden px-4 py-2.5 text-sm text-gray-600 lg:table-cell">{g.full_name ?? <span className="text-gray-300">—</span>}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${g.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {g.activo ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td className="hidden px-4 py-2.5 text-sm text-gray-500 whitespace-nowrap sm:table-cell">{(g.created_at ?? '').slice(0, 10) || '—'}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        <div className="flex justify-end gap-1">
+                          <button onClick={() => openGoogleEdit(g)} disabled={isPending} className="rounded px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50">Editar</button>
+                          <button
+                            onClick={() => handleGoogleToggle(g)}
+                            disabled={isPending}
+                            className={`rounded px-2 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${g.activo ? 'text-amber-700 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'}`}
+                          >
+                            {g.activo ? 'Desactivar' : 'Activar'}
+                          </button>
+                          <button onClick={() => handleGoogleDelete(g)} disabled={isPending} className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">Eliminar</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -521,11 +515,7 @@ export default function UsuariosClient({
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Rol <span className="text-red-500">*</span></label>
-                <select value={gRolUi} onChange={e => setGRolUi(e.target.value as RolUi)} className={inputCls}>
-                  <option value="administrador">Administrador</option>
-                  <option value="supervisor">Supervisor</option>
-                  <option value="usuario">Usuario</option>
-                </select>
+                <RoleSelect value={gRole} onChange={setGRole} />
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Usuario interno (opcional)</label>
@@ -602,14 +592,10 @@ export default function UsuariosClient({
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Rol <span className="text-red-500">*</span></label>
-                <select value={crRolUi} onChange={e => handleCrRolChange(e.target.value as RolUi)} className={inputCls}>
-                  <option value="administrador">Administrador</option>
-                  <option value="supervisor">Supervisor</option>
-                  <option value="usuario">Usuario</option>
-                </select>
+                <RoleSelect value={crRole} onChange={handleCrRoleChange} />
               </div>
               <PermisosBlock
-                lockedAdmin={crRolUi === 'administrador'}
+                lockedAdmin={crRole === 'admin'}
                 exp={crExp} setExp={setCrExp}
                 apr={crApr} setApr={setCrApr}
                 conf={crConf} setConf={setCrConf}
@@ -642,11 +628,7 @@ export default function UsuariosClient({
             <form onSubmit={handleEdSubmit} className="space-y-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Rol</label>
-                <select value={edRolUi} onChange={e => handleEdRolChange(e.target.value as RolUi)} className={inputCls}>
-                  <option value="administrador">Administrador</option>
-                  <option value="supervisor">Supervisor</option>
-                  <option value="usuario">Usuario</option>
-                </select>
+                <RoleSelect value={edRole} onChange={handleEdRoleChange} />
               </div>
               <div>
                 <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-gray-700">
@@ -662,7 +644,7 @@ export default function UsuariosClient({
                 </label>
               </div>
               <PermisosBlock
-                lockedAdmin={edRolUi === 'administrador'}
+                lockedAdmin={edRole === 'admin'}
                 exp={edExp} setExp={setEdExp}
                 apr={edApr} setApr={setEdApr}
                 conf={edConf} setConf={setEdConf}
@@ -724,6 +706,27 @@ export default function UsuariosClient({
 function AttrChip({ label, on }: { label: string; on: boolean }) {
   return (
     <span className={`inline-flex rounded px-1.5 py-0 text-xs font-medium ${on ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>{label}</span>
+  )
+}
+
+// Fase 2A: select de rol unificado. Muestra los 4 roles nuevos primero,
+// los 3 legacy en un <optgroup> al final.
+function RoleSelect({ value, onChange }: { value: UserRole; onChange: (r: UserRole) => void }) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value as UserRole)}
+      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+    >
+      {NEW_ROLES.map(r => (
+        <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+      ))}
+      <optgroup label="Legacy (deprecados)">
+        {LEGACY_ROLES.map(r => (
+          <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+        ))}
+      </optgroup>
+    </select>
   )
 }
 

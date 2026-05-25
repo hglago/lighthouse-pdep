@@ -1,4 +1,15 @@
-export type UserRole = 'admin' | 'contador' | 'revisor' | 'visualizador'
+// Fase 2A (2026-05-25): roles ampliados, opción A aditiva.
+// Roles nuevos: supervisor, operador, user.
+// Roles legacy (no asignar a nuevos usuarios): contador, revisor, visualizador.
+// Enum DB ampliado en Fase 2F + CHECK de google_allowed_users actualizado.
+export type UserRole =
+  | 'admin'
+  | 'supervisor'       // Fase 2A: ve todo, no modifica
+  | 'operador'         // Fase 2A: carga gastos/proveedores, no autoriza
+  | 'user'             // Fase 2A: solo sus propios datos
+  | 'contador'         // legacy — deprecado
+  | 'revisor'          // legacy — deprecado
+  | 'visualizador'     // legacy — deprecado
 export type FondoEstado = 'activo' | 'cerrado' | 'suspendido'
 export type GastoEstado = 'borrador' | 'enviado' | 'aprobado' | 'pagado_parcial' | 'pagado' | 'rechazado'
 export type AnticipoEstado = 'borrador' | 'aprobado' | 'anticipo_pagado' | 'completado' | 'cancelado'
