@@ -284,6 +284,14 @@ export interface AporteImputacion {
   created_at: string
 }
 
+// FIN2.7 (2026-05-24): imputación con joins resueltos para mostrar detalle
+// inline en la tabla de aportes. Etiquetas UI: "Medios Propios" / "Tercero"
+// (nunca "financiador").
+export interface AporteImputacionDetalleRow extends AporteImputacion {
+  fondos: { nombre: string } | null
+  financiadores: { codigo: string | null; nombre: string } | null
+}
+
 // ── Etapa 1: Socios, Financiadores, Movimientos de financiación ───────────────
 
 export interface Socio {

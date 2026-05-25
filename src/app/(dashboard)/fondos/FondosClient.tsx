@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition, useRef, useMemo } from 'react'
-import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo, Socio, Financiador, SaldoFinanciadorRow, MovimientoTipo, DestinoAporte, PosicionGlobalRisaRow } from '@/types'
+import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo, Socio, Financiador, SaldoFinanciadorRow, MovimientoTipo, DestinoAporte, PosicionGlobalRisaRow, AporteImputacionDetalleRow } from '@/types'
 import type {
   AportePayload, FondoActionResult, FondoDepsResult,
   SocioPayload, SocioActionResult,
@@ -152,6 +152,9 @@ interface Props {
   // FIN2.6: Posición Global RISA (MP+MT=PG) por moneda. Si la view aún no
   // existe, llega array vacío y se cae al cálculo cliente legacy.
   posicionGlobal: PosicionGlobalRisaRow[]
+  // FIN2.7: imputaciones (read-only) con joins fondos/financiadores. Si la
+  // tabla aún no existe, llega vacío y la columna Detalle muestra "—".
+  imputaciones: AporteImputacionDetalleRow[]
   role: UserRole
   onCreateFondo: (data: { nombre: string; moneda: string; monto_inicial: number; descripcion: string | null }) => Promise<void>
   onUpdateFondo: (id: string, data: { nombre: string; descripcion: string | null; estado: FondoEstado }) => Promise<void>
@@ -178,6 +181,7 @@ export default function FondosClient({
   saldosFinanciadores,
   movimientos,
   posicionGlobal,
+  imputaciones,
   role,
   onCreateFondo,
   onUpdateFondo,
@@ -464,6 +468,19 @@ export default function FondosClient({
     return m
   }, [aportes])
 
+  // ─── FIN2.7: imputaciones agrupadas por aporte_id para mostrar detalle inline.
+  //            Si un aporte no tiene imputaciones (legacy pre-FIN2), no aparece
+  //            en el Map y la columna renderiza "—".
+  const imputacionesPorAporte = useMemo(() => {
+    const m = new Map<string, AporteImputacionDetalleRow[]>()
+    for (const i of imputaciones) {
+      const arr = m.get(i.aporte_id) ?? []
+      arr.push(i)
+      m.set(i.aporte_id, arr)
+    }
+    return m
+  }, [imputaciones])
+
   // ─── Etapa F1: búsqueda local por tabla ────────────────────────────────────
   const [searchAportes, setSearchAportes] = useState('')
   const [searchMovimientos, setSearchMovimientos] = useState('')
@@ -521,6 +538,36 @@ export default function FondosClient({
       render: a => a.financiadores
         ? <span><span className="font-mono text-xs text-slate-500">{a.financiadores.codigo}</span> · {a.financiadores.nombre}</span>
         : <span className="text-gray-300">—</span>,
+    },
+    {
+      // FIN2.7: detalle inline del split de imputaciones (Medios Propios + Terceros).
+      // Visible incluso para aportes anulados (las imputaciones son snapshot).
+      key: 'imputaciones', label: 'Detalle',
+      accessor: a => {
+        const list = imputacionesPorAporte.get(a.id) ?? []
+        return list.map(i => `${i.destino_tipo === 'medios_propios' ? 'MP' : 'T'} ${i.fondos?.nombre ?? i.financiadores?.nombre ?? ''} ${i.monto}`).join(' | ')
+      },
+      type: 'text',
+      filterable: false,
+      render: a => {
+        const list = imputacionesPorAporte.get(a.id) ?? []
+        if (list.length === 0) return <span className="text-gray-300">—</span>
+        return (
+          <ul className="space-y-0.5 text-xs text-gray-700">
+            {list.map(i => {
+              const nombreDestino = i.destino_tipo === 'medios_propios'
+                ? `Medios Propios${i.fondos?.nombre ? ` · ${i.fondos.nombre}` : ''}`
+                : `Tercero${i.financiadores ? ` · ${i.financiadores.codigo ? i.financiadores.codigo + ' ' : ''}${i.financiadores.nombre}` : ''}`
+              return (
+                <li key={i.id} className="flex items-baseline justify-between gap-3 whitespace-nowrap">
+                  <span className="truncate">{nombreDestino}</span>
+                  <span className="tabular-nums text-gray-600">{i.moneda} {fmt(i.monto)}</span>
+                </li>
+              )
+            })}
+          </ul>
+        )
+      },
     },
     {
       key: 'monto', label: 'Importe',

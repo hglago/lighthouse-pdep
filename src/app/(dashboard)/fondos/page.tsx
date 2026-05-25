@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import FondosClient, { type AporteFondoRow, type MovimientoFondoRow } from './FondosClient'
-import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole, PosicionGlobalRisaRow } from '@/types'
+import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole, PosicionGlobalRisaRow, AporteImputacionDetalleRow } from '@/types'
 import {
   createFondo, updateFondo, deleteFondo, registrarAporte, getFondoDependencies,
   crearSocio, crearFinanciador, registrarAporteSocio, registrarAporteSocioV2,
@@ -24,6 +24,7 @@ export default async function FondosPage() {
     saldosFinResult,
     movimientosResult,
     posicionGlobalResult,
+    imputacionesResult,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -83,6 +84,14 @@ export default async function FondosPage() {
       .from('v_posicion_global_risa')
       .select('moneda, mp_total, mt_total, pg_total, mp_detalle, mt_detalle')
       .order('moneda'),
+
+    // FIN2.7: detalle de imputaciones por aporte (read-only) con joins a
+    // fondos y financiadores para evitar lookups en cliente. Tolerante: si
+    // aporte_imputaciones aún no existe (FIN2.2 pendiente), array vacío.
+    supabase
+      .from('aporte_imputaciones')
+      .select('id, aporte_id, destino_tipo, fondo_id, financiador_id, monto, moneda, movimiento_fondo_id, movimiento_financiacion_id, created_at, fondos(nombre), financiadores(codigo, nombre)')
+      .order('created_at'),
   ])
 
   // Tolerancia: si socios.codigo aún no existe (Etapa 2B SQL pendiente), retry
@@ -154,6 +163,14 @@ export default async function FondosPage() {
   }
   const posicionGlobal = (posicionGlobalResult.data ?? []) as PosicionGlobalRisaRow[]
 
+  // FIN2.7: si aporte_imputaciones aún no existe (FIN2.2 pendiente), pasamos
+  // array vacío y el cliente muestra "—" en la columna Detalle.
+  if (imputacionesResult.error) {
+    console.warn('[fondos] aporte_imputaciones no disponible; detalle vacío.',
+      imputacionesResult.error.code, imputacionesResult.error.message)
+  }
+  const imputaciones = (imputacionesResult.data ?? []) as unknown as AporteImputacionDetalleRow[]
+
   return (
     <div className="space-y-6">
       <div>
@@ -171,6 +188,7 @@ export default async function FondosPage() {
         saldosFinanciadores={saldosFinanciadores}
         movimientos={movimientos}
         posicionGlobal={posicionGlobal}
+        imputaciones={imputaciones}
         role={role}
         onCreateFondo={createFondo}
         onUpdateFondo={updateFondo}
