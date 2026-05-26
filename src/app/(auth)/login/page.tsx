@@ -4,9 +4,12 @@ import { useState, useEffect, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
-// OAuth Google pausado temporalmente hasta estabilización.
-// Flipear a true reactiva el botón "Continuar con Google" sin tocar el callback ni la whitelist.
-const OAUTH_GOOGLE_ENABLED = false
+// Fase 2E (2026-05-25): Google Login HABILITADO. El callback en
+// /auth/callback ya valida la whitelist productiva via RPC
+// fn_apply_google_whitelist_self. Usuarios no listados son signOut() +
+// redirigidos a /login?error=not_authorized.
+// admin@lighthouse.com conserva acceso legacy con usuario_login + password.
+const OAUTH_GOOGLE_ENABLED = true
 
 export default function LoginPage() {
   const [usuario, setUsuario] = useState('')
