@@ -20,11 +20,17 @@ export type {
   OrdenPago, OrdenPagoEstado, OrdenPagoModalidad, OrdenPagoCanal,
 } from './database'
 
+// Fase 2D.1 (2026-05-25): labels para los 7 roles vigentes. Los legacy
+// (contador / revisor / visualizador) ahora muestran su nombre real en
+// lugar del mapeo confuso previo (todos a "Supervisor"/"Usuario").
 export const ROLE_LABELS: Record<string, string> = {
-  admin: 'Administrador',
-  contador: 'Supervisor',
-  revisor: 'Supervisor',
-  visualizador: 'Usuario',
+  admin: 'Admin',
+  supervisor: 'Supervisor',
+  operador: 'Operador',
+  user: 'Usuario',
+  contador: 'Contador',
+  revisor: 'Revisor',
+  visualizador: 'Visualizador',
 }
 
 export interface NavItem {
