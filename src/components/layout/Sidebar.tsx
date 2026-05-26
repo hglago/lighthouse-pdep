@@ -34,7 +34,7 @@ function IconUsers() {
   )
 }
 
-type NavItem = { label: string; href: string; Icon: React.ComponentType; allowedRoles?: UserRole[] }
+type NavItem = { label: string; href: string; Icon: React.ComponentType; allowedRoles: UserRole[] }
 
 const ROLES_OPERATIVOS: UserRole[] = ['admin', 'supervisor', 'operador', 'user', 'contador', 'revisor', 'visualizador']
 
@@ -107,7 +107,7 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="space-y-1">
             {navigation
-              .filter(item => !item.allowedRoles || item.allowedRoles.includes(user.role as UserRole))
+              .filter(item => item.allowedRoles.includes(user.role as UserRole))
               .map(({ label, href, Icon }) => {
               const isActive = pathname === href || pathname.startsWith(href + '/')
               return (
