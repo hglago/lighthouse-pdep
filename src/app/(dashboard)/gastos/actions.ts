@@ -251,13 +251,19 @@ export async function updateGasto(id: string, data: GastoPayload) {
     proveedor_id: normalized.proveedor_id || null,
   }
 
-  const result = await supabase
+  // Fase 2D (2026-05-25): ownership USER. Si el rol es 'user', forzar
+  // filtro por created_by. Si el gasto no es propio, el UPDATE afecta 0
+  // filas y cae al mensaje "Sin permiso para editar..." existente.
+  let updateQuery = supabase
     .from('gastos')
     .update(update)
     .eq('id', id)
     .in('estado', ['borrador', 'enviado', 'aprobado'])
     .is('deleted_at', null)
-    .select('id')
+  if (guard.profile.role === 'user') {
+    updateQuery = updateQuery.eq('created_by', guard.profile.id)
+  }
+  const result = await updateQuery.select('id')
 
   if (!result.error) {
     if (!result.data || result.data.length === 0)
@@ -268,13 +274,16 @@ export async function updateGasto(id: string, data: GastoPayload) {
 
   if (isOptionalColumnMissingError(result.error)) {
     console.warn('[updateGasto] columnas opcionales no disponibles, reintentando sin ellas')
-    const retry = await supabase
+    let retryQuery = supabase
       .from('gastos')
       .update(stripCamposOpcionales(update))
       .eq('id', id)
       .in('estado', ['borrador', 'enviado', 'aprobado'])
       .is('deleted_at', null)
-      .select('id')
+    if (guard.profile.role === 'user') {
+      retryQuery = retryQuery.eq('created_by', guard.profile.id)
+    }
+    const retry = await retryQuery.select('id')
     if (retry.error) throw new Error(retry.error.message)
     if (!retry.data || retry.data.length === 0)
       throw new Error('Sin permiso para editar este gasto o ya fue pagado/rechazado.')
@@ -683,7 +692,8 @@ export async function setComprobanteGasto(id: string, data: ComprobantePayload) 
   const user = authResult.data?.user
   if (!user) throw new Error('No autenticado')
 
-  const { data: rows, error } = await supabase
+  // Fase 2D: ownership USER en setComprobanteGasto.
+  let setQuery = supabase
     .from('gastos')
     .update({
       comprobante_path: data.path,
@@ -696,7 +706,10 @@ export async function setComprobanteGasto(id: string, data: ComprobantePayload) 
     .eq('id', id)
     .in('estado', ['borrador', 'enviado', 'aprobado', 'pagado_parcial'])
     .is('deleted_at', null)
-    .select('id')
+  if (guard.profile.role === 'user') {
+    setQuery = setQuery.eq('created_by', guard.profile.id)
+  }
+  const { data: rows, error } = await setQuery.select('id')
   if (error) throw new Error(error.message)
   if (!rows || rows.length === 0)
     throw new Error('Sin permiso o el gasto ya está cerrado (pagado/rechazado).')
@@ -710,13 +723,18 @@ export async function removeComprobanteGasto(id: string) {
 
   const supabase = createClient()
 
-  const { data: gasto, error: fetchErr } = await supabase
+  // Fase 2D: ownership USER también en el SELECT inicial (no leer path
+  // de gastos ajenos) y en el UPDATE final.
+  let fetchQuery = supabase
     .from('gastos')
     .select('comprobante_path')
     .eq('id', id)
     .in('estado', ['borrador', 'enviado', 'aprobado', 'pagado_parcial'])
     .is('deleted_at', null)
-    .maybeSingle()
+  if (guard.profile.role === 'user') {
+    fetchQuery = fetchQuery.eq('created_by', guard.profile.id)
+  }
+  const { data: gasto, error: fetchErr } = await fetchQuery.maybeSingle()
   if (fetchErr) throw new Error(fetchErr.message)
   if (!gasto) throw new Error('Gasto ya cerrado (pagado/rechazado) o no existe.')
   if (!gasto.comprobante_path) throw new Error('Este gasto no tiene comprobante.')
@@ -726,7 +744,7 @@ export async function removeComprobanteGasto(id: string) {
     .remove([gasto.comprobante_path])
   if (rmErr) console.error('[removeComprobanteGasto] storage warning:', rmErr.message)
 
-  const { data: rows, error: updErr } = await supabase
+  let updQuery = supabase
     .from('gastos')
     .update({
       comprobante_path: null,
@@ -739,7 +757,10 @@ export async function removeComprobanteGasto(id: string) {
     .eq('id', id)
     .in('estado', ['borrador', 'enviado', 'aprobado', 'pagado_parcial'])
     .is('deleted_at', null)
-    .select('id')
+  if (guard.profile.role === 'user') {
+    updQuery = updQuery.eq('created_by', guard.profile.id)
+  }
+  const { data: rows, error: updErr } = await updQuery.select('id')
   if (updErr) throw new Error(updErr.message)
   if (!rows || rows.length === 0)
     throw new Error('Sin permiso para limpiar comprobante.')

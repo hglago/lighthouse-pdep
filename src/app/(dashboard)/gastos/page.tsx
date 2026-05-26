@@ -17,17 +17,24 @@ export default async function GastosPage() {
   // antes de leer la lista — así los recién generados aparecen en la primera carga.
   await generarGastosRecurrentes()
 
-  const [profileResult, gastosResult, fondosResult, proveedoresResult, recurrentesResult, pagosDeGastosResult, financiadoresResult, tiposGastoResult] = await Promise.all([
-    supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single(),
-    supabase
-      .from('gastos')
-      .select('id, codigo, fondo_id, proveedor_id, tipo_gasto_id, forma_cancelacion, financiador_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta, horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio, periodo_analitico, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre), financiadores:financiador_id(id, codigo, nombre), tipos_gasto:tipo_gasto_id(id, codigo, nombre)')
-      .is('deleted_at', null)
-      .order('fecha_gasto', { ascending: false }),
+  // Fase 2D (2026-05-25): fetch del profile primero para saber si aplica
+  // ownership filter por created_by. USER ve solo sus propios gastos.
+  const profileResult = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+  const isUserRole = (profileResult.data?.role ?? 'visualizador') === 'user'
+
+  // Builder con ownership filter condicional para USER.
+  let gastosQuery = supabase
+    .from('gastos')
+    .select('id, codigo, fondo_id, proveedor_id, tipo_gasto_id, forma_cancelacion, financiador_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta, horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio, periodo_analitico, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre), financiadores:financiador_id(id, codigo, nombre), tipos_gasto:tipo_gasto_id(id, codigo, nombre)')
+    .is('deleted_at', null)
+  if (isUserRole) gastosQuery = gastosQuery.eq('created_by', user.id)
+
+  const [gastosResult, fondosResult, proveedoresResult, recurrentesResult, pagosDeGastosResult, financiadoresResult, tiposGastoResult] = await Promise.all([
+    gastosQuery.order('fecha_gasto', { ascending: false }),
     supabase
       .from('fondos')
       .select('id, codigo, nombre, moneda')
@@ -75,11 +82,13 @@ export default async function GastosPage() {
     /codigo|es_servicio_horas|descripcion_servicio|periodo_servicio|horas_servicio|valor_hora_aplicado|porcentaje_uplift_snapshot|importe_base_servicio|forma_cancelacion|financiador_id|tipo_gasto_id|periodo_analitico/.test(gastosResult.error.message ?? '')
   ) {
     console.warn('[gastos] columna nueva no disponible aún; retry con SELECT base:', gastosResult.error.message)
-    const fallback = await supabase
+    // Fase 2D: aplicar mismo ownership filter al retry.
+    let fallbackQuery = supabase
       .from('gastos')
       .select('id, fondo_id, proveedor_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre)')
       .is('deleted_at', null)
-      .order('fecha_gasto', { ascending: false })
+    if (isUserRole) fallbackQuery = fallbackQuery.eq('created_by', user.id)
+    const fallback = await fallbackQuery.order('fecha_gasto', { ascending: false })
     gastosData = (fallback.data ?? []).map(g => {
       // PG-PERIODO: si la columna no se aplicó, derivamos en cliente con
       // la misma fórmula para mantener el contrato del tipo.
