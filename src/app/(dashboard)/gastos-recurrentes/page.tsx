@@ -11,6 +11,11 @@ export default async function GastosRecurrentesPage() {
   const user = authResult.data?.user
   if (!user) redirect('/login')
 
+  {
+    const { data: p } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    if (p?.role === 'socio') redirect('/reportes')
+  }
+
   const [profileResult, recurrentesResult, fondosResult, proveedoresResult, tiposGastoResult] = await Promise.all([
     supabase
       .from('profiles')

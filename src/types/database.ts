@@ -7,6 +7,7 @@ export type UserRole =
   | 'supervisor'       // Fase 2A: ve todo, no modifica
   | 'operador'         // Fase 2A: carga gastos/proveedores, no autoriza
   | 'user'             // Fase 2A: solo sus propios datos
+  | 'socio'            // REP1: solo acceso a /reportes
   | 'contador'         // legacy — deprecado
   | 'revisor'          // legacy — deprecado
   | 'visualizador'     // legacy — deprecado
@@ -64,6 +65,7 @@ export interface Proveedor {
   // false = proveedor común; true = factura por horas, ver D22/D23.
   permite_horas_servicio: boolean
   valor_hora: number
+  nombre_informe: string | null
   created_by: string
   created_at: string
   updated_at: string

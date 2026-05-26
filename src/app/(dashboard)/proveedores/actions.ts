@@ -33,6 +33,7 @@ export type ProveedorPayload = {
   // P1: servicios por hora. Default false / 0 cuando no aplica.
   permite_horas_servicio: boolean
   valor_hora: number
+  nombre_informe: string | null
 }
 
 // Normaliza ambos bloques opcionales del proveedor:
@@ -67,7 +68,8 @@ function isOptionalColumnMissingError(err: { code?: string; message?: string } |
     msg.includes('tiene_uplift') ||
     msg.includes('porcentaje_uplift') ||
     msg.includes('permite_horas_servicio') ||
-    msg.includes('valor_hora')
+    msg.includes('valor_hora') ||
+    msg.includes('nombre_informe')
   )
 }
 
@@ -77,9 +79,10 @@ function stripCamposOpcionales<T extends {
   porcentaje_uplift?: number
   permite_horas_servicio?: boolean
   valor_hora?: number
-}>(p: T): Omit<T, 'tiene_uplift' | 'porcentaje_uplift' | 'permite_horas_servicio' | 'valor_hora'> {
+  nombre_informe?: string | null
+}>(p: T): Omit<T, 'tiene_uplift' | 'porcentaje_uplift' | 'permite_horas_servicio' | 'valor_hora' | 'nombre_informe'> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { tiene_uplift, porcentaje_uplift, permite_horas_servicio, valor_hora, ...rest } = p
+  const { tiene_uplift, porcentaje_uplift, permite_horas_servicio, valor_hora, nombre_informe, ...rest } = p
   return rest
 }
 

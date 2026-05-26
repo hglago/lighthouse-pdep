@@ -10,10 +10,11 @@ import {
   IconProveedores,
   IconHonorarios,
   IconRendiciones,
+  IconReportes,
   IconClose,
 } from '@/components/ui/icons'
 import { ROLE_LABELS } from '@/types'
-import type { SessionUser } from '@/types'
+import type { SessionUser, UserRole } from '@/types'
 import { APP_VERSION } from '@/lib/version'
 
 interface SidebarProps {
@@ -33,18 +34,20 @@ function IconUsers() {
   )
 }
 
-type NavItem = { label: string; href: string; Icon: React.ComponentType; requiresAdmin?: boolean }
+type NavItem = { label: string; href: string; Icon: React.ComponentType; allowedRoles?: UserRole[] }
+
+const ROLES_OPERATIVOS: UserRole[] = ['admin', 'supervisor', 'operador', 'user', 'contador', 'revisor', 'visualizador']
 
 const navigation: NavItem[] = [
-  // Fase 2C.3 (2026-05-25): Dashboard solo admin (mismo gate que /usuarios).
-  { label: 'Dashboard', href: '/dashboard', Icon: IconDashboard, requiresAdmin: true },
-  { label: 'Fondos', href: '/fondos', Icon: IconFondos },
-  { label: 'Gastos', href: '/gastos', Icon: IconGastos },
-  { label: 'Pagos', href: '/pagos', Icon: IconPagos },
-  { label: 'Proveedores', href: '/proveedores', Icon: IconProveedores },
-  { label: 'Honorarios', href: '/honorarios', Icon: IconHonorarios },
-  { label: 'Rendiciones', href: '/rendiciones', Icon: IconRendiciones },
-  { label: 'Usuarios', href: '/usuarios', Icon: IconUsers, requiresAdmin: true },
+  { label: 'Dashboard', href: '/dashboard', Icon: IconDashboard, allowedRoles: ['admin'] },
+  { label: 'Fondos', href: '/fondos', Icon: IconFondos, allowedRoles: ROLES_OPERATIVOS },
+  { label: 'Gastos', href: '/gastos', Icon: IconGastos, allowedRoles: ROLES_OPERATIVOS },
+  { label: 'Pagos', href: '/pagos', Icon: IconPagos, allowedRoles: ROLES_OPERATIVOS },
+  { label: 'Proveedores', href: '/proveedores', Icon: IconProveedores, allowedRoles: ROLES_OPERATIVOS },
+  { label: 'Honorarios', href: '/honorarios', Icon: IconHonorarios, allowedRoles: ROLES_OPERATIVOS },
+  { label: 'Rendiciones', href: '/rendiciones', Icon: IconRendiciones, allowedRoles: ROLES_OPERATIVOS },
+  { label: 'Reportes', href: '/reportes', Icon: IconReportes, allowedRoles: ['admin', 'supervisor', 'socio'] },
+  { label: 'Usuarios', href: '/usuarios', Icon: IconUsers, allowedRoles: ['admin'] },
 ]
 
 function getInitials(name: string | null, email: string): string {
@@ -104,7 +107,7 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="space-y-1">
             {navigation
-              .filter(item => !item.requiresAdmin || user.role === 'admin')
+              .filter(item => !item.allowedRoles || item.allowedRoles.includes(user.role as UserRole))
               .map(({ label, href, Icon }) => {
               const isActive = pathname === href || pathname.startsWith(href + '/')
               return (

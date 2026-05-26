@@ -45,7 +45,9 @@ export default async function DashboardPage() {
     .select('role')
     .eq('id', auth.data.user.id)
     .single()
-  if (!profile || profile.role !== 'admin') redirect('/gastos')
+  if (!profile) redirect('/gastos')
+  if (profile.role === 'socio') redirect('/reportes')
+  if (profile.role !== 'admin') redirect('/gastos')
 
   const today = new Date()
   const isoToday = today.toISOString().slice(0, 10)

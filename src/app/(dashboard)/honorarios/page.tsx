@@ -1,6 +1,15 @@
+import { redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
 import { IconHonorarios } from '@/components/ui/icons'
 
-export default function HonorariosPage() {
+export default async function HonorariosPage() {
+  const supabase = createClient()
+  const authResult = await supabase.auth.getUser()
+  const user = authResult.data?.user
+  if (!user) redirect('/login')
+  const { data: p } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+  if (p?.role === 'socio') redirect('/reportes')
+
   return (
     <div className="space-y-6">
       <div>

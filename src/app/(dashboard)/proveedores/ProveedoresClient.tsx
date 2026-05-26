@@ -12,20 +12,21 @@ interface Props {
 
 interface FormState {
   nombre: string
+  nombre_informe: string
   cuit: string
   email: string
   telefono: string
   direccion: string
   observaciones: string
   tiene_uplift: boolean
-  porcentaje_uplift: string  // string en el form, se castea a number al submit
-  // P1: tipo de proveedor (servicios por hora)
+  porcentaje_uplift: string
   permite_horas_servicio: boolean
-  valor_hora: string         // string en el form, se castea a number al submit
+  valor_hora: string
 }
 
 const EMPTY_FORM: FormState = {
   nombre: '',
+  nombre_informe: '',
   cuit: '',
   email: '',
   telefono: '',
@@ -71,6 +72,7 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
       render: (p) => (
         <div>
           <div className="text-sm font-medium text-gray-900">{p.nombre}</div>
+          {p.nombre_informe && <div className="text-xs text-indigo-500 truncate max-w-xs">Informe: {p.nombre_informe}</div>}
           {p.direccion && <div className="text-xs text-gray-400 truncate max-w-xs">{p.direccion}</div>}
         </div>
       ),
@@ -112,6 +114,7 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
     setEditing(p)
     setForm({
       nombre: p.nombre,
+      nombre_informe: p.nombre_informe ?? '',
       cuit: p.cuit ?? '',
       email: p.email ?? '',
       telefono: p.telefono ?? '',
@@ -190,6 +193,7 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
       porcentaje_uplift: porcentajeUplift,
       permite_horas_servicio: form.permite_horas_servicio,
       valor_hora: valorHora,
+      nombre_informe: toNullable(form.nombre_informe),
     }
 
     startTransition(async () => {
@@ -313,6 +317,17 @@ export default function ProveedoresClient({ proveedores, role }: Props) {
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
                   placeholder="Razón social o nombre"
                   autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Nombre para informes</label>
+                <input
+                  type="text"
+                  value={form.nombre_informe}
+                  onChange={(e) => setForm({ ...form, nombre_informe: e.target.value })}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                  placeholder="Nombre que aparecerá en reportes"
                 />
               </div>
 

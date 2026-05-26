@@ -10,6 +10,7 @@ const PROTECTED_PREFIXES = [
   '/proveedores',
   '/honorarios',
   '/rendiciones',
+  '/reportes',
 ]
 
 export async function middleware(request: NextRequest) {

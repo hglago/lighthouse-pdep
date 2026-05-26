@@ -13,6 +13,11 @@ export default async function GastosPage() {
   const user = authResult.data?.user
   if (!user) redirect('/login')
 
+  {
+    const { data: p } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    if (p?.role === 'socio') redirect('/reportes')
+  }
+
   // Generar gastos pendientes desde recurrentes activos (idempotente vía UNIQUE)
   // antes de leer la lista — así los recién generados aparecen en la primera carga.
   await generarGastosRecurrentes()

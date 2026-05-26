@@ -33,7 +33,7 @@ export interface GoogleAllowedRow {
 
 // Fase 2A (2026-05-25): selects de rol exponen UserRole directo (los 7 valores).
 // Nuevos (preferidos) primero, legacy en <optgroup> al final.
-const NEW_ROLES: UserRole[] = ['admin', 'supervisor', 'operador', 'user']
+const NEW_ROLES: UserRole[] = ['admin', 'supervisor', 'operador', 'user', 'socio']
 const LEGACY_ROLES: UserRole[] = ['contador', 'revisor', 'visualizador']
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -41,6 +41,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
   supervisor: 'Supervisor',
   operador: 'Operador',
   user: 'User',
+  socio: 'Socio',
   contador: 'Contador (legacy)',
   revisor: 'Revisor (legacy)',
   visualizador: 'Visualizador (legacy)',
@@ -53,6 +54,7 @@ const DEFAULTS_POR_ROLE: Record<UserRole, { puede_exportar: boolean; puede_aprob
   supervisor:   { puede_exportar: true,  puede_aprobar_gastos: false, puede_confirmar_pagos: false },
   operador:     { puede_exportar: true,  puede_aprobar_gastos: false, puede_confirmar_pagos: false },
   user:         { puede_exportar: false, puede_aprobar_gastos: false, puede_confirmar_pagos: false },
+  socio:        { puede_exportar: false, puede_aprobar_gastos: false, puede_confirmar_pagos: false },
   contador:     { puede_exportar: true,  puede_aprobar_gastos: true,  puede_confirmar_pagos: false },
   revisor:      { puede_exportar: true,  puede_aprobar_gastos: true,  puede_confirmar_pagos: false },
   visualizador: { puede_exportar: false, puede_aprobar_gastos: false, puede_confirmar_pagos: false },
