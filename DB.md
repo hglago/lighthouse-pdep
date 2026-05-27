@@ -182,6 +182,40 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 - CHECK `gastos_recurrentes_servicio_horas_coherente`: idéntico al de `gastos` salvo que no exige período (se calcula al generar)
 - D23: cuando `fn_generar_gastos_recurrentes()` genere el gasto del mes (P3 pendiente), debe copiar el snapshot completo + calcular `periodo_servicio_desde = primer día del mes`, `periodo_servicio_hasta = último día del mes`. NO leer en vivo del proveedor.
 
+### `reportes_dypsa` — REP4.1
+Cabecera de informes Dypsa generados (snapshot congelado).
+
+- `id uuid PK`
+- **`codigo text UNIQUE NOT NULL`** (`IDY-000001`, asignado por trigger `trg_set_reporte_dypsa_codigo`)
+- `fecha_desde date NOT NULL`, `fecha_hasta date NOT NULL` — CHECK `fecha_hasta >= fecha_desde`
+- `fecha_generacion timestamptz NOT NULL DEFAULT now()`
+- `generado_por uuid REFERENCES auth.users(id)`
+- `total_informado numeric(14,2) NOT NULL DEFAULT 0`
+- `moneda text NOT NULL DEFAULT 'ARS'`
+- `cantidad_items int NOT NULL DEFAULT 0`
+- `estado text NOT NULL DEFAULT 'emitido'`
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+### `reportes_dypsa_items` — REP4.1
+Items congelados del informe Dypsa. Un gasto = una fila (UNIQUE reporte_id+gasto_id).
+
+- `id uuid PK`
+- `reporte_id uuid NOT NULL → reportes_dypsa(id) ON DELETE CASCADE`
+- `gasto_id uuid NOT NULL → gastos(id)`
+- `pago_id uuid → pagos(id)` — primer pago confirmado dentro del rango (referencia de inclusión)
+- `fecha_gasto date`, `fecha_pago date`
+- `periodo text` — YYYY-MM congelado
+- `proveedor_nombre text NOT NULL DEFAULT 'Sin proveedor'` — nombre_informe ?? nombre ?? fallback
+- `tipo_gasto_nombre text NOT NULL DEFAULT 'Sin clasificar'`
+- `descripcion text`
+- `moneda text NOT NULL`
+- `monto_final_informe numeric(14,2) NOT NULL` — ya con uplift aplicado, sin exponer porcentaje
+- `comprobante_path text` — referencia congelada al Storage
+- `tiene_comprobante boolean NOT NULL DEFAULT false`
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+**Política de pagos parciales**: un gasto se incluye si tiene al menos un pago confirmado cuya `fecha_pago` cae dentro del rango. Si tiene múltiples pagos, se genera una sola fila. El importe informado se calcula sobre `gasto.monto` (no sobre suma de pagos). `pago_id`/`fecha_pago` son del primer pago confirmado dentro del rango.
+
 ### `anticipos`
 - `id, proveedor_id, fondo_id, concepto`
 - `monto_total, porcentaje_anticipo, monto_anticipo, monto_saldo`
@@ -208,6 +242,7 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 | **`trg_set_socio_codigo`** | socios | BEFORE INSERT | `fn_set_socio_codigo` | Asigna `SOC-###` — Etapa 2B |
 | `trg_set_pago_codigo` (SQL pendiente) | pagos | BEFORE INSERT | Asigna `P######` |
 | `trg_set_gasto_codigo` (SQL pendiente) | gastos | BEFORE INSERT | Asigna `G######` |
+| **`trg_set_reporte_dypsa_codigo`** | reportes_dypsa | BEFORE INSERT | `fn_set_reporte_dypsa_codigo` | Asigna `IDY-######` si NEW.codigo es NULL — REP4.1 |
 | `trg_set_pago_genera_deuda` (deprecada D14) | pagos | BEFORE INSERT OR UPDATE | Setea flag genera_deuda_interna |
 | `fn_recalc_gasto_estado` | gastos | AFTER pagos changes | Recalcula estado del gasto a pagado_parcial/pagado |
 | `updated_at` | varias | BEFORE UPDATE | Setea `updated_at = now()` |
@@ -222,6 +257,7 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 | **`socios_codigo_seq`** | SOC-### | `fn_set_socio_codigo` | next depende del backfill (1 si la tabla estaba vacía) — Etapa 2B |
 | `gastos_codigo_seq` (SQL pendiente) | G###### | — | — |
 | `pagos_codigo_seq` (SQL pendiente) | P###### | — | — |
+| **`reportes_dypsa_codigo_seq`** | IDY-###### | `fn_set_reporte_dypsa_codigo` | next = 1 — REP4.1 |
 
 ## Vistas
 
@@ -245,6 +281,7 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 | `soft_delete_fondo(uuid, text)` | SECURITY DEFINER. Soft-delete validando saldo=0. SQL pendiente, no aplicado en producción todavía |
 | `fn_set_fondo_codigo()`, `fn_set_aporte_codigo()`, `fn_set_financiador_codigo()` | Generan codigos FON/APO/FIN — Etapa 1 |
 | `fn_set_socio_codigo()` | Genera codigo SOC — Etapa 2B |
+| **`fn_generar_reporte_dypsa(p_fecha_desde, p_fecha_hasta)`** | **SECURITY DEFINER. Returns reportes_dypsa row.** Crea cabecera + items snapshot con uplift aplicado. Filtra pagos confirmados dentro del rango. Rechaza si 0 items. — REP4.1 |
 | **`registrar_aporte_socio(p_destino_aporte, p_fecha, p_financiador_id, p_importe, p_moneda, p_observaciones, p_socio_id)`** | **SECURITY DEFINER. Returns uuid (aporte_id).** Si `destino='risa'`: INSERT aporte + INSERT movimiento_fondo (credito) + UPDATE fondos.saldo_actual con FOR UPDATE. Si `destino='cancelacion_financiacion'`: valida saldo pendiente, INSERT aporte + INSERT movimientos_financiacion (`cancelacion_por_aporte`), NO toca saldo RISA. Etapa 2C aplicada. |
 
 ## Funciones SQL planeadas para etapas 2-4 (NO existen aún)
@@ -279,6 +316,7 @@ Definiciones de gastos que se auto-generan mensualmente. NO se borran en reset.
 | Socio | `socios` | `codigo` | `SOC-001`, `SOC-002`, … | `socios_codigo_seq` | `trg_set_socio_codigo` | ✅ Etapa 2B aplicada |
 | Gasto | `gastos` | `codigo` | `G000001`, `G000002`, … | `gastos_codigo_seq` | `trg_set_gasto_codigo` | ⚠️ SQL pendiente (commit `9872748`) |
 | Pago | `pagos` | `codigo` | `P000001`, `P000002`, … | `pagos_codigo_seq` | `trg_set_pago_codigo` | ⚠️ SQL pendiente (commit `9872748`) |
+| Informe Dypsa | `reportes_dypsa` | `codigo` | `IDY-000001`, `IDY-000002`, … | `reportes_dypsa_codigo_seq` | `trg_set_reporte_dypsa_codigo` | ⚠️ REP4.1 pendiente de aplicar |
 
 **Convención**:
 - El codigo lo asigna el trigger BEFORE INSERT al ver `NEW.codigo IS NULL`. El frontend nunca lo calcula ni lo envía.
