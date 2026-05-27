@@ -1,10 +1,11 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { aplicarUplift } from '@/lib/uplift'
 import { exportWorkbookToExcel } from '@/lib/excel'
 import DataTable, { type Column } from '@/components/DataTable'
+import type { InformeResumen, GenerarResult } from './dypsa/actions'
 
 export interface DypsaGastoRow {
   id: string
@@ -31,6 +32,12 @@ function formatDate(iso: string): string {
   if (!iso) return ''
   const [y, m, d] = iso.slice(0, 10).split('-')
   return `${d}/${m}/${y}`
+}
+
+function formatDateTime(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.toLocaleDateString('es-AR')} ${d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`
 }
 
 function formatPeriodo(p: string): string {
@@ -245,9 +252,11 @@ async function exportPdf(
 
 interface Props {
   rows: DypsaGastoRow[]
+  informes?: InformeResumen[]
+  generarAction?: (fechaDesde: string, fechaHasta: string) => Promise<GenerarResult>
 }
 
-export default function InformeDypsaClient({ rows }: Props) {
+export default function InformeDypsaClient({ rows, informes = [], generarAction }: Props) {
   const today = new Date().toISOString().slice(0, 10)
 
   const [draftDesde, setDraftDesde] = useState('')
@@ -255,6 +264,9 @@ export default function InformeDypsaClient({ rows }: Props) {
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState(today)
   const [detalleSearch, setDetalleSearch] = useState('')
+  const [generarMsg, setGenerarMsg] = useState('')
+  const [generarError, setGenerarError] = useState('')
+  const [isPending, startTransition] = useTransition()
 
   function handleBuscar() {
     setFechaDesde(draftDesde)
@@ -445,11 +457,25 @@ export default function InformeDypsaClient({ rows }: Props) {
               </button>
             </>
           )}
-          <button type="button" disabled
-            className="rounded-lg bg-gray-200 px-3 py-1.5 text-sm font-medium text-gray-400 cursor-not-allowed"
-            title="Próximamente: generar informe numerado con snapshot">
-            Generar informe
-          </button>
+          {generarAction && (
+            <button type="button" disabled={isPending || !fechaDesde || !fechaHasta}
+              onClick={() => {
+                setGenerarMsg('')
+                setGenerarError('')
+                startTransition(async () => {
+                  const result = await generarAction(fechaDesde, fechaHasta)
+                  if (result.ok) {
+                    setGenerarMsg(`Informe ${result.codigo} generado correctamente.`)
+                  } else {
+                    setGenerarError(result.error)
+                  }
+                })
+              }}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title={!fechaDesde || !fechaHasta ? 'Seleccioná fecha desde y hasta, y presioná Buscar' : 'Generar informe numerado con snapshot'}>
+              {isPending ? 'Generando...' : 'Generar informe'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -476,6 +502,14 @@ export default function InformeDypsaClient({ rows }: Props) {
           </button>
         )}
       </div>
+
+      {/* ── Feedback generar ── */}
+      {generarMsg && (
+        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{generarMsg}</div>
+      )}
+      {generarError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{generarError}</div>
+      )}
 
       {filtered.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-300 bg-white p-12 text-center">
@@ -600,6 +634,51 @@ export default function InformeDypsaClient({ rows }: Props) {
           </div>
         </>
       )}
+      {/* ── Informes emitidos ── */}
+      <div className="rounded-lg border border-gray-200 bg-white">
+        <div className="border-b border-gray-100 px-5 py-3">
+          <h2 className="text-sm font-semibold text-gray-900">Informes emitidos</h2>
+        </div>
+        {informes.length === 0 ? (
+          <div className="px-5 py-8 text-center text-sm text-gray-400">No hay informes emitidos todavía.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
+                  <th className="px-5 py-2">Código</th>
+                  <th className="px-5 py-2">Período</th>
+                  <th className="px-5 py-2">Generado</th>
+                  <th className="px-5 py-2 text-right">Total</th>
+                  <th className="px-5 py-2 text-right">Items</th>
+                  <th className="px-5 py-2">Estado</th>
+                  <th className="px-5 py-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {informes.map(inf => (
+                  <tr key={inf.id} className="hover:bg-gray-50/50">
+                    <td className="px-5 py-2 font-mono text-sm font-medium text-gray-900">{inf.codigo}</td>
+                    <td className="px-5 py-2 text-gray-600 whitespace-nowrap">{formatDate(inf.fecha_desde)} — {formatDate(inf.fecha_hasta)}</td>
+                    <td className="px-5 py-2 text-gray-500 whitespace-nowrap">{formatDateTime(inf.fecha_generacion)}</td>
+                    <td className="px-5 py-2 text-right tabular-nums font-medium text-gray-900 whitespace-nowrap">{formatMoney(Number(inf.total_informado), inf.moneda)}</td>
+                    <td className="px-5 py-2 text-right tabular-nums text-gray-600">{inf.cantidad_items}</td>
+                    <td className="px-5 py-2">
+                      <span className="inline-block rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">{inf.estado}</span>
+                    </td>
+                    <td className="px-5 py-2">
+                      <Link href={`/reportes/dypsa/${inf.id}`}
+                        className="rounded px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+                        Ver informe
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
