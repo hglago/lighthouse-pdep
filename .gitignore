@@ -38,6 +38,9 @@ client_secret_*.apps.googleusercontent.com.json
 next-env.d.ts
 .claude/settings.local.json
 
+# Assets fuente (zip con fuentes propietarias y fotos) — no commitear
+assets/
+
 # Backups productivos — NUNCA commitear datos reales
 backups/
 doc/backups/

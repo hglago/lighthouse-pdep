@@ -3,13 +3,11 @@
 import { useState, useEffect, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { APP_VERSION } from '@/lib/version'
 
-// Fase 2E (2026-05-25): Google Login HABILITADO. El callback en
-// /auth/callback ya valida la whitelist productiva via RPC
-// fn_apply_google_whitelist_self. Usuarios no listados son signOut() +
-// redirigidos a /login?error=not_authorized.
-// admin@lighthouse.com conserva acceso legacy con usuario_login + password.
 const OAUTH_GOOGLE_ENABLED = true
+
+const C = { teal: '#079783', blueDeep: '#0C1F6E', green: '#67B855' }
 
 export default function LoginPage() {
   const [usuario, setUsuario] = useState('')
@@ -73,27 +71,33 @@ export default function LoginPage() {
       setError('No se pudo iniciar sesión con Google.')
       setGoogleLoading(false)
     }
-    // Si no hay error, el browser ya está navegando a Google. No reseteo loading.
   }
 
   const mensaje = urlError || error
 
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-md">
-        <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+  const inputCls = 'w-full rounded-xl border border-gray-200 bg-gray-50/50 px-4 py-2.5 text-sm outline-none transition focus:border-teal-500 focus:bg-white focus:ring-2 focus:ring-teal-500/20'
 
-          <div className="mb-8 text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900">
-              <span className="text-sm font-bold text-white">PD</span>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">PDEP</h1>
-            <p className="mt-1 text-sm text-gray-500">Gestión de Fondos</p>
+  return (
+    <div className="flex min-h-screen items-center justify-center px-4 py-8"
+      style={{ background: `linear-gradient(160deg, ${C.teal}0A, ${C.green}08, ${C.blueDeep}06, #f8fafc)` }}>
+
+      <div className="w-full max-w-[420px]">
+        <div className="rounded-2xl border border-gray-100 bg-white/95 p-8 shadow-lg backdrop-blur-sm sm:p-10">
+
+          {/* Logo */}
+          <div className="mb-8 flex flex-col items-center">
+            <img
+              src="/brand/lighthouse-logo-horizontal.png"
+              alt="Lighthouse School"
+              className="h-auto w-[200px] sm:w-[240px]"
+            />
+            <p className="mt-3 text-sm text-gray-500">Gestión de Fondos</p>
           </div>
 
+          {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="usuario" className="mb-1 block text-sm font-medium text-gray-700">
+              <label htmlFor="usuario" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-500">
                 Usuario
               </label>
               <input
@@ -101,7 +105,7 @@ export default function LoginPage() {
                 type="text"
                 value={usuario}
                 onChange={(e) => setUsuario(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                className={inputCls}
                 placeholder="usuario"
                 required
                 autoComplete="username"
@@ -111,7 +115,7 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="mb-1 block text-sm font-medium text-gray-700">
+              <label htmlFor="password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-500">
                 Contraseña
               </label>
               <input
@@ -119,7 +123,7 @@ export default function LoginPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20"
+                className={inputCls}
                 placeholder="••••••••"
                 required
                 autoComplete="current-password"
@@ -127,7 +131,7 @@ export default function LoginPage() {
             </div>
 
             {mensaje && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
                 {mensaje}
               </div>
             )}
@@ -135,20 +139,17 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || googleLoading}
-              className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ backgroundColor: C.teal, ['--tw-ring-color' as string]: C.teal }}
             >
               {loading ? 'Ingresando...' : 'Ingresar'}
             </button>
           </form>
 
-          {/* OAuth Google pausado temporalmente hasta estabilización.
-              Separador + botón solo se renderizan cuando OAUTH_GOOGLE_ENABLED=true.
-              El callback /auth/callback, la whitelist google_allowed_users y la sección
-              "Usuarios Google autorizados" en /usuarios siguen disponibles para el día
-              que se reactive. */}
+          {/* Google OAuth */}
           {OAUTH_GOOGLE_ENABLED && (
             <>
-              <div className="my-5 flex items-center gap-3 text-xs text-gray-400">
+              <div className="my-6 flex items-center gap-3 text-xs text-gray-400">
                 <div className="h-px flex-1 bg-gray-200" />
                 <span>o</span>
                 <div className="h-px flex-1 bg-gray-200" />
@@ -158,7 +159,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={handleGoogleLogin}
                 disabled={loading || googleLoading}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -170,6 +171,12 @@ export default function LoginPage() {
               </button>
             </>
           )}
+
+          {/* Versión */}
+          <div className="mt-6 text-center text-[10px] font-mono text-gray-400 space-y-0.5">
+            <p>{APP_VERSION.tag} · {APP_VERSION.commit} · {APP_VERSION.env}</p>
+            <p>{new Date(APP_VERSION.buildTime).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+          </div>
         </div>
       </div>
     </div>

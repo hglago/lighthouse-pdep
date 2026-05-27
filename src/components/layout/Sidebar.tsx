@@ -8,8 +8,6 @@ import {
   IconGastos,
   IconPagos,
   IconProveedores,
-  IconHonorarios,
-  IconRendiciones,
   IconReportes,
   IconClose,
 } from '@/components/ui/icons'
@@ -44,8 +42,6 @@ const navigation: NavItem[] = [
   { label: 'Gastos', href: '/gastos', Icon: IconGastos, allowedRoles: ROLES_OPERATIVOS },
   { label: 'Pagos', href: '/pagos', Icon: IconPagos, allowedRoles: ROLES_OPERATIVOS },
   { label: 'Proveedores', href: '/proveedores', Icon: IconProveedores, allowedRoles: ROLES_OPERATIVOS },
-  { label: 'Honorarios', href: '/honorarios', Icon: IconHonorarios, allowedRoles: ROLES_OPERATIVOS },
-  { label: 'Rendiciones', href: '/rendiciones', Icon: IconRendiciones, allowedRoles: ROLES_OPERATIVOS },
   { label: 'Reportes', href: '/reportes', Icon: IconReportes, allowedRoles: ['admin', 'supervisor', 'socio'] },
   { label: 'Usuarios', href: '/usuarios', Icon: IconUsers, allowedRoles: ['admin'] },
 ]
@@ -86,13 +82,10 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
         {/* Logo */}
         <div className="flex h-16 items-center justify-between border-b border-slate-800 px-4">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white">
-              <span className="text-xs font-bold text-slate-900">PD</span>
+            <div className="rounded-xl bg-white p-1.5">
+              <img src="/brand/lighthouse-logo-horizontal.png" alt="Lighthouse School" className="h-7 w-auto" />
             </div>
-            <div>
-              <p className="text-sm font-semibold text-white">PDEP</p>
-              <p className="text-xs text-slate-400">Gestión de Fondos</p>
-            </div>
+            <p className="text-xs text-slate-400 hidden sm:block">Gestión de Fondos</p>
           </div>
           <button
             onClick={onClose}
@@ -144,13 +137,13 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
           </div>
         </div>
 
-        {/* Versión del sistema — generada por scripts/write-version.mjs */}
-        <div
-          className="border-t border-slate-800 px-4 py-2"
-          title={`Build: ${APP_VERSION.buildTime}`}
-        >
+        {/* Versión */}
+        <div className="border-t border-slate-800 px-4 py-2.5">
           <p className="truncate text-[10px] font-mono tabular-nums text-slate-500">
-            {APP_VERSION.tag} · {APP_VERSION.commit} · {APP_VERSION.env}
+            {APP_VERSION.tag} · {APP_VERSION.commit}
+          </p>
+          <p className="truncate text-[10px] font-mono tabular-nums text-slate-600">
+            {APP_VERSION.env} · {new Date(APP_VERSION.buildTime).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
           </p>
         </div>
       </aside>

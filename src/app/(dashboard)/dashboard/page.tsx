@@ -1,45 +1,38 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import type { ObligacionPendiente } from '@/types'
+import DashboardClient, { type DashboardData } from './DashboardClient'
 
-function formatMoney(amount: number, currency: string) {
-  return new Intl.NumberFormat('es-AR', {
-    style: 'currency',
-    currency: currency === 'USD' ? 'USD' : currency === 'EUR' ? 'EUR' : 'ARS',
-    minimumFractionDigits: 2,
-  }).format(amount)
+const ESTADO_LABELS: Record<string, string> = {
+  borrador: 'Borrador',
+  enviado: 'Pendiente aprobación',
+  aprobado: 'Aprobado',
+  pagado_parcial: 'Pagado parcial',
+  pagado: 'Pagado',
+  rechazado: 'Rechazado',
 }
 
-const PRIORIDAD_LABELS: Record<number, string> = { 1: 'Crítica', 2: 'Alta', 3: 'Normal', 4: 'Baja' }
-const PRIORIDAD_COLORS: Record<number, string> = {
-  1: 'text-red-600 font-semibold',
-  2: 'text-amber-600 font-medium',
-  3: 'text-gray-500',
-  4: 'text-gray-400',
+function getWeekRange(): { desde: string; hasta: string } {
+  const now = new Date()
+  const day = now.getDay()
+  const monday = new Date(now)
+  monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1))
+  const sunday = new Date(monday)
+  sunday.setDate(monday.getDate() + 6)
+  return { desde: monday.toISOString().slice(0, 10), hasta: sunday.toISOString().slice(0, 10) }
 }
 
-type FondoRow = { id: string; nombre: string; moneda: string; saldo_actual: number }
-type GastoEnvRow = {
-  id: string; fecha_gasto: string; descripcion: string; monto: number; moneda: string
-  proveedores: { nombre: string } | null
+function getMonthRange(): { desde: string; hasta: string } {
+  const now = new Date()
+  const desde = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
+  const hasta = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10)
+  return { desde, hasta }
 }
-type PagoBorradorRow = {
-  id: string; nro_pago: string; concepto: string; monto: number; moneda: string
-  fondos: { nombre: string } | null
-}
-type PagoPagadoRow = { monto: number; moneda: string; fecha_pago: string }
-type AporteRow = { aportante: string | null; moneda: string; monto: number; fecha_aporte: string; fondo_id: string }
-type AporteGroup = { aportante: string; moneda: string; total: number; cantidad: number; ultimo: string }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: { preset?: string; fechaDesde?: string; fechaHasta?: string } }) {
   const supabase = createClient()
   const auth = await supabase.auth.getUser()
   if (!auth.data?.user) redirect('/login')
 
-  // Fase 2C.3 (2026-05-25): dashboard restringido a admin. Otros roles
-  // (incluidos legacy contador/revisor/visualizador y nuevos supervisor/
-  // operador/user) son redirigidos a /gastos. Patrón page-guard
-  // consistente con /usuarios/page.tsx.
   const { data: profile } = await supabase
     .from('profiles')
     .select('role')
@@ -49,306 +42,417 @@ export default async function DashboardPage() {
   if (profile.role === 'socio') redirect('/reportes')
   if (profile.role !== 'admin') redirect('/gastos')
 
-  const today = new Date()
-  const isoToday = today.toISOString().slice(0, 10)
-  const isoIn7 = new Date(today.getTime() + 7 * 86400000).toISOString().slice(0, 10)
-  const isoMonthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
+  // Determinar rango
+  let preset = searchParams.preset ?? 'month'
+  let desde: string
+  let hasta: string
 
-  const [fondosResult, oblisResult, gastosEnvResult, pagosBorradorResult, pagosPagadosResult, aportesResult] = await Promise.all([
-    supabase.from('fondos')
-      .select('id, nombre, moneda, saldo_actual')
+  if (searchParams.fechaDesde && searchParams.fechaHasta) {
+    preset = 'custom'
+    desde = searchParams.fechaDesde
+    hasta = searchParams.fechaHasta
+  } else if (preset === 'week') {
+    const r = getWeekRange()
+    desde = r.desde
+    hasta = r.hasta
+  } else if (preset === 'all') {
+    desde = '2000-01-01'
+    hasta = '2099-12-31'
+  } else {
+    preset = 'month'
+    const r = getMonthRange()
+    desde = r.desde
+    hasta = r.hasta
+  }
+
+  // Semana actual para necesidad semanal (siempre la semana en curso, independiente del filtro)
+  const weekRange = getWeekRange()
+
+  // ── Queries filtradas ──
+  const [
+    aportesResult,
+    pagosPagadosResult,
+    obligacionesResult,
+    necesidadSemanalResult,
+    pgResult,
+    fondosResult,
+    saldosTercerosResult,
+    gastosEnPeriodoResult,
+    upliftItemsResult,
+  ] = await Promise.all([
+    // 1. Aportes en período (con detalle para modal)
+    supabase
+      .from('aportes_fondo')
+      .select('codigo, aportante, moneda, monto, fecha_aporte, socio_id, socios:socio_id(nombre)')
+      .is('deleted_at', null)
+      .gte('fecha_aporte', desde)
+      .lte('fecha_aporte', hasta)
+      .order('fecha_aporte', { ascending: false }),
+
+    // 2. Pagos pagados en período (con detalle para modal)
+    supabase
+      .from('pagos')
+      .select('monto, moneda, fecha_pago, concepto, proveedores:proveedor_id(nombre)')
+      .eq('estado', 'pagado')
+      .gte('fecha_pago', desde)
+      .lte('fecha_pago', hasta)
+      .order('fecha_pago', { ascending: false }),
+
+    // 3. Obligaciones pendientes (con detalle para modal)
+    supabase
+      .from('v_obligaciones_pendientes')
+      .select('obligacion_id, concepto, monto_pendiente, moneda, fecha_vencimiento, proveedor_nombre, prioridad_pago'),
+
+    // 4. Necesidad semanal con detalle para modal
+    supabase
+      .from('gastos')
+      .select('id, monto, moneda, descripcion, fecha_pago_prevista, proveedores:proveedor_id(nombre)')
+      .is('deleted_at', null)
+      .in('estado', ['enviado', 'aprobado'])
+      .gte('fecha_pago_prevista', weekRange.desde)
+      .lte('fecha_pago_prevista', weekRange.hasta),
+
+    // 5. Posición global RISA (estado actual)
+    supabase.from('v_posicion_global_risa').select('moneda, mp_total, mt_total, pg_total'),
+
+    // 6. Saldo MP (fondos activos, estado actual, con nombre para detalle)
+    supabase
+      .from('fondos')
+      .select('nombre, moneda, saldo_actual')
       .eq('estado', 'activo')
-      .is('deleted_at', null)
-      .order('nombre'),
-
-    supabase.from('v_obligaciones_pendientes')
-      .select('obligacion_id, tipo_obligacion, concepto, monto_pendiente, moneda, fecha_vencimiento, prioridad_pago, fondo_nombre, proveedor_nombre')
-      .not('fecha_vencimiento', 'is', null)
-      .order('fecha_vencimiento', { ascending: true }),
-
-    supabase.from('gastos')
-      .select('id, fecha_gasto, descripcion, monto, moneda, proveedores(nombre)', { count: 'exact' })
-      .eq('estado', 'enviado')
-      .is('deleted_at', null)
-      .order('fecha_gasto', { ascending: false })
-      .limit(15),
-
-    supabase.from('pagos')
-      .select('id, nro_pago, concepto, monto, moneda, fondos(nombre)', { count: 'exact' })
-      .eq('estado', 'borrador')
-      .order('created_at', { ascending: false })
-      .limit(15),
-
-    supabase.from('pagos')
-      .select('monto, moneda, fecha_pago')
-      .eq('estado', 'pagado'),
-
-    supabase.from('aportes_fondo')
-      .select('aportante, moneda, monto, fecha_aporte, fondo_id')
       .is('deleted_at', null),
+
+    // 7. Saldo terceros (estado actual, con detalle para modal)
+    supabase
+      .from('v_saldos_financiadores')
+      .select('financiador_nombre, moneda, saldo_pendiente, total_deuda_generada, total_cancelado'),
+
+    // 8. Gastos en período (para secciones tipo/proveedor/estado)
+    supabase
+      .from('gastos')
+      .select('monto, moneda, estado, proveedores:proveedor_id(nombre), tipos_gasto:tipo_gasto_id(nombre)')
+      .is('deleted_at', null)
+      .gte('fecha_gasto', desde)
+      .lte('fecha_gasto', hasta),
+
+    // 9a. Informes Dypsa emitidos en período (cabeceras).
+    // Requiere RLS SELECT en reportes_dypsa — si no hay policy, devuelve vacío.
+    supabase
+      .from('reportes_dypsa')
+      .select('id, estado, fecha_generacion'),
   ])
 
-  const fondos = (fondosResult.data ?? []) as FondoRow[]
-  const obligaciones = (oblisResult.data ?? []) as ObligacionPendiente[]
-  const gastosEnv = (gastosEnvResult.data ?? []) as unknown as GastoEnvRow[]
-  const gastosEnvTotal = gastosEnvResult.count ?? gastosEnv.length
-  const pagosBorrador = (pagosBorradorResult.data ?? []) as unknown as PagoBorradorRow[]
-  const pagosBorradorTotal = pagosBorradorResult.count ?? pagosBorrador.length
-  const pagosPagados = (pagosPagadosResult.data ?? []) as PagoPagadoRow[]
-  const aportes = (aportesResult.data ?? []) as AporteRow[]
+  // ── Agregar datos ──
 
-  const saldoARS = fondos.filter(f => f.moneda === 'ARS').reduce((s, f) => s + Number(f.saldo_actual), 0)
-  const saldoUSD = fondos.filter(f => f.moneda === 'USD').reduce((s, f) => s + Number(f.saldo_actual), 0)
-  const fondosActivos = fondos.length
+  // KPI: Aportes
+  const aportesData = aportesResult.data ?? []
+  const aportesAgg = new Map<string, number>()
+  const aportesAportanteAgg = new Map<string, { aportante: string; moneda: string; cantidad: number; total: number }>()
+  for (const a of aportesData) {
+    const moneda = a.moneda as string
+    const monto = Number(a.monto) || 0
+    aportesAgg.set(moneda, (aportesAgg.get(moneda) ?? 0) + monto)
 
-  const oblisVencidas = obligaciones.filter(o => o.fecha_vencimiento && o.fecha_vencimiento < isoToday).length
-  const oblisProx7 = obligaciones.filter(o =>
-    o.fecha_vencimiento && o.fecha_vencimiento >= isoToday && o.fecha_vencimiento <= isoIn7
-  ).length
-  const oblisTabla = obligaciones.slice(0, 12)
+    const socioNombre = (a.socios as { nombre?: string } | null)?.nombre
+    const aportante = socioNombre || (a.aportante as string)?.trim() || 'Sin identificar'
+    const key = `${aportante}|${moneda}`
+    const ex = aportesAportanteAgg.get(key)
+    if (ex) { ex.cantidad++; ex.total += monto }
+    else aportesAportanteAgg.set(key, { aportante, moneda, cantidad: 1, total: monto })
+  }
 
-  // Pagado: total histórico + mes actual, separado por moneda (nunca mezclar)
-  const totalPagadoARS = pagosPagados.filter(p => p.moneda === 'ARS').reduce((s, p) => s + Number(p.monto), 0)
-  const totalPagadoUSD = pagosPagados.filter(p => p.moneda === 'USD').reduce((s, p) => s + Number(p.monto), 0)
-  const pagadoMesARS = pagosPagados.filter(p => p.moneda === 'ARS' && p.fecha_pago >= isoMonthStart).reduce((s, p) => s + Number(p.monto), 0)
-  const pagadoMesUSD = pagosPagados.filter(p => p.moneda === 'USD' && p.fecha_pago >= isoMonthStart).reduce((s, p) => s + Number(p.monto), 0)
+  // KPI: Pagos pagados
+  const pagosAgg = new Map<string, number>()
+  for (const p of pagosPagadosResult.data ?? []) {
+    const moneda = p.moneda as string
+    pagosAgg.set(moneda, (pagosAgg.get(moneda) ?? 0) + (Number(p.monto) || 0))
+  }
 
-  // Aportes: GROUP BY aportante + moneda (nunca mezclar). NULL/vacío → "Sin identificar"
-  const aportesMap = new Map<string, AporteGroup>()
-  // Aportes acumulados por fondo_id (para % saldo/aportes — un fondo tiene una sola moneda)
-  const aportadoPorFondo = new Map<string, number>()
-  for (const a of aportes) {
-    const aportante = a.aportante?.trim() || 'Sin identificar'
-    const key = `${aportante}|${a.moneda}`
-    const ex = aportesMap.get(key)
-    if (ex) {
-      ex.total += Number(a.monto)
-      ex.cantidad += 1
-      if (a.fecha_aporte > ex.ultimo) ex.ultimo = a.fecha_aporte
-    } else {
-      aportesMap.set(key, { aportante, moneda: a.moneda, total: Number(a.monto), cantidad: 1, ultimo: a.fecha_aporte })
+  // KPI: Pendientes de pago (v_obligaciones_pendientes — descuenta pagos confirmados)
+  const obligaciones = (obligacionesResult.data ?? []) as Array<{
+    obligacion_id: string; monto_pendiente: number; moneda: string; fecha_vencimiento: string | null
+  }>
+  const pendientesAgg = new Map<string, { total: number; cantidad: number }>()
+  for (const o of obligaciones) {
+    const moneda = o.moneda
+    const ex = pendientesAgg.get(moneda) ?? { total: 0, cantidad: 0 }
+    ex.total += Number(o.monto_pendiente) || 0
+    ex.cantidad++
+    pendientesAgg.set(moneda, ex)
+  }
+
+  // KPI: Necesidad semanal — gastos con fecha_pago_prevista en semana actual.
+  // Cruzar con obligaciones para incluir solo gastos realmente pendientes de pago.
+  const obligacionIds = new Set(obligaciones.map(o => o.obligacion_id))
+  let necesidadSemanalData = necesidadSemanalResult.data
+  if (necesidadSemanalResult.error?.code === '42703') {
+    necesidadSemanalData = []
+  }
+  const necesidadAgg = new Map<string, { total: number; cantidad: number }>()
+  for (const g of necesidadSemanalData ?? []) {
+    const gastoId = g.id as string
+    if (!obligacionIds.has(gastoId)) continue
+    const moneda = g.moneda as string
+    const ex = necesidadAgg.get(moneda) ?? { total: 0, cantidad: 0 }
+    ex.total += Number(g.monto) || 0
+    ex.cantidad++
+    necesidadAgg.set(moneda, ex)
+  }
+
+  // KPI: Posición global
+  const pgData = pgResult.data ?? []
+  const posicionGlobal = pgData.map(r => ({
+    moneda: r.moneda as string,
+    mp: Number(r.mp_total) || 0,
+    mt: Number(r.mt_total) || 0,
+    pg: Number(r.pg_total) || 0,
+  }))
+
+  // KPI: Saldo MP
+  const saldoMPAgg = new Map<string, number>()
+  for (const f of fondosResult.data ?? []) {
+    const moneda = f.moneda as string
+    saldoMPAgg.set(moneda, (saldoMPAgg.get(moneda) ?? 0) + (Number(f.saldo_actual) || 0))
+  }
+
+  // KPI: Saldo terceros
+  const saldoTerceros = (saldosTercerosResult.data ?? [])
+    .filter(t => Number(t.saldo_pendiente) !== 0)
+    .map(t => ({
+      nombre: t.financiador_nombre as string,
+      moneda: t.moneda as string,
+      saldo: Number(t.saldo_pendiente) || 0,
+    }))
+
+  // Secciones: gastos en período
+  const gastosData = gastosEnPeriodoResult.data ?? []
+
+  const tipoAgg = new Map<string, { tipo: string; moneda: string; cantidad: number; total: number }>()
+  const provAgg = new Map<string, { proveedor: string; moneda: string; cantidad: number; total: number }>()
+  const estadoAgg = new Map<string, { estado: string; moneda: string; cantidad: number; total: number }>()
+
+  for (const g of gastosData) {
+    const moneda = g.moneda as string
+    const monto = Number(g.monto) || 0
+    const tipo = (g.tipos_gasto as { nombre?: string } | null)?.nombre ?? 'Sin clasificar'
+    const prov = (g.proveedores as { nombre?: string } | null)?.nombre ?? 'Sin proveedor'
+    const estado = ESTADO_LABELS[g.estado as string] ?? (g.estado as string)
+
+    const tk = `${tipo}|${moneda}`
+    const te = tipoAgg.get(tk) ?? { tipo, moneda, cantidad: 0, total: 0 }
+    te.cantidad++; te.total += monto; tipoAgg.set(tk, te)
+
+    const pk = `${prov}|${moneda}`
+    const pe = provAgg.get(pk) ?? { proveedor: prov, moneda, cantidad: 0, total: 0 }
+    pe.cantidad++; pe.total += monto; provAgg.set(pk, pe)
+
+    const ek = `${estado}|${moneda}`
+    const ee = estadoAgg.get(ek) ?? { estado, moneda, cantidad: 0, total: 0 }
+    ee.cantidad++; ee.total += monto; estadoAgg.set(ek, ee)
+  }
+
+  // KPI: Uplift informado — informes emitidos en período, items + gastos
+  const upliftAgg = { total: 0, gastos: 0, proveedores: new Set<string>() }
+  // Filtrar en JS: estado='emitido' y fecha_generacion en rango
+  const reportesEnPeriodo = (upliftItemsResult.data ?? []).filter(r => {
+    if ((r as { estado?: string }).estado !== 'emitido') return false
+    const fg = ((r as { fecha_generacion?: string }).fecha_generacion ?? '').slice(0, 10)
+    return fg >= desde && fg <= hasta
+  })
+  const reporteIds = reportesEnPeriodo.map(r => r.id as string)
+
+  // Map de código+fecha por reporte_id
+  const reporteInfoMap = new Map<string, { codigo: string; fecha: string }>()
+  for (const r of reportesEnPeriodo) {
+    const rr = r as { id: string; estado: string; fecha_generacion: string }
+    reporteInfoMap.set(rr.id, { codigo: rr.id, fecha: rr.fecha_generacion })
+  }
+
+  type UpliftDetailRow = {
+    informeCodigo: string; fechaInforme: string; descripcion: string; proveedor: string
+    tipoGasto: string; montoBase: number; pctUplift: number; montoUplift: number
+    montoInformado: number; moneda: string
+  }
+  const upliftDetalle: UpliftDetailRow[] = []
+
+  if (reporteIds.length > 0) {
+    const itemsResult = await supabase
+      .from('reportes_dypsa_items')
+      .select('monto_final_informe, gasto_id, reporte_id, proveedor_nombre, tipo_gasto_nombre, descripcion, moneda')
+      .in('reporte_id', reporteIds)
+
+    if (!itemsResult.error && itemsResult.data) {
+      const gastoIds = Array.from(new Set(itemsResult.data.map(i => i.gasto_id as string)))
+
+      const gastosRefResult = await supabase
+        .from('gastos')
+        .select('id, monto, proveedor_id, porcentaje_uplift_snapshot')
+        .in('id', gastoIds)
+
+      const gastoMap = new Map<string, { monto: number; proveedor_id: string | null; pctSnapshot: number }>()
+      for (const g of gastosRefResult.data ?? []) {
+        gastoMap.set(g.id as string, {
+          monto: Number(g.monto) || 0,
+          proveedor_id: g.proveedor_id as string | null,
+          pctSnapshot: Number((g as { porcentaje_uplift_snapshot?: number }).porcentaje_uplift_snapshot) || 0,
+        })
+      }
+
+      // Traer código de informe
+      const cabResult = await supabase
+        .from('reportes_dypsa')
+        .select('id, codigo, fecha_generacion')
+        .in('id', reporteIds)
+      for (const c of cabResult.data ?? []) {
+        reporteInfoMap.set(c.id as string, { codigo: c.codigo as string, fecha: c.fecha_generacion as string })
+      }
+
+      for (const item of itemsResult.data) {
+        const montoInforme = Number(item.monto_final_informe) || 0
+        const gRef = gastoMap.get(item.gasto_id as string)
+        const montoOriginal = gRef?.monto ?? 0
+        const diff = montoInforme - montoOriginal
+
+        if (diff > 0.01) {
+          upliftAgg.total += diff
+          upliftAgg.gastos++
+          if (gRef?.proveedor_id) upliftAgg.proveedores.add(gRef.proveedor_id)
+
+          const pctUplift = gRef?.pctSnapshot && gRef.pctSnapshot > 0
+            ? gRef.pctSnapshot
+            : montoOriginal > 0 ? (diff / montoOriginal) * 100 : 0
+
+          const repInfo = reporteInfoMap.get(item.reporte_id as string)
+          upliftDetalle.push({
+            informeCodigo: repInfo?.codigo ?? '',
+            fechaInforme: repInfo?.fecha ?? '',
+            descripcion: (item.descripcion as string) ?? '',
+            proveedor: (item.proveedor_nombre as string) ?? 'Sin proveedor',
+            tipoGasto: (item.tipo_gasto_nombre as string) ?? 'Sin clasificar',
+            montoBase: montoOriginal,
+            pctUplift,
+            montoUplift: diff,
+            montoInformado: montoInforme,
+            moneda: (item.moneda as string) ?? 'ARS',
+          })
+        }
+      }
     }
-    aportadoPorFondo.set(a.fondo_id, (aportadoPorFondo.get(a.fondo_id) ?? 0) + Number(a.monto))
   }
-  const aportesAgrupados = Array.from(aportesMap.values()).sort((a, b) => b.total - a.total)
 
-  return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-500">Vista operativa.</p>
-      </div>
+  upliftDetalle.sort((a, b) => b.fechaInforme.localeCompare(a.fechaInforme) || b.montoUplift - a.montoUplift)
 
-      {/* ─── KPIs ──────────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <Kpi label="Saldo total ARS" value={formatMoney(saldoARS, 'ARS')} />
-        <Kpi label="Saldo total USD" value={formatMoney(saldoUSD, 'USD')} />
-        <Kpi label="Fondos activos" value={String(fondosActivos)} />
-        <Kpi label="Obligaciones vencidas" value={String(oblisVencidas)} tone={oblisVencidas > 0 ? 'red' : undefined} />
-        <Kpi label="Próximos 7 días" value={String(oblisProx7)} tone={oblisProx7 > 0 ? 'amber' : undefined} />
-        <Kpi label="Gastos esperando aprobación" value={String(gastosEnvTotal)} />
-        <Kpi label="Pagos en borrador" value={String(pagosBorradorTotal)} />
-        <Kpi label="Total pagado ARS" value={formatMoney(totalPagadoARS, 'ARS')} />
-        <Kpi label="Total pagado USD" value={formatMoney(totalPagadoUSD, 'USD')} />
-        <div className="rounded-xl border border-gray-200 bg-white p-4">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Pagado mes actual</p>
-          <p className="mt-1 text-base font-semibold text-gray-900">{formatMoney(pagadoMesARS, 'ARS')}</p>
-          <p className="text-sm text-gray-500">{formatMoney(pagadoMesUSD, 'USD')}</p>
-        </div>
-      </div>
-
-      {/* ─── Fondos ────────────────────────────────────────────────────────────── */}
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-gray-900">Fondos</h2>
-        <Card empty={fondos.length === 0 ? 'Sin fondos activos.' : false}>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <Th>Fondo</Th>
-                <Th align="center">Moneda</Th>
-                <Th align="right">Saldo actual</Th>
-                <Th align="center">% sobre aportes</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {fondos.map(f => (
-                <tr key={f.id}>
-                  <Td className="text-gray-900 font-medium">{f.nombre}</Td>
-                  <Td align="center" className="text-gray-500">{f.moneda}</Td>
-                  <Td align="right" className="font-semibold text-gray-900 whitespace-nowrap">{formatMoney(Number(f.saldo_actual), f.moneda)}</Td>
-                  <Td align="center">
-                    <PorcentajeBadge saldo={Number(f.saldo_actual)} totalAportado={aportadoPorFondo.get(f.id) ?? 0} />
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      </section>
-
-      {/* ─── Obligaciones próximas ────────────────────────────────────────────── */}
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-gray-900">Obligaciones próximas</h2>
-        <Card empty={oblisTabla.length === 0 ? 'No hay obligaciones con vencimiento.' : false}>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <Th>Fecha</Th>
-                <Th>Concepto</Th>
-                <Th className="hidden md:table-cell">Proveedor</Th>
-                <Th align="right">Monto</Th>
-                <Th align="center" className="hidden sm:table-cell">Prioridad</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {oblisTabla.map(o => {
-                const vencida = o.fecha_vencimiento && o.fecha_vencimiento < isoToday
-                return (
-                  <tr key={o.obligacion_id}>
-                    <Td className={`whitespace-nowrap ${vencida ? 'text-red-600 font-medium' : 'text-gray-600'}`}>{o.fecha_vencimiento ?? '—'}</Td>
-                    <Td className="text-gray-900 max-w-xs truncate">{o.concepto}</Td>
-                    <Td className="hidden md:table-cell text-gray-600">{o.proveedor_nombre ?? '—'}</Td>
-                    <Td align="right" className="font-medium text-gray-900 whitespace-nowrap">{formatMoney(Number(o.monto_pendiente), o.moneda)}</Td>
-                    <Td align="center" className={`hidden sm:table-cell ${PRIORIDAD_COLORS[o.prioridad_pago] ?? 'text-gray-500'}`}>{PRIORIDAD_LABELS[o.prioridad_pago] ?? o.prioridad_pago}</Td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </Card>
-      </section>
-
-      {/* ─── Pagos en borrador ────────────────────────────────────────────────── */}
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-gray-900">Pagos en borrador</h2>
-        <Card empty={pagosBorrador.length === 0 ? 'Sin pagos en borrador.' : false}>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <Th>Nro</Th>
-                <Th>Concepto</Th>
-                <Th className="hidden sm:table-cell">Fondo</Th>
-                <Th align="right">Monto</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {pagosBorrador.map(p => (
-                <tr key={p.id}>
-                  <Td className="text-gray-400 font-mono text-xs whitespace-nowrap">{p.nro_pago}</Td>
-                  <Td className="text-gray-900 max-w-xs truncate">{p.concepto}</Td>
-                  <Td className="hidden sm:table-cell text-gray-600">{p.fondos?.nombre ?? '—'}</Td>
-                  <Td align="right" className="font-medium text-gray-900 whitespace-nowrap">{formatMoney(Number(p.monto), p.moneda)}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      </section>
-
-      {/* ─── Gastos esperando aprobación ──────────────────────────────────────── */}
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-gray-900">Gastos esperando aprobación</h2>
-        <Card empty={gastosEnv.length === 0 ? 'Sin gastos esperando aprobación.' : false}>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <Th>Fecha</Th>
-                <Th className="hidden md:table-cell">Proveedor</Th>
-                <Th>Concepto</Th>
-                <Th align="right">Monto</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {gastosEnv.map(g => (
-                <tr key={g.id}>
-                  <Td className="text-gray-600 whitespace-nowrap">{g.fecha_gasto}</Td>
-                  <Td className="hidden md:table-cell text-gray-600">{g.proveedores?.nombre ?? '—'}</Td>
-                  <Td className="text-gray-900 max-w-xs truncate">{g.descripcion}</Td>
-                  <Td align="right" className="font-medium text-gray-900 whitespace-nowrap">{formatMoney(Number(g.monto), g.moneda)}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      </section>
-
-      {/* ─── Aportes por aportante ────────────────────────────────────────────── */}
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-gray-900">Aportes por aportante</h2>
-        <Card empty={aportesAgrupados.length === 0 ? 'Sin aportes registrados.' : false}>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <Th>Aportante</Th>
-                <Th align="center">Moneda</Th>
-                <Th align="right">Total aportado</Th>
-                <Th align="center" className="hidden sm:table-cell">Aportes</Th>
-                <Th align="right" className="hidden md:table-cell">Último aporte</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {aportesAgrupados.map(a => (
-                <tr key={`${a.aportante}|${a.moneda}`}>
-                  <Td className="text-gray-900 font-medium">
-                    {a.aportante === 'Sin identificar'
-                      ? <span className="italic text-gray-400">Sin identificar</span>
-                      : a.aportante}
-                  </Td>
-                  <Td align="center" className="text-gray-500">{a.moneda}</Td>
-                  <Td align="right" className="font-semibold text-gray-900 whitespace-nowrap">{formatMoney(a.total, a.moneda)}</Td>
-                  <Td align="center" className="hidden sm:table-cell text-gray-600 tabular-nums">{a.cantidad}</Td>
-                  <Td align="right" className="hidden md:table-cell text-gray-500 whitespace-nowrap">{a.ultimo}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      </section>
-    </div>
-  )
-}
-
-function Kpi({ label, value, tone }: { label: string; value: string; tone?: 'red' | 'amber' }) {
-  const toneClass = tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : 'text-gray-900'
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
-      <p className="text-xs text-gray-500 uppercase tracking-wide">{label}</p>
-      <p className={`mt-1 text-2xl font-bold ${toneClass}`}>{value}</p>
-    </div>
-  )
-}
-
-function Card({ children, empty }: { children: React.ReactNode; empty: false | string }) {
-  return (
-    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-      {empty ? (
-        <div className="p-8 text-center text-sm text-gray-400">{empty}</div>
-      ) : (
-        <div className="overflow-x-auto">{children}</div>
-      )}
-    </div>
-  )
-}
-
-function Th({ children, align, className }: { children: React.ReactNode; align?: 'left' | 'right' | 'center'; className?: string }) {
-  const alignClass = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
-  return <th className={`px-4 py-2.5 text-xs font-medium uppercase tracking-wide text-gray-500 ${alignClass} ${className ?? ''}`}>{children}</th>
-}
-
-function Td({ children, align, className }: { children: React.ReactNode; align?: 'left' | 'right' | 'center'; className?: string }) {
-  const alignClass = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
-  return <td className={`px-4 py-2.5 text-sm ${alignClass} ${className ?? ''}`}>{children}</td>
-}
-
-function PorcentajeBadge({ saldo, totalAportado }: { saldo: number; totalAportado: number }) {
-  if (totalAportado <= 0) {
-    return <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500">Sin aportes</span>
+  // Uplift por proveedor (agrupado desde upliftDetalle)
+  const upliftProvMap = new Map<string, { proveedor: string; cantidad: number; totalBase: number; totalInformado: number; totalUplift: number }>()
+  for (const u of upliftDetalle) {
+    const ex = upliftProvMap.get(u.proveedor)
+    if (ex) { ex.cantidad++; ex.totalBase += u.montoBase; ex.totalInformado += u.montoInformado; ex.totalUplift += u.montoUplift }
+    else upliftProvMap.set(u.proveedor, { proveedor: u.proveedor, cantidad: 1, totalBase: u.montoBase, totalInformado: u.montoInformado, totalUplift: u.montoUplift })
   }
-  const pct = (saldo / totalAportado) * 100
-  const cls = pct <= 40
-    ? 'bg-red-100 text-red-700'
-    : pct <= 85
-    ? 'bg-amber-100 text-amber-700'
-    : 'bg-green-100 text-green-700'
-  return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{pct.toFixed(1)}%</span>
+  const upliftPorProveedorRaw = Array.from(upliftProvMap.values()).sort((a, b) => b.totalUplift - a.totalUplift)
+  const upliftProvGrandTotal = upliftPorProveedorRaw.reduce((s, p) => s + p.totalUplift, 0) || 1
+  let upliftProvAcum = 0
+  const upliftPorProveedor = upliftPorProveedorRaw.map(p => {
+    const pctTotal = (p.totalUplift / upliftProvGrandTotal) * 100
+    upliftProvAcum += pctTotal
+    return { ...p, pctTotal, pctAcum: upliftProvAcum }
+  })
+
+  function addPctAcum<T extends { moneda: string; total: number }>(rows: T[]): Array<T & { pctTotal: number; pctAcum: number }> {
+    const totalByMon = new Map<string, number>()
+    for (const r of rows) totalByMon.set(r.moneda, (totalByMon.get(r.moneda) ?? 0) + r.total)
+    const acumByMon = new Map<string, number>()
+    return rows.map(r => {
+      const gt = totalByMon.get(r.moneda) || 1
+      const p = (r.total / gt) * 100
+      const prev = acumByMon.get(r.moneda) ?? 0
+      const ac = prev + p
+      acumByMon.set(r.moneda, ac)
+      return { ...r, pctTotal: p, pctAcum: ac }
+    })
+  }
+
+  // Detalle rows para modales
+  const aportesDetalle = aportesData.map(a => ({
+    codigo: (a.codigo as string) ?? '',
+    aportante: (a.socios as { nombre?: string } | null)?.nombre || (a.aportante as string)?.trim() || 'Sin identificar',
+    fecha: (a.fecha_aporte as string) ?? '',
+    moneda: a.moneda as string,
+    monto: Number(a.monto) || 0,
+  }))
+
+  const pagosDetalle = (pagosPagadosResult.data ?? []).map(p => ({
+    fecha: (p.fecha_pago as string) ?? '',
+    concepto: (p.concepto as string) ?? '',
+    proveedor: (p.proveedores as { nombre?: string } | null)?.nombre ?? '—',
+    moneda: p.moneda as string,
+    monto: Number(p.monto) || 0,
+  }))
+
+  const pendientesDetalle = obligaciones.map(o => ({
+    concepto: (o as { concepto?: string }).concepto ?? '',
+    proveedor: (o as { proveedor_nombre?: string }).proveedor_nombre ?? '—',
+    fecha: o.fecha_vencimiento ?? '',
+    moneda: o.moneda,
+    monto: Number(o.monto_pendiente) || 0,
+    prioridad: Number((o as { prioridad_pago?: number }).prioridad_pago) || 3,
+  }))
+
+  let necesidadDetalle = (necesidadSemanalData ?? [])
+    .filter(g => obligacionIds.has(g.id as string))
+    .map(g => ({
+      descripcion: (g.descripcion as string) ?? '',
+      proveedor: (g.proveedores as { nombre?: string } | null)?.nombre ?? '—',
+      fechaPrevista: (g.fecha_pago_prevista as string) ?? '',
+      moneda: g.moneda as string,
+      monto: Number(g.monto) || 0,
+    }))
+  if (necesidadSemanalResult.error?.code === '42703') necesidadDetalle = []
+
+  const fondosDetalle = (fondosResult.data ?? []).map(f => ({
+    nombre: f.nombre as string,
+    moneda: f.moneda as string,
+    saldo: Number(f.saldo_actual) || 0,
+  }))
+
+  const tercerosDetalle = (saldosTercerosResult.data ?? []).map(t => ({
+    nombre: t.financiador_nombre as string,
+    moneda: t.moneda as string,
+    deuda: Number(t.total_deuda_generada) || 0,
+    cancelado: Number(t.total_cancelado) || 0,
+    saldo: Number(t.saldo_pendiente) || 0,
+  }))
+
+  const dashData: DashboardData = {
+    periodo: { desde, hasta, preset },
+    kpis: {
+      totalAportado: Array.from(aportesAgg.entries()).map(([moneda, total]) => ({ moneda, total })).sort((a, b) => a.moneda.localeCompare(b.moneda)),
+      cantidadAportes: aportesData.length,
+      totalPagado: Array.from(pagosAgg.entries()).map(([moneda, total]) => ({ moneda, total })).sort((a, b) => a.moneda.localeCompare(b.moneda)),
+      gastosPendientes: Array.from(pendientesAgg.entries()).map(([moneda, v]) => ({ moneda, ...v })).sort((a, b) => a.moneda.localeCompare(b.moneda)),
+      necesidadSemanal: Array.from(necesidadAgg.entries()).map(([moneda, v]) => ({ moneda, ...v })).sort((a, b) => a.moneda.localeCompare(b.moneda)),
+      posicionGlobal,
+      saldoMP: Array.from(saldoMPAgg.entries()).map(([moneda, total]) => ({ moneda, total })).sort((a, b) => a.moneda.localeCompare(b.moneda)),
+      saldoTerceros,
+      upliftInformado: { total: upliftAgg.total, gastos: upliftAgg.gastos, proveedores: upliftAgg.proveedores.size },
+      upliftDetalle: upliftDetalle.slice(0, 15),
+      upliftPorProveedor,
+    },
+    detalle: {
+      aportes: aportesDetalle,
+      pagos: pagosDetalle,
+      pendientes: pendientesDetalle,
+      necesidad: necesidadDetalle,
+      fondos: fondosDetalle,
+      terceros: tercerosDetalle,
+    },
+    secciones: {
+      aportesPorAportante: Array.from(aportesAportanteAgg.values()).sort((a, b) => b.total - a.total),
+      gastosPorTipo: addPctAcum(Array.from(tipoAgg.values()).sort((a, b) => a.moneda.localeCompare(b.moneda) || b.total - a.total)),
+      gastosPorProveedor: addPctAcum(Array.from(provAgg.values()).sort((a, b) => a.moneda.localeCompare(b.moneda) || b.total - a.total)),
+      gastosPorEstado: Array.from(estadoAgg.values()).sort((a, b) => b.total - a.total),
+    },
+  }
+
+  return <DashboardClient data={dashData} />
 }
