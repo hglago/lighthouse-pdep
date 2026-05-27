@@ -48,7 +48,9 @@ Esquema Supabase conocido. Solo lo confirmado tocando el código + migraciones a
 - `descripcion text NOT NULL` (importante: NOT NULL bloquea inserts vacíos)
 - `monto numeric`, `moneda text`
 - `estado GastoEstado` ('borrador' | 'enviado' | 'aprobado' | 'pagado_parcial' | 'pagado' | 'rechazado')
-- `fecha_gasto, fecha_vencimiento`
+- `fecha_gasto DATE NOT NULL` — cuándo ocurrió el gasto
+- `fecha_vencimiento DATE` — vencimiento documental/contractual (nullable, opcional)
+- **`fecha_pago_prevista DATE NOT NULL`** — planificación operativa de pago. Base para necesidad semanal del Dashboard. Backfill: `COALESCE(fecha_vencimiento, fecha_gasto)` — DASH0.1
 - `notas text`
 - `tiene_anticipo bool`, `monto_anticipo`, `porcentaje_anticipo`
 - `comprobante_path text` (Storage bucket `comprobantes`)

@@ -34,7 +34,7 @@ export default async function GastosPage() {
   // Builder con ownership filter condicional para USER.
   let gastosQuery = supabase
     .from('gastos')
-    .select('id, codigo, fondo_id, proveedor_id, tipo_gasto_id, forma_cancelacion, financiador_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, prioridad_pago, es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta, horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio, periodo_analitico, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre), financiadores:financiador_id(id, codigo, nombre), tipos_gasto:tipo_gasto_id(id, codigo, nombre)')
+    .select('id, codigo, fondo_id, proveedor_id, tipo_gasto_id, forma_cancelacion, financiador_id, descripcion, monto, moneda, estado, fecha_gasto, notas, tiene_anticipo, monto_anticipo, porcentaje_anticipo, fecha_prevista_pago_anticipo, fecha_comprometida_pago_saldo, condiciones_pago_notas, fecha_vencimiento, fecha_pago_prevista, prioridad_pago, es_servicio_horas, descripcion_servicio, periodo_servicio_desde, periodo_servicio_hasta, horas_servicio, valor_hora_aplicado, porcentaje_uplift_snapshot, importe_base_servicio, periodo_analitico, comprobante_path, comprobante_nombre, comprobante_mime, comprobante_size_bytes, comprobante_uploaded_by, comprobante_subido_en, recurrente_id, periodo, created_by, created_at, fondos(nombre, moneda), proveedores(nombre), financiadores:financiador_id(id, codigo, nombre), tipos_gasto:tipo_gasto_id(id, codigo, nombre)')
     .is('deleted_at', null)
   if (isUserRole) gastosQuery = gastosQuery.eq('created_by', user.id)
 
@@ -84,7 +84,7 @@ export default async function GastosPage() {
   let gastosData = gastosResult.data
   if (
     gastosResult.error?.code === '42703' &&
-    /codigo|es_servicio_horas|descripcion_servicio|periodo_servicio|horas_servicio|valor_hora_aplicado|porcentaje_uplift_snapshot|importe_base_servicio|forma_cancelacion|financiador_id|tipo_gasto_id|periodo_analitico/.test(gastosResult.error.message ?? '')
+    /codigo|es_servicio_horas|descripcion_servicio|periodo_servicio|horas_servicio|valor_hora_aplicado|porcentaje_uplift_snapshot|importe_base_servicio|forma_cancelacion|financiador_id|tipo_gasto_id|periodo_analitico|fecha_pago_prevista/.test(gastosResult.error.message ?? '')
   ) {
     console.warn('[gastos] columna nueva no disponible aún; retry con SELECT base:', gastosResult.error.message)
     // Fase 2D: aplicar mismo ownership filter al retry.
@@ -111,6 +111,7 @@ export default async function GastosPage() {
         porcentaje_uplift_snapshot: 0,
         importe_base_servicio: null,
         periodo_analitico: periodoFromFecha,
+        fecha_pago_prevista: (g as { fecha_vencimiento?: string }).fecha_vencimiento ?? fechaIso,
         forma_cancelacion: 'risa' as const,
         financiador_id: null,
         financiadores: null,

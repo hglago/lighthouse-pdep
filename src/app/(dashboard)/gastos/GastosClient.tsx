@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useMemo } from 'react'
+import { useState, useTransition, useMemo, useRef } from 'react'
 import type { Fondo, Proveedor, Financiador, UserRole, GastoEstado, PagoEstado, PagoTipo, TipoGasto } from '@/types'
 import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult, BulkGastoResult, TipoGastoQuickPayload, TipoGastoQuickResult } from './actions'
 import type { ProveedorQuickResult } from '../proveedores/actions'
@@ -41,6 +41,7 @@ export interface GastoRow {
   fecha_comprometida_pago_saldo: string | null
   condiciones_pago_notas: string | null
   fecha_vencimiento: string | null
+  fecha_pago_prevista: string
   prioridad_pago: number
   // P3a: snapshot de servicio por hora. NULL/0 cuando es_servicio_horas=false.
   es_servicio_horas: boolean
@@ -178,6 +179,7 @@ interface FormState {
   fecha_comprometida_pago_saldo: string
   condiciones_pago_notas: string
   fecha_vencimiento: string
+  fecha_pago_prevista: string
   // P3a: bloque "Detalle del servicio" — opt-in por gasto.
   // El proveedor puede permitir horas, pero el usuario decide gasto por gasto
   // si lo carga como servicio por hora o como gasto común.
@@ -215,6 +217,7 @@ const EMPTY_FORM: FormState = {
   fecha_comprometida_pago_saldo: '',
   condiciones_pago_notas: '',
   fecha_vencimiento: '',
+  fecha_pago_prevista: '',
   usar_servicio_horas: false,
   descripcion_servicio: '',
   periodo_servicio_desde: '',
@@ -304,6 +307,7 @@ export default function GastosClient({
   const [editing, setEditing] = useState<EditingState>(null)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [formError, setFormError] = useState('')
+  const fechaPagoPrevistaEditada = useRef(false)
   const [actionError, setActionError] = useState('')
   const [isPending, startTransition] = useTransition()
   const [comprobanteError, setComprobanteError] = useState('')
@@ -719,6 +723,7 @@ export default function GastosClient({
             fecha_comprometida_pago_saldo: '',
             condiciones_pago_notas: '',
             fecha_vencimiento: '',
+            fecha_pago_prevista: '',
           }
         : {
             categoria: '',
@@ -742,11 +747,13 @@ export default function GastosClient({
       moneda: risaMonedaInicial,
       es_recurrente: tipo === 'recurrente',
       fecha_gasto: todayIso(),
+      fecha_pago_prevista: todayIso(),
       fecha_inicio: todayIso(),
       // TIPOS-GASTO: pre-selección de OTRO si hay tipos cargados.
       tipo_gasto_id: otroTipoId,
     })
     setFormError('')
+    fechaPagoPrevistaEditada.current = false
     setModalOpen(true)
   }
 
@@ -769,6 +776,7 @@ export default function GastosClient({
       fecha_comprometida_pago_saldo: g.fecha_comprometida_pago_saldo ?? '',
       condiciones_pago_notas: g.condiciones_pago_notas ?? '',
       fecha_vencimiento: g.fecha_vencimiento ?? '',
+      fecha_pago_prevista: g.fecha_pago_prevista ?? g.fecha_vencimiento ?? g.fecha_gasto ?? '',
       // P3a: si el gasto era de servicio, hidratar el toggle + snapshot.
       usar_servicio_horas: g.es_servicio_horas === true,
       descripcion_servicio: g.descripcion_servicio ?? '',
@@ -786,6 +794,7 @@ export default function GastosClient({
       observaciones: '',
     })
     setFormError('')
+    fechaPagoPrevistaEditada.current = true
     setModalOpen(true)
   }
 
@@ -808,6 +817,7 @@ export default function GastosClient({
       fecha_comprometida_pago_saldo: '',
       condiciones_pago_notas: '',
       fecha_vencimiento: '',
+      fecha_pago_prevista: '',
       // P3a: campos servicio quedan vacíos para recurrentes (P3b los implementa).
       usar_servicio_horas: false,
       descripcion_servicio: '',
@@ -887,6 +897,8 @@ export default function GastosClient({
       if (!form.fondo_id) { setFormError('No se encontró el fondo operativo RISA. No se puede guardar.'); return }
       if (!form.descripcion.trim()) { setFormError('El concepto es requerido.'); return }
       if (!form.fecha_gasto) { setFormError('La fecha es requerida.'); return }
+      if (!form.fecha_pago_prevista) { setFormError('La fecha de pago prevista es requerida.'); return }
+      if (!form.proveedor_id) { setFormError('El proveedor es obligatorio.'); return }
 
       // P3a-fc: forma de cancelación. Si está marcado financiado, exige financiador_id.
       if (form.es_financiado && !form.financiador_id) {
@@ -991,6 +1003,7 @@ export default function GastosClient({
         fecha_comprometida_pago_saldo: form.fecha_comprometida_pago_saldo || null,
         condiciones_pago_notas: form.condiciones_pago_notas.trim() || null,
         fecha_vencimiento: form.fecha_vencimiento || null,
+        fecha_pago_prevista: form.fecha_pago_prevista || form.fecha_gasto,
         prioridad_pago: parseInt(form.prioridad_pago) || 3,
         es_servicio_horas: esServicioHoras,
         descripcion_servicio: snapshotServicio?.descripcion_servicio ?? null,
@@ -1199,6 +1212,7 @@ export default function GastosClient({
       moneda: g.moneda,
       estado: ESTADO_LABELS[g.estado] ?? g.estado,
       fecha_vencimiento: g.fecha_vencimiento ?? '',
+      fecha_pago_prevista: g.fecha_pago_prevista ?? '',
       prioridad_pago: g.prioridad_pago,
       tiene_anticipo: g.tiene_anticipo ? 'sí' : 'no',
       monto_anticipo: g.monto_anticipo ?? '',
@@ -1222,6 +1236,7 @@ export default function GastosClient({
       moneda: r.moneda,
       estado: r.activo ? 'Activo' : 'Inactivo',
       fecha_vencimiento: '',
+      fecha_pago_prevista: '',
       prioridad_pago: r.prioridad_pago,
       tiene_anticipo: 'no',
       monto_anticipo: '',
@@ -1719,7 +1734,7 @@ export default function GastosClient({
               {/* Campos comunes */}
               <div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Proveedor</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Proveedor <span className="text-red-500">*</span></label>
                   <div className="flex gap-2">
                     <select
                       value={form.proveedor_id}
@@ -2021,11 +2036,24 @@ export default function GastosClient({
                       <label className="mb-1 block text-sm font-medium text-gray-700">
                         Fecha <span className="text-red-500">*</span>
                       </label>
-                      <input type="date" value={form.fecha_gasto} onChange={(e) => setForm({ ...form, fecha_gasto: e.target.value })} className={inputCls} />
+                      <input type="date" value={form.fecha_gasto} onChange={(e) => {
+                        const v = e.target.value
+                        setForm(prev => ({
+                          ...prev,
+                          fecha_gasto: v,
+                          ...(fechaPagoPrevistaEditada.current ? {} : { fecha_pago_prevista: v }),
+                        }))
+                      }} className={inputCls} />
                     </div>
                     <div>
                       <label className="mb-1 block text-sm font-medium text-gray-700">Fecha de vencimiento</label>
                       <input type="date" value={form.fecha_vencimiento} onChange={(e) => setForm({ ...form, fecha_vencimiento: e.target.value })} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-gray-700">
+                        Fecha de pago prevista <span className="text-red-500">*</span>
+                      </label>
+                      <input type="date" value={form.fecha_pago_prevista} onChange={(e) => { fechaPagoPrevistaEditada.current = true; setForm({ ...form, fecha_pago_prevista: e.target.value }) }} className={inputCls} />
                     </div>
                   </div>
 

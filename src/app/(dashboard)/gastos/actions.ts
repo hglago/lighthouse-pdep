@@ -49,6 +49,7 @@ export type GastoPayload = {
   fecha_comprometida_pago_saldo: string | null
   condiciones_pago_notas: string | null
   fecha_vencimiento: string | null
+  fecha_pago_prevista: string
   prioridad_pago: number
   // P3a: snapshot servicio por hora. Si es_servicio_horas=false, los campos quedan null/0.
   // D22/D23: porcentaje_uplift_snapshot es informativo, no modifica monto.
@@ -87,6 +88,10 @@ function normalizeGasto(data: GastoPayload): GastoPayload | { error: string } {
         importe_base_servicio: null,
       }
 
+  if (!cleaned.proveedor_id) {
+    return { error: 'El proveedor es obligatorio.' }
+  }
+
   if (cleaned.forma_cancelacion === 'risa') {
     cleaned = { ...cleaned, financiador_id: null }
   } else if (cleaned.forma_cancelacion === 'financiador') {
@@ -116,7 +121,8 @@ function isOptionalColumnMissingError(err: { code?: string; message?: string } |
     msg.includes('importe_base_servicio') ||
     msg.includes('forma_cancelacion') ||
     msg.includes('financiador_id') ||
-    msg.includes('tipo_gasto_id')
+    msg.includes('tipo_gasto_id') ||
+    msg.includes('fecha_pago_prevista')
   )
 }
 

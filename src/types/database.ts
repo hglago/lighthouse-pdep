@@ -117,6 +117,7 @@ export interface Gasto {
   fecha_comprometida_pago_saldo: string | null
   condiciones_pago_notas: string | null
   fecha_vencimiento: string | null
+  fecha_pago_prevista: string
   prioridad_pago: number
   // P1/P3a (2026-05-23): snapshot de servicio por hora. NULL en gastos comunes.
   // Coherencia exigida por CHECK gastos_servicio_horas_coherente (ver DB.md).
