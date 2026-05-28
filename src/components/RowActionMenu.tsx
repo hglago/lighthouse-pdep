@@ -71,14 +71,20 @@ export default function RowActionMenu({ items, emptyTooltip, buttonLabel = 'Acci
         onClick={toggle}
         disabled={noItems}
         title={noItems ? emptyTooltip : undefined}
-        className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+        className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold ring-1 transition-colors ${
           noItems
-            ? 'cursor-not-allowed text-gray-300'
-            : 'text-slate-700 hover:bg-slate-100'
+            ? 'cursor-not-allowed text-gray-300 ring-slate-200'
+            : 'text-[#079783] ring-[#079783]/30 hover:bg-[#079783]/10 hover:ring-[#079783]/50'
         }`}
       >
-        {buttonLabel}
-        <span className="text-[10px]">{open ? '▴' : '▾'}</span>
+        <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+          <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
+        </svg>
+        <span>{buttonLabel}</span>
+        <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+        </svg>
       </button>
       {open && coords && typeof window !== 'undefined' && createPortal(
         <div

@@ -229,10 +229,10 @@ export default function DataTable<T>({
         </div>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-100">
               <tr>
                 {selectable && (
                   <th className="w-10 px-4 py-3">
@@ -260,7 +260,7 @@ export default function DataTable<T>({
                   />
                 ))}
                 {rowActions && (
-                  <th className="sticky right-0 z-10 border-l border-gray-200 bg-gray-50 px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">
+                  <th className="sticky right-0 z-10 border-l border-slate-200 bg-slate-100 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">
                     Acción
                   </th>
                 )}
@@ -357,7 +357,7 @@ function ColumnHeader<T>({ column, activeKey, dir, onSort, filter, onFilterChang
   if (!sortable && !filterable) {
     const align = column.align ?? 'left'
     return (
-      <th className={`px-4 py-3 text-${align} text-xs font-medium uppercase tracking-wide text-gray-500 ${column.className ?? ''}`}>
+      <th className={`px-4 py-3 text-${align} text-xs font-semibold uppercase tracking-wide text-slate-600 ${column.className ?? ''}`}>
         {column.label}
       </th>
     )
@@ -381,23 +381,33 @@ function ColumnHeader<T>({ column, activeKey, dir, onSort, filter, onFilterChang
   // Filterable: combinamos botón sort + ícono filter
   const align = column.align ?? 'left'
   const justify = align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'
-  const arrow = sortable && activeKey === column.key && dir === 'asc' ? '↑'
-              : sortable && activeKey === column.key && dir === 'desc' ? '↓'
-              : sortable ? '↕' : ''
-  const arrowClass = sortable && activeKey === column.key ? 'text-slate-700' : 'text-gray-300'
+  const sortActive = sortable && activeKey === column.key
+  const sortIconColor = sortActive ? 'text-[#079783]' : 'text-slate-400'
 
   return (
-    <th className={`px-4 py-3 text-${align} text-xs font-medium uppercase tracking-wide text-gray-500 ${column.className ?? ''}`}>
+    <th className={`px-4 py-3 text-${align} text-xs font-semibold uppercase tracking-wide text-slate-600 ${column.className ?? ''}`}>
       <div ref={wrapperRef} className="relative inline-flex w-full">
-        <div className={`inline-flex items-center gap-1 ${justify} w-full`}>
+        <div className={`inline-flex items-center gap-1.5 ${justify} w-full`}>
           {sortable ? (
             <button
               type="button"
               onClick={() => onSort(column.key)}
-              className="inline-flex items-center gap-1 hover:text-slate-900 transition-colors cursor-pointer select-none"
+              className="inline-flex items-center gap-1.5 hover:text-[#0C1F6E] transition-colors cursor-pointer select-none"
             >
               <span>{column.label}</span>
-              <span className={`text-[10px] ${arrowClass}`}>{arrow}</span>
+              {sortActive && dir === 'asc' ? (
+                <svg className={`h-3.5 w-3.5 ${sortIconColor}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path fillRule="evenodd" d="M10 5a1 1 0 01.78.375l4 5A1 1 0 0114 12H6a1 1 0 01-.78-1.625l4-5A1 1 0 0110 5z" clipRule="evenodd" />
+                </svg>
+              ) : sortActive && dir === 'desc' ? (
+                <svg className={`h-3.5 w-3.5 ${sortIconColor}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path fillRule="evenodd" d="M10 15a1 1 0 01-.78-.375l-4-5A1 1 0 016 8h8a1 1 0 01.78 1.625l-4 5A1 1 0 0110 15z" clipRule="evenodd" />
+                </svg>
+              ) : (
+                <svg className={`h-3.5 w-3.5 ${sortIconColor}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path d="M10 3a.75.75 0 01.53.22l3 3a.75.75 0 11-1.06 1.06L10 4.81 7.53 7.28A.75.75 0 116.47 6.22l3-3A.75.75 0 0110 3zM6.47 12.72a.75.75 0 011.06 0L10 15.19l2.47-2.47a.75.75 0 111.06 1.06l-3 3a.75.75 0 01-1.06 0l-3-3a.75.75 0 010-1.06z" />
+                </svg>
+              )}
             </button>
           ) : (
             <span>{column.label}</span>
@@ -406,12 +416,14 @@ function ColumnHeader<T>({ column, activeKey, dir, onSort, filter, onFilterChang
             type="button"
             onClick={() => setOpen(o => !o)}
             aria-label={`Filtrar ${column.label}`}
-            className={`ml-1 inline-flex h-4 w-4 items-center justify-center rounded text-[10px] transition-colors ${
-              isFiltered ? 'bg-slate-900 text-white' : 'text-gray-300 hover:text-slate-700 hover:bg-slate-100'
+            className={`ml-1 inline-flex h-5 w-5 items-center justify-center rounded transition-colors ${
+              isFiltered ? 'bg-[#079783] text-white' : 'text-slate-400 hover:text-[#0C1F6E] hover:bg-slate-200'
             }`}
             title="Filtrar"
           >
-            ⚲
+            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M3 4.5A1.5 1.5 0 014.5 3h11A1.5 1.5 0 0117 4.5v.879a2 2 0 01-.586 1.414l-4.535 4.535A1 1 0 0011.586 12V16a1 1 0 01-.553.894l-2 1A1 1 0 017.5 17v-5a1 1 0 00-.293-.707L2.586 6.793A2 2 0 012 5.379V4.5A1.5 1.5 0 013.5 3z" clipRule="evenodd" />
+            </svg>
           </button>
         </div>
         {open && (

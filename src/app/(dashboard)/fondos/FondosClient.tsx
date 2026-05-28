@@ -14,12 +14,26 @@ import { useSortable } from '@/lib/useSortable'
 import SortableHeader from '@/components/SortableHeader'
 import DataTable, { type Column } from '@/components/DataTable'
 import RowActionMenu, { type RowActionItem } from '@/components/RowActionMenu'
-import { exportWorkbookToExcel, todayForFile } from '@/lib/excel'
+import { exportToExcel, exportWorkbookToExcel, todayForFile } from '@/lib/excel'
 
 export interface AporteFondoRow extends AporteFondo {
   fondos: { nombre: string } | null
   socios: { nombre: string } | null
   financiadores: { nombre: string; codigo: string | null } | null
+}
+
+// FONDOS-TERCEROS-DETALLE-1: forma enriquecida del row con joins PostgREST.
+// Todos los joins son opcionales — el fallback en page.tsx puede hidratar null.
+export interface MovimientoFinanciacionRow extends MovimientoFinanciacion {
+  pagos?: { codigo: string | null; fecha_pago: string | null; estado: string | null } | null
+  gastos?: {
+    codigo: string | null
+    descripcion: string | null
+    fecha_gasto: string | null
+    estado: string | null
+    proveedores: { codigo: string | null; nombre: string } | null
+    tipos_gasto: { codigo: string | null; nombre: string } | null
+  } | null
 }
 
 // Fila de movimientos_fondo tal como la trae page.tsx
@@ -513,11 +527,11 @@ export default function FondosClient({
   }, [aportes])
 
   // ─── Etapa F1: búsqueda local por tabla ────────────────────────────────────
+  // L&F-FONDOS-2: removidos los buscadores de Terceros (cta. cte.) y Socios
+  // por redundantes — quedan los filtros por columna del DataTable.
   const [searchAportes, setSearchAportes] = useState('')
   const [searchMovimientos, setSearchMovimientos] = useState('')
-  const [searchSocios, setSearchSocios] = useState('')
   const [searchFinanciadores, setSearchFinanciadores] = useState('')
-  const [searchFinPendiente, setSearchFinPendiente] = useState('')
 
   // ─── Etapa F1: columnas DataTable por tabla ────────────────────────────────
 
@@ -1349,7 +1363,7 @@ export default function FondosClient({
   })()
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 rounded-2xl bg-gradient-to-b from-slate-50/70 via-transparent to-transparent -mx-2 px-2 py-2 sm:-mx-3 sm:px-3">
 
       {/* ═══════════════════════════════════════════════════════════════════════
           Etapa 2A — Caja RISA y terceros (read-only)
@@ -1491,13 +1505,13 @@ export default function FondosClient({
       </div>
 
       {/* ── Cuenta corriente RISA — collapse por default (UX-DETAILS) ───── */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-baseline gap-3">
-            <h3 className="text-base font-semibold text-gray-900">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-baseline gap-3 border-l-4 border-[#079783] pl-3">
+            <h3 className="text-lg font-bold text-[#0C1F6E]">
               Cuenta corriente RISA{risa?.codigo ? ` — ${risa.codigo}` : ''}
             </h3>
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-slate-500">
               {movimientosRisa.length} movimiento{movimientosRisa.length !== 1 ? 's' : ''}
               {risa && ` · saldo ${risa.moneda} ${fmt(risa.saldo_actual)}`}
             </span>
@@ -1509,7 +1523,7 @@ export default function FondosClient({
                 value={searchMovimientos}
                 onChange={e => setSearchMovimientos(e.target.value)}
                 placeholder="Buscar… (APO-###, concepto, tipo)"
-                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+                className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none transition focus:border-[#079783] focus:ring-2 focus:ring-[#079783]/20 sm:max-w-xs"
               />
             )}
             <button
@@ -1536,26 +1550,22 @@ export default function FondosClient({
             }
           />
         )}
-      </div>
+      </section>
 
       {/* ── Deuda pendiente con terceros (v_saldos_financiadores) ──────────── */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold text-gray-900">Cuenta corriente de terceros</h3>
-          <input
-            type="text"
-            value={searchFinPendiente}
-            onChange={e => setSearchFinPendiente(e.target.value)}
-            placeholder="Buscar… (FIN-###, nombre, moneda)"
-            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
-          />
+      <section className="mx-auto w-full max-w-5xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="border-l-4 border-[#079783] pl-3 text-lg font-bold text-[#0C1F6E]">
+            Cuenta corriente de terceros
+          </h3>
+          <span className="text-sm text-slate-500">
+            {saldosFinanciadores.length} línea{saldosFinanciadores.length !== 1 ? 's' : ''}
+          </span>
         </div>
         <DataTable<SaldoFinanciadorRow>
           rows={saldosFinanciadores}
           columns={finPendienteColumns}
           getRowId={s => `${s.financiador_id}-${s.moneda}`}
-          searchTerm={searchFinPendiente}
-          searchKeys={['codigo', 'nombre', 'moneda']}
           initialSort={{ key: 'saldo_pendiente', dir: 'desc' }}
           emptyMessage={
             saldosFinanciadores.length === 0
@@ -1568,12 +1578,14 @@ export default function FondosClient({
             ]} />
           )}
         />
-      </div>
+      </section>
 
       {/* ── Aportes de socios — collapse por default (UX-DETAILS-2c) ─────── */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold text-gray-900">Aportes de socios</h3>
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="border-l-4 border-[#079783] pl-3 text-lg font-bold text-[#0C1F6E]">
+            Aportes de socios
+          </h3>
           <div className="flex flex-wrap items-center gap-2">
             {!aportesCollapsed && (
               <input
@@ -1581,7 +1593,7 @@ export default function FondosClient({
                 value={searchAportes}
                 onChange={e => setSearchAportes(e.target.value)}
                 placeholder="Buscar… (APO-###, socio, tercero, destino)"
-                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+                className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none transition focus:border-[#079783] focus:ring-2 focus:ring-[#079783]/20 sm:max-w-xs"
               />
             )}
             <button
@@ -1597,16 +1609,16 @@ export default function FondosClient({
         {/* UX-DETAILS-2: resumen acumulado de aportes (activos por moneda + counts).
             Los anulados NO suman al total activo. Siempre visible. */}
         {aportes.length > 0 && (
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+          <div className="mb-4 rounded-xl border border-[#079783]/20 bg-gradient-to-r from-[#079783]/5 to-transparent px-4 py-3 text-sm">
             <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
               <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">Total aportado activo</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#079783]">Total aportado activo</p>
                 {aportesSummary.totalesActivos.size === 0 ? (
-                  <p className="mt-0.5 text-gray-400">Sin aportes activos</p>
+                  <p className="mt-0.5 text-slate-400">Sin aportes activos</p>
                 ) : (
                   <ul className="mt-0.5 space-y-0.5">
                     {Array.from(aportesSummary.totalesActivos.entries()).map(([moneda, total]) => (
-                      <li key={moneda} className="font-semibold tabular-nums text-slate-900">
+                      <li key={moneda} className="text-base font-bold tabular-nums text-[#0C1F6E]">
                         {moneda} {fmt(total)}
                       </li>
                     ))}
@@ -1614,9 +1626,9 @@ export default function FondosClient({
                 )}
               </div>
               <div className="text-xs text-slate-600">
-                <span className="font-medium text-emerald-700">Activos: {aportesSummary.activos}</span>
+                <span className="font-semibold text-emerald-700">Activos: {aportesSummary.activos}</span>
                 <span className="mx-2 text-slate-300">·</span>
-                <span className={aportesSummary.anulados > 0 ? 'font-medium text-red-700' : 'text-slate-500'}>
+                <span className={aportesSummary.anulados > 0 ? 'font-semibold text-red-700' : 'text-slate-500'}>
                   Anulados: {aportesSummary.anulados}
                 </span>
               </div>
@@ -1655,26 +1667,22 @@ export default function FondosClient({
             }}
           />
         )}
-      </div>
+      </section>
 
       {/* ── Socios ──────────────────────────────────────────────────────────── */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold text-gray-900">Socios</h3>
-          <input
-            type="text"
-            value={searchSocios}
-            onChange={e => setSearchSocios(e.target.value)}
-            placeholder="Buscar… (SOC-###, nombre, CUIT, email)"
-            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
-          />
+      <section className="mx-auto w-full max-w-5xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="border-l-4 border-[#079783] pl-3 text-lg font-bold text-[#0C1F6E]">
+            Socios
+          </h3>
+          <span className="text-sm text-slate-500">
+            {socios.length} {socios.length === 1 ? 'socio' : 'socios'}
+          </span>
         </div>
         <DataTable<Socio>
           rows={socios}
           columns={sociosColumns}
           getRowId={s => s.id}
-          searchTerm={searchSocios}
-          searchKeys={['codigo', 'nombre', 'cuit', 'email', 'telefono']}
           initialSort={{ key: 'codigo', dir: 'asc' }}
           emptyMessage={
             socios.length === 0
@@ -1682,18 +1690,20 @@ export default function FondosClient({
               : 'No hay socios que coincidan con los filtros.'
           }
         />
-      </div>
+      </section>
 
       {/* ── Financiadores ───────────────────────────────────────────────────── */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold text-gray-900">Terceros</h3>
+      <section className="mx-auto w-full max-w-5xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="border-l-4 border-[#079783] pl-3 text-lg font-bold text-[#0C1F6E]">
+            Terceros
+          </h3>
           <input
             type="text"
             value={searchFinanciadores}
             onChange={e => setSearchFinanciadores(e.target.value)}
             placeholder="Buscar… (FIN-###, nombre, CUIT, email)"
-            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 sm:max-w-xs"
+            className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none transition focus:border-[#079783] focus:ring-2 focus:ring-[#079783]/20 sm:max-w-xs"
           />
         </div>
         <DataTable<Financiador>
@@ -1709,7 +1719,7 @@ export default function FondosClient({
               : 'No hay terceros que coincidan con los filtros.'
           }
         />
-      </div>
+      </section>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           LEGACY UI (oculta en 2A; controlada por flag SHOW_LEGACY_UI).
@@ -2564,85 +2574,23 @@ export default function FondosClient({
         </div>
       )}
 
-      {/* ── UX-DETAILS: Modal Detalle Tercero ──────────────────────────────── */}
+      {/* ── FONDOS-TERCEROS-DETALLE-1: Modal Cuenta Corriente Tercero ───── */}
       {terceroDetalleId && (() => {
         const tercero = financiadores.find(f => f.id === terceroDetalleId)
+        if (!tercero) return null
         const saldosDelTercero = saldosFinanciadores.filter(s => s.financiador_id === terceroDetalleId)
-        const movs = movimientosFinanciacion
+        const movs = (movimientosFinanciacion as MovimientoFinanciacionRow[])
           .filter(m => m.financiador_id === terceroDetalleId)
-          .sort((a, b) => (b.fecha + b.created_at).localeCompare(a.fecha + a.created_at))
+        const aporteIdToDeleted = new Map<string, boolean>()
+        for (const a of aportes) aporteIdToDeleted.set(a.id, !!a.deleted_at)
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-            <div className="w-full max-w-3xl rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-              <div className="mb-4 flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Cuenta corriente de tercero</p>
-                  <h2 className="text-lg font-semibold text-gray-900">
-                    {tercero?.codigo ? <span className="font-mono text-slate-600">{tercero.codigo} </span> : null}
-                    {tercero?.nombre ?? 'Tercero'}
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setTerceroDetalleId(null)}
-                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors"
-                >
-                  Cerrar
-                </button>
-              </div>
-
-              {saldosDelTercero.length > 0 && (
-                <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm space-y-1">
-                  {saldosDelTercero.map(s => (
-                    <div key={s.moneda} className="flex flex-wrap items-baseline justify-between gap-2">
-                      <span className="text-xs uppercase tracking-wide text-slate-500">{s.moneda}</span>
-                      <span className="tabular-nums">
-                        Generada: <span className="text-gray-800">{fmt(s.total_deuda_generada)}</span>
-                        {' · '}Cancelada: <span className="text-emerald-700">{fmt(s.total_cancelado)}</span>
-                        {' · '}Saldo pendiente: <span className="font-semibold text-amber-800">{fmt(s.saldo_pendiente)}</span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">Movimientos ({movs.length})</p>
-              {movs.length === 0 ? (
-                <p className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-gray-500">
-                  Sin movimientos registrados.
-                </p>
-              ) : (
-                <div className="overflow-x-auto rounded-lg border border-slate-200">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th className="px-3 py-2 text-left">Fecha</th>
-                        <th className="px-3 py-2 text-left">Tipo</th>
-                        <th className="px-3 py-2 text-left">Descripción</th>
-                        <th className="px-3 py-2 text-right">Importe</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {movs.map(m => (
-                        <tr key={m.id}>
-                          <td className="px-3 py-2 whitespace-nowrap text-gray-600">{m.fecha}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-700">
-                              {m.tipo_movimiento}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 text-gray-700">{m.descripcion ?? <span className="text-gray-300">—</span>}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {m.moneda} {fmt(m.importe)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
+          <TerceroDetalleModal
+            tercero={tercero}
+            saldos={saldosDelTercero}
+            movimientos={movs}
+            aporteIdToDeleted={aporteIdToDeleted}
+            onClose={() => setTerceroDetalleId(null)}
+          />
         )
       })()}
 
@@ -2803,5 +2751,415 @@ export default function FondosClient({
         )
       })()}
     </div>
+  )
+}
+
+// ─── FONDOS-TERCEROS-DETALLE-1: Modal Cuenta Corriente de Tercero ──────────
+// Operativo con búsqueda + sort client-side + export Excel.
+// No toca lógica financiera ni cálculos; solo presenta data ya cargada.
+
+const TIPO_MOV_FIN_LABELS: Record<string, string> = {
+  deuda_generada:        'Deuda generada',
+  cancelacion_por_aporte:'Cancelación con aporte',
+  ajuste:                'Ajuste',
+  reversa:               'Reversa',
+}
+
+const TIPO_MOV_FIN_COLORS: Record<string, string> = {
+  deuda_generada:        'bg-rose-50 text-rose-700 ring-1 ring-rose-200',
+  cancelacion_por_aporte:'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
+  ajuste:                'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
+  reversa:               'bg-slate-100 text-slate-600 ring-1 ring-slate-200',
+}
+
+const PAGO_ESTADO_LABELS: Record<string, string> = {
+  borrador: 'Borrador',
+  pagado:   'Pagado',
+  anulado:  'Anulado',
+}
+
+const PAGO_ESTADO_COLORS: Record<string, string> = {
+  borrador: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200',
+  pagado:   'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
+  anulado:  'bg-red-50 text-red-700 ring-1 ring-red-200',
+}
+
+type TerceroSortKey = 'fecha' | 'estado' | 'cod_pago' | 'cod_gasto' | 'proveedor' | 'importe'
+
+interface TerceroDetalleModalProps {
+  tercero: Financiador
+  saldos: SaldoFinanciadorRow[]
+  movimientos: MovimientoFinanciacionRow[]
+  aporteIdToDeleted: Map<string, boolean>
+  onClose: () => void
+}
+
+interface MovRowDerivado {
+  m: MovimientoFinanciacionRow
+  tipoLabel: string
+  tipoKey: string
+  estadoLabel: string
+  estadoColor: string
+  codPago: string
+  fechaPago: string
+  codGasto: string
+  proveedor: string
+  proveedorCodigo: string
+  tipoGasto: string
+  descripcionVisible: string
+}
+
+function deriveEstadoTercero(
+  m: MovimientoFinanciacionRow,
+  aporteIdToDeleted: Map<string, boolean>,
+): { label: string; color: string } {
+  if (m.tipo_movimiento === 'reversa') {
+    return { label: 'Reversado', color: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200' }
+  }
+  if (m.tipo_movimiento === 'cancelacion_por_aporte') {
+    if (m.aporte_id && aporteIdToDeleted.get(m.aporte_id) === true) {
+      return { label: 'Cancelación reversada', color: 'bg-red-50 text-red-700 ring-1 ring-red-200' }
+    }
+    return { label: 'Cancelado con aporte', color: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' }
+  }
+  if (m.tipo_movimiento === 'deuda_generada') {
+    const e = m.pagos?.estado ?? null
+    if (e && PAGO_ESTADO_LABELS[e]) {
+      return { label: PAGO_ESTADO_LABELS[e], color: PAGO_ESTADO_COLORS[e] ?? 'bg-slate-100 text-slate-600' }
+    }
+    return { label: 'Generada', color: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' }
+  }
+  if (m.tipo_movimiento === 'ajuste') {
+    return { label: 'Ajuste', color: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' }
+  }
+  return { label: '—', color: 'bg-slate-100 text-slate-500 ring-1 ring-slate-200' }
+}
+
+function slugTercero(s: string): string {
+  return s
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40)
+}
+
+function TerceroDetalleModal({
+  tercero,
+  saldos,
+  movimientos,
+  aporteIdToDeleted,
+  onClose,
+}: TerceroDetalleModalProps) {
+  const [search, setSearch] = useState('')
+  const [sortKey, setSortKey] = useState<TerceroSortKey>('fecha')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function toggleSort(k: TerceroSortKey) {
+    if (sortKey === k) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(k)
+      setSortDir(k === 'fecha' || k === 'importe' ? 'desc' : 'asc')
+    }
+  }
+
+  // Derivación de filas (campos visibles + claves para sort/search)
+  const derivados = useMemo<MovRowDerivado[]>(() => {
+    return movimientos.map(m => {
+      const est = deriveEstadoTercero(m, aporteIdToDeleted)
+      return {
+        m,
+        tipoLabel: TIPO_MOV_FIN_LABELS[m.tipo_movimiento] ?? m.tipo_movimiento,
+        tipoKey: m.tipo_movimiento,
+        estadoLabel: est.label,
+        estadoColor: est.color,
+        codPago: m.pagos?.codigo ?? '',
+        fechaPago: m.pagos?.fecha_pago ?? '',
+        codGasto: m.gastos?.codigo ?? '',
+        proveedor: m.gastos?.proveedores?.nombre ?? '',
+        proveedorCodigo: m.gastos?.proveedores?.codigo ?? '',
+        tipoGasto: m.gastos?.tipos_gasto?.nombre ?? '',
+        descripcionVisible: m.descripcion ?? m.gastos?.descripcion ?? '',
+      }
+    })
+  }, [movimientos, aporteIdToDeleted])
+
+  // Búsqueda case-insensitive sobre los campos pedidos
+  const filtered = useMemo(() => {
+    const q = search.trim().toLocaleLowerCase('es')
+    if (!q) return derivados
+    return derivados.filter(r =>
+      r.codPago.toLocaleLowerCase('es').includes(q) ||
+      r.codGasto.toLocaleLowerCase('es').includes(q) ||
+      r.proveedor.toLocaleLowerCase('es').includes(q) ||
+      r.descripcionVisible.toLocaleLowerCase('es').includes(q) ||
+      r.tipoLabel.toLocaleLowerCase('es').includes(q) ||
+      r.estadoLabel.toLocaleLowerCase('es').includes(q) ||
+      String(r.m.importe).includes(q)
+    )
+  }, [derivados, search])
+
+  // Sort client-side
+  const sorted = useMemo(() => {
+    const arr = [...filtered]
+    arr.sort((a, b) => {
+      let cmp = 0
+      switch (sortKey) {
+        case 'fecha':     cmp = (a.m.fecha + a.m.created_at).localeCompare(b.m.fecha + b.m.created_at); break
+        case 'estado':    cmp = a.estadoLabel.localeCompare(b.estadoLabel, 'es'); break
+        case 'cod_pago':  cmp = a.codPago.localeCompare(b.codPago, 'es'); break
+        case 'cod_gasto': cmp = a.codGasto.localeCompare(b.codGasto, 'es'); break
+        case 'proveedor': cmp = a.proveedor.localeCompare(b.proveedor, 'es'); break
+        case 'importe':   cmp = a.m.importe - b.m.importe; break
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return arr
+  }, [filtered, sortKey, sortDir])
+
+  function handleExport() {
+    const rows = sorted.map(r => ({
+      'Fecha':       r.m.fecha,
+      'Tipo':        r.tipoLabel,
+      'Estado':      r.estadoLabel,
+      'Cód. pago':   r.codPago || '—',
+      'Fecha pago':  r.fechaPago || '—',
+      'Cód. gasto':  r.codGasto || '—',
+      'Proveedor':   r.proveedor || '—',
+      'Tipo gasto':  r.tipoGasto || '—',
+      'Descripción': r.descripcionVisible || '—',
+      'Importe':     Number(r.m.importe),
+      'Moneda':      r.m.moneda,
+    }))
+    const cod = tercero.codigo ?? tercero.id.slice(0, 8)
+    const nom = slugTercero(tercero.nombre)
+    exportToExcel(rows, `cuenta_corriente_tercero_${cod}_${nom}_${todayForFile()}.xlsx`, 'Cuenta corriente')
+  }
+
+  // Moneda principal del header: la del primer saldo (si existe).
+  const monedaHeader = saldos[0]?.moneda ?? ''
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 px-4 py-6 sm:py-10" onClick={onClose}>
+      <div
+        className="flex w-[96vw] max-w-7xl flex-col rounded-2xl bg-white shadow-xl max-h-[88vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#079783]">
+              Cuenta corriente de tercero
+            </p>
+            <h2 className="mt-0.5 text-lg font-bold text-[#0C1F6E] sm:text-xl">
+              {tercero.codigo ? <span className="font-mono text-slate-500">{tercero.codigo} · </span> : null}
+              {tercero.nombre}
+              {monedaHeader && (
+                <span className="ml-2 inline-flex rounded-full bg-[#079783]/10 px-2 py-0.5 text-xs font-semibold text-[#079783]">
+                  {monedaHeader}
+                </span>
+              )}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Cerrar"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-[#0C1F6E] transition-colors"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Resumen + toolbar */}
+        <div className="space-y-3 border-b border-slate-200 bg-slate-50/40 px-5 py-4 sm:px-6">
+          {saldos.length > 0 && (
+            <div className="rounded-xl border border-[#079783]/20 bg-gradient-to-r from-[#079783]/5 to-transparent px-4 py-3 text-sm">
+              <div className="space-y-1">
+                {saldos.map(s => (
+                  <div key={s.moneda} className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-[#079783]">{s.moneda}</span>
+                    <span className="tabular-nums">
+                      <span className="text-slate-500">Generada:</span>{' '}
+                      <span className="font-medium text-slate-800">{fmt(s.total_deuda_generada)}</span>
+                      <span className="mx-2 text-slate-300">·</span>
+                      <span className="text-slate-500">Cancelada:</span>{' '}
+                      <span className="font-medium text-emerald-700">{fmt(s.total_cancelado)}</span>
+                      <span className="mx-2 text-slate-300">·</span>
+                      <span className="text-slate-500">Saldo pendiente:</span>{' '}
+                      <span className={`font-bold ${s.saldo_pendiente > 0 ? 'text-amber-800' : 'text-slate-700'}`}>
+                        {fmt(s.saldo_pendiente)}
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[200px]">
+              <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-slate-400">
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
+                </svg>
+              </span>
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Buscar… (cód. pago, gasto, proveedor, descripción, tipo, estado, importe)"
+                className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-3 py-1.5 text-sm outline-none transition focus:border-[#079783] focus:ring-2 focus:ring-[#079783]/20"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleExport}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#079783] px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-[#06806f] transition-colors"
+              title="Exportar a Excel"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path fillRule="evenodd" d="M10 3a1 1 0 011 1v8.586l2.293-2.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V4a1 1 0 011-1z" clipRule="evenodd" />
+                <path d="M3 15a1 1 0 011 1v1h12v-1a1 1 0 112 0v2a1 1 0 01-1 1H3a1 1 0 01-1-1v-2a1 1 0 011-1z" />
+              </svg>
+              <span>Exportar Excel</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Tabla */}
+        <div className="flex-1 overflow-auto px-5 py-4 sm:px-6">
+          {sorted.length === 0 ? (
+            <p className="rounded-lg border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
+              {movimientos.length === 0
+                ? 'Sin movimientos registrados para este tercero.'
+                : 'No hay movimientos que coincidan con la búsqueda.'}
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-[960px] w-full text-xs">
+                <thead className="sticky top-0 z-10 bg-slate-100 text-slate-600">
+                  <tr>
+                    <SortTh label="Fecha"       active={sortKey==='fecha'}     dir={sortDir} onClick={() => toggleSort('fecha')} />
+                    <Th    label="Tipo" />
+                    <SortTh label="Estado"      active={sortKey==='estado'}    dir={sortDir} onClick={() => toggleSort('estado')} />
+                    <SortTh label="Cód. pago"   active={sortKey==='cod_pago'}  dir={sortDir} onClick={() => toggleSort('cod_pago')} />
+                    <Th    label="Fecha pago" />
+                    <SortTh label="Cód. gasto"  active={sortKey==='cod_gasto'} dir={sortDir} onClick={() => toggleSort('cod_gasto')} />
+                    <SortTh label="Proveedor"   active={sortKey==='proveedor'} dir={sortDir} onClick={() => toggleSort('proveedor')} />
+                    <Th    label="Tipo gasto" />
+                    <Th    label="Descripción" />
+                    <SortTh label="Importe"     active={sortKey==='importe'}   dir={sortDir} onClick={() => toggleSort('importe')} align="right" />
+                    <Th    label="Moneda" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {sorted.map((r, i) => (
+                    <tr key={r.m.id} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}>
+                      <td className="px-2.5 py-1.5 whitespace-nowrap text-slate-600">{r.m.fecha}</td>
+                      <td className="px-2.5 py-1.5 whitespace-nowrap">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${TIPO_MOV_FIN_COLORS[r.tipoKey] ?? 'bg-slate-100 text-slate-600'}`}>
+                          {r.tipoLabel}
+                        </span>
+                      </td>
+                      <td className="px-2.5 py-1.5 whitespace-nowrap">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${r.estadoColor}`}>
+                          {r.estadoLabel}
+                        </span>
+                      </td>
+                      <td className="px-2.5 py-1.5 whitespace-nowrap font-mono text-[11px] text-slate-600">
+                        {r.codPago || <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-2.5 py-1.5 whitespace-nowrap text-slate-600">
+                        {r.fechaPago || <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-2.5 py-1.5 whitespace-nowrap font-mono text-[11px] text-slate-600">
+                        {r.codGasto || <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-slate-700">
+                        {r.proveedor
+                          ? <span title={r.proveedorCodigo ? `${r.proveedorCodigo} · ${r.proveedor}` : r.proveedor}>{r.proveedor}</span>
+                          : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-2.5 py-1.5 whitespace-nowrap text-slate-600">
+                        {r.tipoGasto || <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-2.5 py-1.5 max-w-xs truncate text-slate-700" title={r.descripcionVisible || undefined}>
+                        {r.descripcionVisible || <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-right tabular-nums font-medium text-slate-800">
+                        {fmt(r.m.importe)}
+                      </td>
+                      <td className="px-2.5 py-1.5 whitespace-nowrap text-slate-500">{r.m.moneda}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-slate-200 px-5 py-3 text-xs text-slate-500 sm:px-6">
+          <span>
+            {sorted.length} de {movimientos.length} movimiento{movimientos.length !== 1 ? 's' : ''}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right' }) {
+  return (
+    <th className={`px-2.5 py-2 text-${align} text-[10px] font-semibold uppercase tracking-wide`}>
+      {label}
+    </th>
+  )
+}
+
+function SortTh({
+  label, active, dir, onClick, align = 'left',
+}: {
+  label: string
+  active: boolean
+  dir: 'asc' | 'desc'
+  onClick: () => void
+  align?: 'left' | 'right'
+}) {
+  const justify = align === 'right' ? 'justify-end' : 'justify-start'
+  const color = active ? 'text-[#079783]' : 'text-slate-400'
+  return (
+    <th className={`px-2.5 py-2 text-${align} text-[10px] font-semibold uppercase tracking-wide`}>
+      <button
+        type="button"
+        onClick={onClick}
+        className={`inline-flex items-center gap-1 ${justify} w-full hover:text-[#0C1F6E] transition-colors`}
+      >
+        <span>{label}</span>
+        {active && dir === 'asc' ? (
+          <svg className={`h-3.5 w-3.5 ${color}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" d="M10 5a1 1 0 01.78.375l4 5A1 1 0 0114 12H6a1 1 0 01-.78-1.625l4-5A1 1 0 0110 5z" clipRule="evenodd" />
+          </svg>
+        ) : active && dir === 'desc' ? (
+          <svg className={`h-3.5 w-3.5 ${color}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" d="M10 15a1 1 0 01-.78-.375l-4-5A1 1 0 016 8h8a1 1 0 01.78 1.625l-4 5A1 1 0 0110 15z" clipRule="evenodd" />
+          </svg>
+        ) : (
+          <svg className={`h-3.5 w-3.5 ${color}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path d="M10 3a.75.75 0 01.53.22l3 3a.75.75 0 11-1.06 1.06L10 4.81 7.53 7.28A.75.75 0 116.47 6.22l3-3A.75.75 0 0110 3zM6.47 12.72a.75.75 0 011.06 0L10 15.19l2.47-2.47a.75.75 0 111.06 1.06l-3 3a.75.75 0 01-1.06 0l-3-3a.75.75 0 010-1.06z" />
+          </svg>
+        )}
+      </button>
+    </th>
   )
 }

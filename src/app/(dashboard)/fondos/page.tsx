@@ -101,10 +101,21 @@ export default async function FondosPage() {
 
     // UX-DETAILS (2026-05-25): movimientos_financiacion para el modal
     // "Ver detalle" de cada tercero. Volumen bajo en dev/early-stage, OK
-    // traer todos y filtrar por financiador_id en cliente. Joins mínimos.
+    // traer todos y filtrar por financiador_id en cliente.
+    // FONDOS-TERCEROS-DETALLE-1: ampliamos con joins PostgREST a pagos
+    // (cod/fecha/estado) y gastos (cod/desc/fecha/estado + proveedor + tipo).
+    // Si los joins fallan (FK ausente / PGRST200 / 42P01 / 42703), retry
+    // al SELECT base — el modal degrada graciosamente.
     supabase
       .from('movimientos_financiacion')
-      .select('id, fecha, financiador_id, tipo_movimiento, importe, moneda, gasto_id, pago_id, aporte_id, socio_id, descripcion, created_by, created_at')
+      .select(`
+        id, fecha, financiador_id, tipo_movimiento, importe, moneda,
+        gasto_id, pago_id, aporte_id, socio_id, descripcion, created_by, created_at,
+        pagos(codigo, fecha_pago, estado),
+        gastos(codigo, descripcion, fecha_gasto, estado,
+               proveedores(codigo, nombre),
+               tipos_gasto(codigo, nombre))
+      `)
       .order('fecha', { ascending: false })
       .order('created_at', { ascending: false }),
   ])
@@ -186,21 +197,52 @@ export default async function FondosPage() {
   }
   const imputaciones = (imputacionesResult.data ?? []) as unknown as AporteImputacionDetalleRow[]
 
-  // UX-DETAILS: movimientos_financiacion para detalle por tercero. Tolerante:
-  // si la tabla aún no existe (Etapa 1 pendiente), array vacío.
+  // UX-DETAILS: movimientos_financiacion para detalle por tercero.
+  // FONDOS-TERCEROS-DETALLE-1: si los joins enriquecidos (pagos/gastos/
+  // proveedores/tipos_gasto) fallan por FK ausente, retry al SELECT base sin
+  // joins. Códigos típicos: PGRST200 (FK missing), 42P01 (tabla), 42703 (col).
+  let movFinanciacionData = movFinanciacionResult.data
   if (movFinanciacionResult.error) {
-    console.warn('[fondos] movimientos_financiacion no disponible aún.',
-      movFinanciacionResult.error.code, movFinanciacionResult.error.message)
+    const c = movFinanciacionResult.error.code ?? ''
+    const m = movFinanciacionResult.error.message ?? ''
+    const isJoinError = c === 'PGRST200' || c === '42P01' || c === '42703' || /relationship|join|foreign/i.test(m)
+    if (isJoinError) {
+      console.warn('[fondos] movimientos_financiacion joins no disponibles; retry base sin joins.', c, m)
+      const fb = await supabase
+        .from('movimientos_financiacion')
+        .select('id, fecha, financiador_id, tipo_movimiento, importe, moneda, gasto_id, pago_id, aporte_id, socio_id, descripcion, created_by, created_at')
+        .order('fecha', { ascending: false })
+        .order('created_at', { ascending: false })
+      movFinanciacionData = (fb.data ?? []).map(m => ({
+        ...m,
+        pagos: null,
+        gastos: null,
+      })) as unknown as typeof movFinanciacionResult.data
+    } else {
+      console.warn('[fondos] movimientos_financiacion no disponible aún.', c, m)
+    }
   }
-  const movimientosFinanciacion = (movFinanciacionResult.data ?? []) as MovimientoFinanciacion[]
+  const movimientosFinanciacion = (movFinanciacionData ?? []) as unknown as MovimientoFinanciacion[]
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Caja RISA y terceros</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Cuenta corriente de RISA, aportes de socios y deuda pendiente con terceros.
-        </p>
+      <div
+        className="relative overflow-hidden rounded-2xl border border-slate-200/70 px-5 py-4 shadow-sm sm:px-6 sm:py-5"
+        style={{ background: 'linear-gradient(135deg, #07978314, #67B8550C, #0C1F6E08)' }}
+      >
+        <div className="relative flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-[#0C1F6E] sm:text-2xl">
+              Caja RISA y terceros
+            </h1>
+            <p className="mt-1 text-xs text-slate-500 sm:text-sm">
+              Cuenta corriente de RISA, aportes de socios y deuda pendiente con terceros.
+            </p>
+          </div>
+          <span className="self-start rounded-full bg-[#079783] px-3 py-1 text-[11px] font-semibold text-white shadow-sm sm:self-auto sm:text-xs">
+            Posición financiera
+          </span>
+        </div>
       </div>
 
       <FondosClient
