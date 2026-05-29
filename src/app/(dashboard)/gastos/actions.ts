@@ -687,16 +687,24 @@ export type ComprobantePayload = {
   size: number
 }
 
-export async function setComprobanteGasto(id: string, data: ComprobantePayload) {
+// COMPROBANTE-FIX (2026-05-29): server actions retornan ActionResult — NO throw.
+// Patrón obligatorio en Next 14 server actions; throw rompe el layout en prod
+// con "An error occurred in the Server Components render…". Ver CLAUDE.md #1.
+export type ComprobanteActionResult = { ok: true } | { ok: false; error: string }
+
+export async function setComprobanteGasto(
+  id: string,
+  data: ComprobantePayload,
+): Promise<ComprobanteActionResult> {
   // Fase 2C.2a: comprobante = operativa amplia (incluye USER para propios).
   // Ownership USER va en Fase 2D.
   const guard = await assertRole(ROLES_ESCRITURA_GASTOS)
-  if (!guard.ok) throw new Error(guard.error)
+  if (!guard.ok) return { ok: false, error: guard.error }
 
   const supabase = createClient()
   const authResult = await supabase.auth.getUser()
   const user = authResult.data?.user
-  if (!user) throw new Error('No autenticado')
+  if (!user) return { ok: false, error: 'No autenticado' }
 
   // Fase 2D: ownership USER en setComprobanteGasto.
   let setQuery = supabase
@@ -716,16 +724,20 @@ export async function setComprobanteGasto(id: string, data: ComprobantePayload) 
     setQuery = setQuery.eq('created_by', guard.profile.id)
   }
   const { data: rows, error } = await setQuery.select('id')
-  if (error) throw new Error(error.message)
-  if (!rows || rows.length === 0)
-    throw new Error('Sin permiso o el gasto ya está cerrado (pagado/rechazado).')
+  if (error) return { ok: false, error: error.message }
+  if (!rows || rows.length === 0) {
+    return { ok: false, error: 'Sin permiso o el gasto ya está cerrado (pagado/rechazado).' }
+  }
   revalidatePath('/gastos')
+  return { ok: true }
 }
 
-export async function removeComprobanteGasto(id: string) {
+export async function removeComprobanteGasto(
+  id: string,
+): Promise<ComprobanteActionResult> {
   // Fase 2C.2a: comprobante = operativa amplia. Ownership USER va en Fase 2D.
   const guard = await assertRole(ROLES_ESCRITURA_GASTOS)
-  if (!guard.ok) throw new Error(guard.error)
+  if (!guard.ok) return { ok: false, error: guard.error }
 
   const supabase = createClient()
 
@@ -741,9 +753,9 @@ export async function removeComprobanteGasto(id: string) {
     fetchQuery = fetchQuery.eq('created_by', guard.profile.id)
   }
   const { data: gasto, error: fetchErr } = await fetchQuery.maybeSingle()
-  if (fetchErr) throw new Error(fetchErr.message)
-  if (!gasto) throw new Error('Gasto ya cerrado (pagado/rechazado) o no existe.')
-  if (!gasto.comprobante_path) throw new Error('Este gasto no tiene comprobante.')
+  if (fetchErr) return { ok: false, error: fetchErr.message }
+  if (!gasto) return { ok: false, error: 'Gasto ya cerrado (pagado/rechazado) o no existe.' }
+  if (!gasto.comprobante_path) return { ok: false, error: 'Este gasto no tiene comprobante.' }
 
   const { error: rmErr } = await supabase.storage
     .from('comprobantes')
@@ -767,10 +779,12 @@ export async function removeComprobanteGasto(id: string) {
     updQuery = updQuery.eq('created_by', guard.profile.id)
   }
   const { data: rows, error: updErr } = await updQuery.select('id')
-  if (updErr) throw new Error(updErr.message)
-  if (!rows || rows.length === 0)
-    throw new Error('Sin permiso para limpiar comprobante.')
+  if (updErr) return { ok: false, error: updErr.message }
+  if (!rows || rows.length === 0) {
+    return { ok: false, error: 'Sin permiso para limpiar comprobante.' }
+  }
   revalidatePath('/gastos')
+  return { ok: true }
 }
 
 // ─── TIPOS-GASTO (2026-05-25) ─────────────────────────────────────────────────

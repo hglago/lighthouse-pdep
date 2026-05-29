@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useMemo, useRef } from 'react'
 import type { Fondo, Proveedor, Financiador, UserRole, GastoEstado, PagoEstado, PagoTipo, TipoGasto } from '@/types'
-import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, RecurrenteActionResult, BulkGastoResult, TipoGastoQuickPayload, TipoGastoQuickResult } from './actions'
+import type { GastoPayload, GastoRecurrentePayload, ComprobantePayload, ComprobanteActionResult, RecurrenteActionResult, BulkGastoResult, TipoGastoQuickPayload, TipoGastoQuickResult } from './actions'
 import type { ProveedorQuickResult } from '../proveedores/actions'
 import type { FinanciadorPayload, FinanciadorActionResult } from '../fondos/actions'
 import { exportToExcel, todayForFile } from '@/lib/excel'
@@ -256,8 +256,8 @@ interface Props {
   onCreateRecurrente: (data: GastoRecurrentePayload) => Promise<RecurrenteActionResult>
   onUpdateRecurrente: (id: string, data: GastoRecurrentePayload) => Promise<RecurrenteActionResult>
   onDeleteRecurrente: (id: string) => Promise<RecurrenteActionResult>
-  onSetComprobante: (id: string, data: ComprobantePayload) => Promise<void>
-  onRemoveComprobante: (id: string) => Promise<void>
+  onSetComprobante: (id: string, data: ComprobantePayload) => Promise<ComprobanteActionResult>
+  onRemoveComprobante: (id: string) => Promise<ComprobanteActionResult>
   onCreateProveedorQuick: (data: {
     nombre: string
     cuit: string | null
@@ -1140,18 +1140,36 @@ export default function GastosClient({
 
     setComprobanteError('')
     setComprobanteUploading(true)
+    // COMPROBANTE-FIX (2026-05-29): server action retorna ActionResult.
+    // Si el upload al storage fue OK pero la action devuelve ok:false,
+    // limpiamos el archivo para no dejar huérfanos. try/catch sigue como red
+    // de seguridad para errores inesperados (no derivados del flujo conocido).
+    const supabase = createSupabaseBrowser()
+    const path = `gastos/${id}`
+    let storageOk = false
     try {
-      const supabase = createSupabaseBrowser()
-      const path = `gastos/${id}`
       const { error: upErr } = await supabase.storage
         .from('comprobantes')
         .upload(path, file, { upsert: true, contentType: file.type })
-      if (upErr) throw new Error(upErr.message)
-      await onSetComprobante(id, { path, mime: file.type, nombre: file.name, size: file.size })
+      if (upErr) {
+        setComprobanteError(`Error al subir comprobante: ${upErr.message}`)
+        return
+      }
+      storageOk = true
+      const r = await onSetComprobante(id, { path, mime: file.type, nombre: file.name, size: file.size })
+      if (!r.ok) {
+        setComprobanteError(r.error)
+        // Cleanup: el server action rechazó, removemos el archivo recién subido.
+        try { await supabase.storage.from('comprobantes').remove([path]) } catch {}
+        return
+      }
       // Auto-close mini-modal después de upload exitoso.
       if (comprobanteOnlyGasto) setComprobanteOnlyGasto(null)
     } catch (err) {
-      setComprobanteError(err instanceof Error ? err.message : 'Error al subir.')
+      setComprobanteError(err instanceof Error ? err.message : 'Error inesperado al subir.')
+      if (storageOk) {
+        try { await supabase.storage.from('comprobantes').remove([path]) } catch {}
+      }
     } finally {
       setComprobanteUploading(false)
     }
@@ -1177,13 +1195,19 @@ export default function GastosClient({
     if (!id) return
     if (!confirm('¿Quitar el comprobante de este gasto?')) return
     setComprobanteError('')
+    // COMPROBANTE-FIX (2026-05-29): server action retorna ActionResult.
+    // try/catch queda como red de seguridad para errores inesperados.
     startTransition(async () => {
       try {
-        await onRemoveComprobante(id)
+        const r = await onRemoveComprobante(id)
+        if (!r.ok) {
+          setComprobanteError(r.error)
+          return
+        }
         // Auto-close mini-modal después de remove exitoso.
         if (comprobanteOnlyGasto) setComprobanteOnlyGasto(null)
       } catch (err) {
-        setComprobanteError(err instanceof Error ? err.message : 'Error al quitar.')
+        setComprobanteError(err instanceof Error ? err.message : 'Error inesperado al quitar.')
       }
     })
   }
