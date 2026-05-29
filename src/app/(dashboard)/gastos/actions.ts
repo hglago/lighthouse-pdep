@@ -718,7 +718,7 @@ export async function setComprobanteGasto(
       comprobante_subido_en: new Date().toISOString(),
     })
     .eq('id', id)
-    .in('estado', ['borrador', 'enviado', 'aprobado', 'pagado_parcial'])
+    .in('estado', ['borrador', 'enviado', 'aprobado'])
     .is('deleted_at', null)
   if (guard.profile.role === 'user') {
     setQuery = setQuery.eq('created_by', guard.profile.id)
@@ -747,7 +747,7 @@ export async function removeComprobanteGasto(
     .from('gastos')
     .select('comprobante_path')
     .eq('id', id)
-    .in('estado', ['borrador', 'enviado', 'aprobado', 'pagado_parcial'])
+    .in('estado', ['borrador', 'enviado', 'aprobado'])
     .is('deleted_at', null)
   if (guard.profile.role === 'user') {
     fetchQuery = fetchQuery.eq('created_by', guard.profile.id)
@@ -773,7 +773,7 @@ export async function removeComprobanteGasto(
       comprobante_subido_en: null,
     })
     .eq('id', id)
-    .in('estado', ['borrador', 'enviado', 'aprobado', 'pagado_parcial'])
+    .in('estado', ['borrador', 'enviado', 'aprobado'])
     .is('deleted_at', null)
   if (guard.profile.role === 'user') {
     updQuery = updQuery.eq('created_by', guard.profile.id)

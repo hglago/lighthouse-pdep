@@ -236,7 +236,7 @@ async function exportPdf(
   })
 
   // Footer en cada página
-  const totalPages = doc.getNumberOfPages()
+  const totalPages = (doc as unknown as { getNumberOfPages: () => number }).getNumberOfPages()
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i)
     doc.setFontSize(7)

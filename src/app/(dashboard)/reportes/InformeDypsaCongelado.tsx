@@ -248,7 +248,7 @@ export default function InformeDypsaCongelado({ cabecera, items }: Props) {
       margin: { left: margin, right: margin },
     })
 
-    const totalPages = doc.getNumberOfPages()
+    const totalPages = (doc as unknown as { getNumberOfPages: () => number }).getNumberOfPages()
     for (let p = 1; p <= totalPages; p++) {
       doc.setPage(p)
       doc.setFontSize(7)
