@@ -2,148 +2,124 @@
 
 Estado actual del proyecto. Lo que está hecho, lo que falta aplicar, dónde estamos.
 
-## Hito actual
+> Actualizado 2026-06-03 a `HEAD 669bcdd`. Reconcilia el atraso que tenían
+> CONTEXT/TASK (congelados en el checkpoint 2026-05-24, Etapa 4 P4b pendiente).
+> Toda la Etapa 4 y bastante trabajo posterior ya está cerrado y en `main`.
 
-**v0.2.0-risa-fondos** (tag Git, 2026-05-23). Cierra: schema DB, RISA operativa, socios + financiadores + aportes con UI completa, filtros/búsqueda/sort en /fondos, D18 + D19 + D20 documentadas.
+## Dónde estamos
 
-Ver `RELEASES.md`.
+- **Branch**: `main` · **HEAD**: `669bcdd` · **Working tree**: limpio · sincronizado con `origin/main`.
+- **Tag estable**: `v0.2.0-risa-fondos` (2026-05-23). Para volver al hito: `git reset --hard v0.2.0-risa-fondos`.
+- **Remoto**: `https://github.com/hglago/lighthouse-pdep.git`.
 
-**Trabajo en curso post-tag** (no incluido en v0.2.0):
-- **Refactor Proveedores/Gastos con servicios por hora + forma de cancelación financiada + cuenta corriente financiadores**:
-  - **P1 SQL servicios por hora + snapshot uplift**: ✅ aplicada y validada 2026-05-23.
-  - **P2 UI Proveedores**: ✅ commit `ea13d07`, validada manualmente.
-  - **P3a UI Gastos servicio por hora**: ✅ commit `f63635c` + `382684b` (fix opt-in + input horas). Validado manualmente.
-  - **P3a-fc forma_cancelacion en Gasto (RISA/Financiador, sin generar deuda)**: ✅ commit `193f478`. Componentes `FinanciadorSelect` y `FinanciadorQuickCreateModal` extraídos del stash sin consumirlo.
-  - **Versión visible en UI** (sidebar muestra tag · commit · env): ✅ commit `1f347b7`.
-  - **P4a DIAG SQL Pagos**: ✅ diagnóstico completo. Confirmado bug en `fn_confirmar_pago` + `fn_anular_pago` (no distinguen RISA vs financiador).
-  - **P4b SQL update RPC pagos**: ⏸ SQL entregado al usuario en el chat, **pendiente de aplicar en Supabase**.
-  - **P4c UI Pagos (limpiar D14 + badge cancelación + UX pago total/parcial)**: ⏸ bloqueada por P4b.
-  - **P4d UI Fondos sección cuenta corriente financiadores**: ⏸ bloqueada por P4c.
-- **Etapa 3B Gastos (UI RISA/Financiador con radio buttons)**: stash `stash@{0}` intacto como referencia. Los 2 componentes nuevos ya están extraídos en main; el resto del stash se descartará al cerrar P4 (la spec se cumple con checkbox opt-in en `193f478`).
+Últimos commits:
+```
+669bcdd docs: agregar readme descriptivo del proyecto
+468ebb7 fix: corregir comprobantes y build de reportes
+e939d7f fix: controlar errores en comprobantes de gasto
+167ca42 feat: mejorar fondos y detalle operativo de terceros
+38f4c70 feat: aplicar identidad Lighthouse y dashboard ejecutivo
+```
 
 ## Decisión de modelo financiero (vigente)
 
-**Un solo fondo operativo: RISA.** Puede tener saldo negativo. Los gastos se cancelan con RISA o con un financiador externo. Aportes de socios fondean RISA o cancelan financiación pendiente con financiadores.
+**Un solo fondo operativo: RISA** (`FON-001`). Puede tener saldo negativo. Los gastos se
+cancelan con RISA (Medios Propios) o con un **financiador externo** (en UI: **"Tercero de la red"**).
 
-El modelo anterior de "cuenta corriente entre fondos" (varios fondos internos con deudas entre sí, commit `f66325b`) **queda deprecado** — ver D14.
+**Posición Global RISA (PG) = Medios Propios (MP) + Medios Terceros (MT)**
+- **MP** = `fondos.saldo_actual` de `FON-001`. Fuente: `movimientos_fondo`.
+- **MT** = `-SUM(v_saldos_financiadores.saldo_pendiente)`. Fuente: `movimientos_financiacion`.
+- En UI: "Medios Propios RISA" y "Terceros (de la red)". Internamente la tabla sigue siendo
+  `financiadores` y `forma_cancelacion='financiador'` por back-compat. **Nunca usar "Prestamista"** (D16).
 
-## Features funcionales
+El modelo viejo de "cuenta corriente entre fondos" (commit `f66325b`) está **deprecado (D14) — no aplicar**.
 
-| Feature | Estado código | Estado DB |
+## Lo que se cerró desde el último checkpoint de CONTEXT (post 2026-05-24)
+
+| Bloque | Estado |
+|---|---|
+| **Etapa 4 Pagos RISA vs Tercero (P4b/P4c/P4d)** | ✅ cerrada. `fn_confirmar_pago`/`fn_anular_pago` con branching; UI Pagos sin borrador con resumen de obligación; UI Fondos con PG + cuenta corriente terceros. |
+| **FIN2** aportes con imputaciones (split MP/Terceros) + anular con reversa + `v_posicion_global_risa` | ✅ código + SQL aplicado (migraciones 20260524*). |
+| **TIPOS-GASTO** clasificación analítica con alta inline | ✅ migración 20260525000000. |
+| **PG-PERIODO** `gastos.periodo_analitico` (vía trigger) | ✅ migración 20260525000001. |
+| **Órdenes de Pago** (`ordenes_pago` + `fn_crear_orden_pago_desde_pago` + vista `/ordenes-pago/[codigo]`) | ✅ migración 20260525000002. |
+| **Identidad Lighthouse + Dashboard ejecutivo** | ✅ `38f4c70`. |
+| **Reportes Dypsa** dinámico (REP3) + congelado/snapshot numerado | ✅ `d3b7b81`/`277f175`/`f02956f`; migración 20260527000000. |
+| **`gastos.fecha_pago_prevista` + proveedor obligatorio** | ✅ `3d91231`; migración 20260527000001. |
+| **L&F /fondos + modal cuenta corriente de tercero (11 cols, export Excel)** | ✅ `167ca42`. |
+| **Fix comprobantes de gasto** (`setComprobanteGasto`/`removeComprobanteGasto` → `ActionResult`, 10 throws removidos) | ✅ `e939d7f`/`468ebb7`. |
+| **Fix build jsPDF** (cast `getNumberOfPages` en 2 reportes) | ✅ `468ebb7`. |
+| **Fix enum `pagado_parcial`** removido de `.in('estado',...)` en gastos | ✅ `468ebb7`. |
+
+## RBAC / Seguridad (Fase 2C–2E, 2026-05-25)
+
+- **7 roles vigentes**: `admin`, `supervisor`, `operador`, `user`, `socio` + legacy `contador`/`revisor`/`visualizador`. Labels en `src/types/index.ts` (`ROLE_LABELS`).
+- **`assertRole(allowed)`** en `src/lib/auth/guards.ts` — SELECT de `profiles` para resolver role; devuelve `ActionResult` (no throw). Convención: incluir `admin` en TODAS las listas.
+- Guards server-side aplicados en server actions de **gastos, gastos-recurrentes, pagos, fondos/maestros, proveedores** (`fd51ac6`…`b3bc536`).
+- **Dashboard restringido a `admin`** (expone PG + métricas sensibles) — `22ea447`.
+- **`user` ve y opera solo sus propios gastos** vía `gastos.created_by` (ownership) — `04a1468`.
+- **Rol `socio`**: bloqueado de módulos operativos, redirect a `/reportes`. Sidebar migrado a `allowedRoles` — `6f2cee0`/`58b51f2`.
+- **Login Google con lista blanca**: `OAUTH_GOOGLE_ENABLED=true`. `src/app/auth/callback/route.ts` → `fn_apply_google_whitelist_self`; si no autorizado, `signOut()` + `/login?error=not_authorized`. Tabla `google_allowed_users` + CRUD en `/usuarios` — `3d3cf97`.
+
+## SQL — migraciones en `supabase/migrations/`
+
+Aplicadas y validadas según handoffs (hasta 2026-05-29). Última en disco: `20260527000001`.
+
+```
+20260524000000  fin_fix_1_saldo_mp_negativo
+20260524000001  gastos_volver_a_pendiente
+20260524000002  aporte_imputaciones
+20260524000003  registrar_aporte_socio_v2
+20260524000004  anular_aporte_socio
+20260524000005  v_posicion_global_risa
+20260525000000  tipos_gasto
+20260525000001  gastos_periodo_analitico (trigger; la versión GENERATED falló)
+20260525000002  ordenes_pago (+ OP-fix nro_pago vía CREATE OR REPLACE)
+20260527000000  reportes_dypsa_snapshot
+20260527000001  gastos_fecha_pago_prevista
+```
+
+### SQL pendiente de aplicar
+| Archivo | Qué | Decisión |
 |---|---|---|
-| Login custom usuario/password | ✅ funcional | — |
-| CRUD fondos + aportes (legacy) | ✅ funcional | — |
-| CRUD proveedores (con uplift) | ✅ funcional | ⚠️ ALTER uplift (tolerante si no aplicado) |
-| CRUD gastos (alta directa `enviado`) | ✅ funcional | — |
-| Aprobación de gastos | ✅ funcional | — |
-| Bulk actions gastos | ✅ funcional | — |
-| Pagos atómicos (create+confirm) | ✅ funcional | — |
-| Anular pago | ✅ funcional vía `fn_anular_pago` | — |
-| Obligaciones pendientes | ✅ vista `v_obligaciones_pendientes` | — |
-| Anti-overpayment | ✅ funcional | — |
-| Recurrentes auto-gen mensual | ✅ funcional | — |
-| Comprobantes en Storage | ✅ funcional | — |
-| Excel export gastos | ✅ funcional | — |
-| Códigos G/P | ✅ código tolerante | ⚠️ SQL pendiente |
-| Cuenta corriente entre fondos vieja | ⚠️ código tolerante presente | ❌ **DEPRECADO — no aplicar (D14)** |
-| Soft-delete Proveedores | ✅ funcional vía RPC SECURITY DEFINER | ✅ aplicado |
-| Soft-delete Fondos | ✅ código | ⚠️ SQL pendiente (RPC + columnas) ¹ |
-| **Nuevo modelo financiero RISA único — schema** | — | ✅ **Etapa 1 APLICADA Y VALIDADA** |
-| **UI Fondos rediseñada read-only (resumen RISA, aportes, financiadores)** | ✅ Etapa 2A implementada | — |
-| **socios.codigo + sequence + trigger + UNIQUE** | — | ✅ **Etapa 2B-SQL APLICADA** |
-| **UI Fondos: 3 botones (Nuevo aporte / socio / financiador) + 3 modales** | ✅ Etapa 2B+2C implementada | — |
-| **Crear socio con codigo SOC-### desde UI** | ✅ funcional | ✅ aplicado |
-| **Crear financiador con codigo FIN-### desde UI** | ✅ funcional | ✅ aplicado |
-| **Registrar aporte de socio (RPC `registrar_aporte_socio`)** | ✅ funcional | ✅ **aplicada y validada** (destino RISA confirmado; destino cancelar pendiente de testeo real) |
-| **`forma_cancelacion` en UI Gastos** | ⏸ stasheado (`stash@{0}` WIP 3B) — postergado a post-P4 | ✅ columnas en DB desde Etapa 1 |
-| **UI Pagos con rama RISA vs financiador** | ❌ no implementada | — (Etapa 4 pendiente) |
-| **Proveedores: `permite_horas_servicio` + `valor_hora`** | ❌ UI no implementada (P2 pendiente) | ✅ **P1 APLICADA 2026-05-23** |
-| **Gastos: snapshot servicio por hora (8 columnas + CHECK)** | ❌ UI no implementada (P3 pendiente) | ✅ **P1 APLICADA 2026-05-23** |
-| **Gastos recurrentes: snapshot servicio por hora (6 columnas + CHECK)** | ❌ UI no implementada (P3 pendiente) | ✅ **P1 APLICADA 2026-05-23** |
-| **`fn_generar_gastos_recurrentes` propagando snapshot** | — | ⏸ Pendiente P3 (no se tocó en P1) |
-| **Deprecación visual módulo Honorarios** | ❌ no implementada (P4 pendiente) | — (no hay tabla en DB) |
+| `sql/REP1_REP2_migration.sql` | `proveedores.nombre_informe` (REP2) | ⏸ **NO aplicado**. El SELECT es tolerante. Aplicar cuando se quiera editar nombre de informe por proveedor. |
+| `2dd8f42` uplift proveedores | columna uplift | ⏸ aplicar si se edita uplift en UI (D22: solo informativo). |
+| `9872748` códigos G/P | secuencias `gastos_codigo_seq`/`pagos_codigo_seq` | ⏸ aplicar si se quieren ver códigos G######/P######. |
+| `f66325b` cuenta corriente entre fondos | — | ❌ **NO APLICAR** (deprecado, D14). |
 
-¹ Las columnas `deleted_at`/`deleted_by`/`motivo_baja` en fondos fueron agregadas dentro de Etapa 1. La RPC `soft_delete_fondo` SQL antigua sigue pendiente de aplicar (no es crítica para Etapa 2).
+## Riesgos / deuda técnica vigente
 
-## Estado de datos
-
-Reset operativo aplicado 2026-05-23. Borrados: fondos, gastos, pagos, movimientos_fondo, aportes_fondo, anticipos. Conservados: proveedores, profiles, gastos_recurrentes.
-
-**Post-Etapa 1**: `RISA` insertado como `FON-001`, saldo 0, moneda ARS, estado activo.
-
-## SQL aplicado y validado (orden cronológico)
-
-| Etapa / commit | Migración | Estado |
-|---|---|---|
-| Soft-delete Proveedores | RPC SECURITY DEFINER `soft_delete_proveedor` | ✅ aplicado |
-| **Etapa 1 nuevo modelo** | Tablas nuevas + columnas + sequences + triggers + RLS policies + RISA inicial + drop constraint saldo>=0 | ✅ **APLICADA 2026-05-23** |
-| **Etapa 2B SQL** | `socios.codigo` + `socios_codigo_seq` + `fn_set_socio_codigo` + `trg_set_socio_codigo` + backfill + UNIQUE + NOT NULL | ✅ **APLICADA** |
-| **Etapa 2C SQL** | RPC `registrar_aporte_socio` SECURITY DEFINER (transaccional para destino RISA o financiación) | ✅ **APLICADA Y VALIDADA** (destino RISA confirmado funcional; rama cancelar financiación pendiente de testeo con deuda real) |
-| **P1 Proveedores con horas de servicio + snapshot** | `proveedores` (+permite_horas_servicio, +valor_hora) + `gastos` (+8 columnas snapshot + CHECK) + `gastos_recurrentes` (+6 columnas espejo + CHECK) + 4 CHECK no-negativos/coherencia. NO toca pagos, fondos, `fn_generar_gastos_recurrentes`, `registrar_aporte_socio`, RLS, triggers `codigo` | ✅ **APLICADA Y VALIDADA 2026-05-23** (VAL-1..9 OK) |
-
-## SQL pendientes (decisión deferida)
-
-| Commit | Migración | Decisión |
-|---|---|---|
-| `2dd8f42` | Uplift proveedores | Aplicar cuando quieras editar uplift en UI |
-| `9872748` | Codigo G/P | Aplicar cuando quieras visualizar G/P codes |
-| `f66325b` | Cuenta corriente entre fondos vieja | **NO APLICAR** — deprecado (D14) |
-| `62420fe` | Soft delete fondo (RPC y columnas extra) | Las columnas ya entraron en Etapa 1. La RPC `soft_delete_fondo` puede aplicarse aparte si querés volver a habilitar el flow "Dar de baja fondo" |
-
-## Estado de tablas post-Etapa 1
-
-### Nuevas
-- `socios` — aportantes (RLS activo: SELECT/INSERT/UPDATE para authenticated)
-- `financiadores` — terceros que cancelan gastos (RLS activo, mismo patrón). Codigo FIN-### auto
-- `movimientos_financiacion` — ledger de deuda con financiadores (RLS activo: SELECT/INSERT authenticated)
-
-### Modificadas
-- `fondos`: + `codigo` (FON-###), + `deleted_at`, + `deleted_by`, + `motivo_baja`
-- `aportes_fondo`: + `codigo` (APO-###), + `socio_id`, + `destino_aporte`, + `financiador_id` (mantiene `aportante` text legacy)
-- `gastos`: + `forma_cancelacion` (`'risa'`/`'financiador'`), + `financiador_id`
-- `pagos`: + `forma_cancelacion`, + `financiador_id`, + `afecta_saldo_risa` (boolean), + `movimiento_financiacion_id`
-
-### Constraints eliminadas
-- `fondos.fondos_saldo_no_negativo` (CHECK saldo_actual >= 0) — eliminada permanentemente. RISA puede quedar en saldo negativo
-
-### View
-- `v_saldos_financiadores`: agrega por (financiador_id, moneda). Incluye `financiador_deleted_at` para que la UI decida si filtra. Hoy retorna 0 filas (sin movimientos aún)
-
-## Sequences + Triggers activos
-
-| Sequence | Trigger | Formato | Estado |
-|---|---|---|---|
-| `fondos_codigo_seq` | `trg_set_fondo_codigo` BEFORE INSERT | `FON-###` | next = `FON-002` (RISA ya es `FON-001`) |
-| `aportes_codigo_seq` | `trg_set_aporte_codigo` BEFORE INSERT | `APO-###` | next = `APO-001` |
-| `financiadores_codigo_seq` | `trg_set_financiador_codigo` BEFORE INSERT | `FIN-###` | next = `FIN-001` |
-| `gastos_codigo_seq` (legacy) | `trg_set_gasto_codigo` | `G######` | SQL pendiente, no aplicado todavía |
-| `pagos_codigo_seq` (legacy) | `trg_set_pago_codigo` | `P######` | SQL pendiente |
-
-## Riesgos / debt vigente
-
-- `fn_pagos_hardening` bloquea UPDATE sobre pagos confirmados. Etapa 4 lo manejará con disable temporal o RPC.
-- `fn_confirmar_pago` y `fn_anular_pago`: pueden necesitar revisión cuando se implementen las ramas RISA vs Financiador en Etapa 4.
+- **Server actions con `throw` en `gastos/actions.ts`** (`createGasto`, `updateGasto`, `deleteGasto`, `cambiarEstadoGasto`, etc.) siguen sin migrar a `ActionResult` — mismo bug latente que tenían los comprobantes antes del fix. Migrar cuando aparezca caso visible. Ver `feedback_server_actions_action_result`.
+- **`@types/jspdf` desactualizado** (`^1.3.3` para `jspdf@^4.x`). El cast `getNumberOfPages` es workaround en `InformeDypsaClient.tsx:239` y `InformeDypsaCongelado.tsx:251`.
+- **`pagado_parcial`** no existe en el enum SQL `gasto_estado`. Queda código muerto inerte en `GastosClient.tsx` y un fallback `22P02` en `pagos/page.tsx:65` que ensucia el log.
+- `fn_pagos_hardening` bloquea UPDATE sobre pagos confirmados (relevante si se vuelve a tocar pagos).
 - Comprobantes en Storage no se limpian con reset operativo.
-- Código tolerante de cuenta corriente vieja queda inerte en `pagos/page.tsx`. No estorba si no se aplica esa SQL.
-- **Etapa 2 todavía no implementada**: la UI de Fondos actual no expone codigo, ni socios, ni financiadores, ni cuentas corrientes.
 
-## Convenciones aplicadas
+## Convenciones aplicadas (decisiones activas)
 
-- ActionResult en todas las actions destructivas
-- SECURITY DEFINER RPC para soft-delete (Proveedores, Fondos)
-- SELECTs tolerantes en pages con columnas pendientes de migrar
-- Patrón de baja: "Dar de baja" (sin estado) / "Anular" (con reverso financiero)
-- Códigos: G/P (6 dígitos sin dash) para gastos/pagos; FON/APO/FIN/SOC (3 dígitos con dash) para fondos/aportes/financiadores/socios
-- Triggers BEFORE INSERT asignan codigo automáticamente; setval sincroniza para que el próximo INSERT empiece desde MAX+1
-- **D18**: Todo listado muestra "Código" (entidades maestras) o "N° transacción" (operaciones). Nunca UUID como identificador visible principal. Ver `DECISIONS.md` para detalle.
-- **D19**: Todos los listados deben tener búsqueda general, filtros por columna, ordenamiento, botón "Limpiar filtros" y empty states diferenciados. Usar `DataTable` componente reusable (ya en `src/components/`).
-- **D21**: Honorarios deprecado operativamente. Todo honorario se carga como Gasto con proveedor `permite_horas_servicio=true`. Página `/honorarios` queda como informativa (P4).
-- **D22**: Uplift es **informativo**, NO modifica importes operativos (gasto/pago/fondo/deuda). Solo snapshot en gasto/recurrente para futura liquidación a socios.
-- **D23**: Recurrentes con servicio por hora deben copiar snapshot al gasto generado, no leer en vivo del proveedor. Función `fn_generar_gastos_recurrentes` se actualiza en P3.
-- **Versión en UI**: el sidebar muestra `tag · commit · env` al pie. Lo genera `scripts/write-version.mjs` → `src/lib/version.ts` automáticamente vía hooks predev/prebuild. Manual: `npm run version:write`. Ver `TESTING.md` sección "Versión del sistema visible en UI".
+- **ActionResult** en server actions destructivas (nunca throw). `assertRole()` devuelve ActionResult.
+- **SECURITY DEFINER RPC** para soft-delete (Proveedores, Fondos).
+- **SELECTs tolerantes** en pages con columnas pendientes de migrar.
+- Patrón de baja: "Dar de baja" (sin reverso) / "Anular" (con reverso financiero).
+- Códigos: `G######`/`P######` (gastos/pagos, legacy pendiente); `FON-###`/`APO-###`/`FIN-###`/`SOC-###` (3 dígitos con dash) para fondos/aportes/financiadores/socios.
+- **D14**: cuenta corriente entre fondos deprecada.
+- **D16**: RISA único + terceros externos. UI dice "Tercero", nunca "Prestamista".
+- **D18**: listados muestran Código o N° transacción, nunca UUID como identificador visible.
+- **D19**: listados con búsqueda + filtros por columna + sort + "Limpiar filtros" + empty states (`DataTable`).
+- **D21**: Honorarios deprecado operativamente (se carga como Gasto con `permite_horas_servicio`).
+- **D22**: Uplift es solo informativo (snapshot para liquidación futura, no afecta importes).
+- **D23**: Recurrentes con servicio por hora copian snapshot al gasto generado.
+- **Versión en UI**: sidebar muestra `tag · commit · env`. Lo genera `scripts/write-version.mjs` → `src/lib/version.ts` vía hooks predev/prebuild. Manual: `npm run version:write`. (Ese archivo se regenera solo; al cierre suele revertirse con `git checkout -- src/lib/version.ts` para dejar el árbol limpio.)
 
-## Notas para refactor activo (Proveedores servicios por hora)
+## Pendiente al retomar (del handoff 2026-05-29)
 
-P1 cerrada (SQL aplicada). Siguiente: **P2 (UI Proveedores)** — agregar checkbox "Permite cargar horas de servicio" + `valor_hora` + bloque uplift en modal de proveedor; columna "Servicio" en tabla. Sin tocar Gastos, Pagos, Fondos.
+1. Verificar **redeploy de Vercel** con HEAD actual.
+2. Probar en **producción** (no localhost): `/gastos` → modal "Comprobante de gasto" → adjuntar/quitar en `G000014`; confirmar sin overlay Next ni error `pagado_parcial`.
+3. **Build Vercel OK** (el fix de jsPDF era el unblocker).
 
-Post P2: P3 (UI Gastos con bloque "Detalle del servicio" + actualización SQL de `fn_generar_gastos_recurrentes`) → P4 (deprecar visualmente `/honorarios`) → recuperar `stash@{0}` para cerrar Etapa 3B Gastos.
+## Próximos frentes propuestos (el usuario elige)
+
+- Aplicar `sql/REP1_REP2_migration.sql` (nombre_informe por proveedor).
+- Migrar el resto de server actions de `gastos/actions.ts` a `ActionResult`.
+- Lote E2E formal (sigue pendiente desde el handoff 2026-05-24).
+- Bump `@types/jspdf` para quitar el cast workaround.
