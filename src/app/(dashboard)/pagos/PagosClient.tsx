@@ -1161,6 +1161,7 @@ export default function PagosClient({
           initialSort={{ key: 'fecha', dir: 'desc' }}
           emptyMessage={search ? 'Sin resultados para esa búsqueda.' : 'No hay pagos registrados.'}
           columns={pagosRegistradosColumns}
+          rowActionsLabel=""
           rowActions={(p) => {
             // OP (2026-05-25): "Ver OP" disponible para todos los roles si la
             // OP existe. "Anular" solo admin.

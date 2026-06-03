@@ -29,6 +29,10 @@ interface Props<T> {
   getRowId: (row: T) => string
   selectable?: boolean
   rowActions?: (row: T) => ReactNode
+  /** Texto del header de la columna de acciones. Default 'Acción'. Pasar ''
+   *  para ocultar el texto (queda solo el ícono en las filas) y ganar ancho;
+   *  el label se conserva como sr-only para accesibilidad. */
+  rowActionsLabel?: string
   bulkActions?: (selectedIds: Set<string>, clear: () => void) => ReactNode
   /** Búsqueda general controlada por el módulo. Se aplica como contains case-insensitive
    *  contra accessor(row) de las columnas listadas en searchKeys. */
@@ -113,6 +117,7 @@ export default function DataTable<T>({
   getRowId,
   selectable = false,
   rowActions,
+  rowActionsLabel = 'Acción',
   bulkActions,
   searchTerm = '',
   searchKeys,
@@ -270,7 +275,11 @@ export default function DataTable<T>({
                 ))}
                 {rowActions && (
                   <th className={`sticky right-0 z-10 border-l border-slate-200 bg-slate-100 ${cellPad} text-right text-xs font-semibold uppercase tracking-wide text-slate-600`}>
-                    Acción
+                    {rowActionsLabel === '' ? (
+                      <span className="sr-only">Acción</span>
+                    ) : (
+                      rowActionsLabel
+                    )}
                   </th>
                 )}
               </tr>
