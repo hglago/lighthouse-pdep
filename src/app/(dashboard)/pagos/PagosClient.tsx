@@ -1161,7 +1161,6 @@ export default function PagosClient({
           initialSort={{ key: 'fecha', dir: 'desc' }}
           emptyMessage={search ? 'Sin resultados para esa búsqueda.' : 'No hay pagos registrados.'}
           columns={pagosRegistradosColumns}
-          rowActionsLabel=""
           rowActions={(p) => {
             // OP (2026-05-25): "Ver OP" disponible para todos los roles si la
             // OP existe. "Anular" solo admin.
@@ -1185,7 +1184,7 @@ export default function PagosClient({
               if (p.estado === 'anulado') tooltipBloqueo = 'Pago anulado.'
               else if (!op) tooltipBloqueo = 'OP aún no generada.'
             }
-            return <RowActionMenu items={items} emptyTooltip={tooltipBloqueo} />
+            return <RowActionMenu items={items} emptyTooltip={tooltipBloqueo} buttonLabel="" />
           }}
         />
       </div>

@@ -24,6 +24,9 @@ interface Props {
 // para escapar al overflow del DataTable (overflow-x-auto fuerza overflow-y a
 // auto por el quirk de CSS, lo que clipearía el menú dentro de la celda).
 export default function RowActionMenu({ items, emptyTooltip, buttonLabel = 'Acción' }: Props) {
+  // buttonLabel='' → botón icon-only (solo el ojo), sin la palabra. Se gana
+  // ancho de columna; el label se conserva en aria-label por accesibilidad.
+  const iconOnly = buttonLabel === ''
   const [open, setOpen] = useState(false)
   const [coords, setCoords] = useState<{ top: number; right: number } | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
@@ -71,7 +74,8 @@ export default function RowActionMenu({ items, emptyTooltip, buttonLabel = 'Acci
         onClick={toggle}
         disabled={noItems}
         title={noItems ? emptyTooltip : undefined}
-        className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold ring-1 transition-colors ${
+        aria-label={buttonLabel || 'Acción'}
+        className={`inline-flex items-center gap-1.5 rounded-lg ${iconOnly ? 'px-2' : 'px-3'} py-1.5 text-sm font-semibold ring-1 transition-colors ${
           noItems
             ? 'cursor-not-allowed text-gray-300 ring-slate-200'
             : 'text-[#079783] ring-[#079783]/30 hover:bg-[#079783]/10 hover:ring-[#079783]/50'
@@ -81,7 +85,7 @@ export default function RowActionMenu({ items, emptyTooltip, buttonLabel = 'Acci
           <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
           <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
         </svg>
-        <span>{buttonLabel}</span>
+        {!iconOnly && <span>{buttonLabel}</span>}
         <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
         </svg>
