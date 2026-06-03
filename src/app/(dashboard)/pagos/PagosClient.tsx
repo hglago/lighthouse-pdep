@@ -933,7 +933,7 @@ export default function PagosClient({
       render: p => {
         const nombre = p.proveedores?.nombre
         if (!nombre) return <span className="text-gray-300">—</span>
-        return <span className="block max-w-[160px] truncate" title={nombre}>{nombre}</span>
+        return <span className="block max-w-[110px] truncate" title={nombre}>{nombre}</span>
       },
       type: 'text',
       className: 'hidden md:table-cell',
@@ -947,7 +947,7 @@ export default function PagosClient({
       render: p => {
         const limpio = cleanConceptoPago(p.concepto)
         return (
-          <div className="max-w-[180px]">
+          <div className="max-w-[120px]">
             <div className="text-sm font-medium text-gray-900 truncate" title={p.concepto}>
               {limpio}
             </div>
@@ -1157,6 +1157,7 @@ export default function PagosClient({
         <DataTable<PagoRow>
           rows={filteredPagosBase}
           getRowId={p => p.id}
+          dense
           initialSort={{ key: 'fecha', dir: 'desc' }}
           emptyMessage={search ? 'Sin resultados para esa búsqueda.' : 'No hay pagos registrados.'}
           columns={pagosRegistradosColumns}

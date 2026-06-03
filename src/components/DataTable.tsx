@@ -43,6 +43,10 @@ interface Props<T> {
    *  (hover / selected). Útil para indicadores tipo opacity-60 en filas
    *  "deshabilitadas". */
   rowClassName?: (row: T) => string
+  /** Compacta el padding de celdas (px-2 py-2 en vez de px-4 py-3) para
+   *  tablas con muchas columnas que deben entrar sin scroll horizontal.
+   *  Default false → no afecta tablas existentes. */
+  dense?: boolean
   className?: string
 }
 
@@ -116,8 +120,12 @@ export default function DataTable<T>({
   initialSort,
   onVisibleRowsChange,
   rowClassName,
+  dense = false,
   className = '',
 }: Props<T>) {
+  // Padding de celdas: compacto cuando dense, para que tablas anchas entren
+  // sin deslizador horizontal.
+  const cellPad = dense ? 'px-2 py-2' : 'px-4 py-3'
   // ── Search + per-column filters ────────────────────────────────────────────
   const [filters, setFilters] = useState<FilterMap>({})
   const activeFilterKeys = Object.keys(filters).filter(k => isFilterActive(filters[k]))
@@ -257,10 +265,11 @@ export default function DataTable<T>({
                     filter={filters[c.key] ?? null}
                     onFilterChange={(v) => setFilter(c.key, v)}
                     rows={searched}
+                    cellPad={cellPad}
                   />
                 ))}
                 {rowActions && (
-                  <th className="sticky right-0 z-10 border-l border-slate-200 bg-slate-100 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <th className={`sticky right-0 z-10 border-l border-slate-200 bg-slate-100 ${cellPad} text-right text-xs font-semibold uppercase tracking-wide text-slate-600`}>
                     Acción
                   </th>
                 )}
@@ -295,13 +304,13 @@ export default function DataTable<T>({
                         const align = c.align ?? 'left'
                         const alignClass = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
                         return (
-                          <td key={c.key} className={`px-4 py-3 text-sm text-gray-700 ${alignClass} ${c.className ?? ''}`}>
+                          <td key={c.key} className={`${cellPad} text-sm text-gray-700 ${alignClass} ${c.className ?? ''}`}>
                             {c.render ? c.render(row) : formatCell(c.accessor(row), c.type)}
                           </td>
                         )
                       })}
                       {rowActions && (
-                        <td className={`sticky right-0 z-10 border-l border-gray-200 px-4 py-3 ${isSel ? 'bg-emerald-50' : 'bg-white'}`}>
+                        <td className={`sticky right-0 z-10 border-l border-gray-200 ${cellPad} ${isSel ? 'bg-emerald-50' : 'bg-white'}`}>
                           <div className="flex justify-end gap-2">{rowActions(row)}</div>
                         </td>
                       )}
@@ -335,9 +344,10 @@ interface ColumnHeaderProps<T> {
   filter: FilterValue
   onFilterChange: (v: FilterValue) => void
   rows: T[]
+  cellPad: string
 }
 
-function ColumnHeader<T>({ column, activeKey, dir, onSort, filter, onFilterChange, rows }: ColumnHeaderProps<T>) {
+function ColumnHeader<T>({ column, activeKey, dir, onSort, filter, onFilterChange, rows, cellPad }: ColumnHeaderProps<T>) {
   const [open, setOpen] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const filterable = column.filterable !== false
@@ -357,7 +367,7 @@ function ColumnHeader<T>({ column, activeKey, dir, onSort, filter, onFilterChang
   if (!sortable && !filterable) {
     const align = column.align ?? 'left'
     return (
-      <th className={`px-4 py-3 text-${align} text-xs font-semibold uppercase tracking-wide text-slate-600 ${column.className ?? ''}`}>
+      <th className={`${cellPad} text-${align} text-xs font-semibold uppercase tracking-wide text-slate-600 ${column.className ?? ''}`}>
         {column.label}
       </th>
     )
@@ -385,7 +395,7 @@ function ColumnHeader<T>({ column, activeKey, dir, onSort, filter, onFilterChang
   const sortIconColor = sortActive ? 'text-[#079783]' : 'text-slate-400'
 
   return (
-    <th className={`px-4 py-3 text-${align} text-xs font-semibold uppercase tracking-wide text-slate-600 ${column.className ?? ''}`}>
+    <th className={`${cellPad} text-${align} text-xs font-semibold uppercase tracking-wide text-slate-600 ${column.className ?? ''}`}>
       <div ref={wrapperRef} className="relative inline-flex w-full">
         <div className={`inline-flex items-center gap-1.5 ${justify} w-full`}>
           {sortable ? (
