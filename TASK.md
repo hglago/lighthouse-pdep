@@ -2,9 +2,11 @@
 
 Tarea actual. Solo la activa. Cuando se cierre, reemplazar contenido.
 
-## Sin tarea activa — 2026-06-03
+## Sin tarea activa — 2026-06-03 (cierre)
 
-No hay tarea en curso. `main` en `HEAD 669bcdd`, working tree limpio, sincronizado con `origin/main`.
+No hay tarea en curso. `main` en `HEAD a306e4a`, working tree limpio, sincronizado con `origin/main`, **producción Vercel verificada en `a306e4a`**.
+
+Último trabajo de la sesión: compactar la tabla "Pagos registrados" para que entre sin scroll horizontal (props `dense`/`rowActionsLabel` en DataTable, botón de fila solo-ojo vía `buttonLabel=''` en RowActionMenu, Concepto/Proveedor más angostos). Ver `CONTEXT.md`. Incidente menor resuelto: el dev server llevaba ~5 días arriba con HMR muerto → reinicio limpio (kill node + rm .next + npm run dev).
 
 > Nota de reconciliación: el contenido anterior de este archivo describía la
 > **Etapa 4 Pagos RISA vs Tercero (P4b/P4c/P4d)** como en curso. Esa etapa ya

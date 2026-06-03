@@ -2,24 +2,30 @@
 
 Estado actual del proyecto. Lo que está hecho, lo que falta aplicar, dónde estamos.
 
-> Actualizado 2026-06-03 a `HEAD 669bcdd`. Reconcilia el atraso que tenían
+> Actualizado 2026-06-03 a `HEAD a306e4a`. Reconcilia el atraso que tenían
 > CONTEXT/TASK (congelados en el checkpoint 2026-05-24, Etapa 4 P4b pendiente).
 > Toda la Etapa 4 y bastante trabajo posterior ya está cerrado y en `main`.
 
 ## Dónde estamos
 
-- **Branch**: `main` · **HEAD**: `669bcdd` · **Working tree**: limpio · sincronizado con `origin/main`.
+- **Branch**: `main` · **HEAD**: `a306e4a` · **Working tree**: limpio · sincronizado con `origin/main` · **producción Vercel verificada en `a306e4a`**.
 - **Tag estable**: `v0.2.0-risa-fondos` (2026-05-23). Para volver al hito: `git reset --hard v0.2.0-risa-fondos`.
 - **Remoto**: `https://github.com/hglago/lighthouse-pdep.git`.
 
 Últimos commits:
 ```
+a306e4a fix: boton de accion solo-ojo en Pagos registrados y restaurar header Accion
+27a743b fix: rowActionsLabel configurable en DataTable
+a9cb223 fix: compactar tabla de Pagos registrados (dense + columnas angostas)
+03c3e5a docs: reconciliar CONTEXT y TASK al estado real
 669bcdd docs: agregar readme descriptivo del proyecto
-468ebb7 fix: corregir comprobantes y build de reportes
-e939d7f fix: controlar errores en comprobantes de gasto
-167ca42 feat: mejorar fondos y detalle operativo de terceros
-38f4c70 feat: aplicar identidad Lighthouse y dashboard ejecutivo
 ```
+
+### UI: tabla "Pagos registrados" compactada (2026-06-03)
+Objetivo: entrar sin scroll horizontal y dejar Monto visible. Cambios reutilizables:
+- `DataTable`: prop opcional `dense` (padding `px-2 py-2`) y `rowActionsLabel` (texto del header de acciones; `''` → sr-only). Default sin cambios → otras tablas intactas.
+- `RowActionMenu`: con `buttonLabel=''` el botón queda **icon-only** (solo el ojo), `aria-label` por accesibilidad. Default `'Acción'`.
+- `pagos/PagosClient.tsx`: tabla con `dense`, Concepto `max-w-120`, Proveedor `max-w-110`, botón de fila solo-ojo. Header de columna sigue diciendo "Acción".
 
 ## Decisión de modelo financiero (vigente)
 
