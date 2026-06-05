@@ -2,30 +2,38 @@
 
 Estado actual del proyecto. Lo que está hecho, lo que falta aplicar, dónde estamos.
 
-> Actualizado 2026-06-03 a `HEAD a306e4a`. Reconcilia el atraso que tenían
-> CONTEXT/TASK (congelados en el checkpoint 2026-05-24, Etapa 4 P4b pendiente).
-> Toda la Etapa 4 y bastante trabajo posterior ya está cerrado y en `main`.
+> Actualizado 2026-06-05 a `HEAD 3e45c28`. (La reconciliación grande del atraso
+> de CONTEXT/TASK fue el 2026-06-03; ver git history para el detalle.)
 
 ## Dónde estamos
 
-- **Branch**: `main` · **HEAD**: `a306e4a` · **Working tree**: limpio · sincronizado con `origin/main` · **producción Vercel verificada en `a306e4a`**.
+- **Branch**: `main` · **HEAD**: `3e45c28` · **Working tree**: limpio · sincronizado con `origin/main` · **producción Vercel verificada en `3e45c28`**.
 - **Tag estable**: `v0.2.0-risa-fondos` (2026-05-23). Para volver al hito: `git reset --hard v0.2.0-risa-fondos`.
 - **Remoto**: `https://github.com/hglago/lighthouse-pdep.git`.
 
 Últimos commits:
 ```
+3e45c28 feat: refinar dashboard ejecutivo y detalle de aportes por socio
+8610908 fix: compactar tabla de Gastos y boton de accion solo-ojo
 a306e4a fix: boton de accion solo-ojo en Pagos registrados y restaurar header Accion
 27a743b fix: rowActionsLabel configurable en DataTable
 a9cb223 fix: compactar tabla de Pagos registrados (dense + columnas angostas)
-03c3e5a docs: reconciliar CONTEXT y TASK al estado real
-669bcdd docs: agregar readme descriptivo del proyecto
 ```
 
-### UI: tabla "Pagos registrados" compactada (2026-06-03)
-Objetivo: entrar sin scroll horizontal y dejar Monto visible. Cambios reutilizables:
+### UI: tablas compactas sin scroll horizontal (2026-06-03/05)
+Patrón aplicado en **Pagos registrados** y **Gastos**. Piezas reutilizables:
 - `DataTable`: prop opcional `dense` (padding `px-2 py-2`) y `rowActionsLabel` (texto del header de acciones; `''` → sr-only). Default sin cambios → otras tablas intactas.
 - `RowActionMenu`: con `buttonLabel=''` el botón queda **icon-only** (solo el ojo), `aria-label` por accesibilidad. Default `'Acción'`.
-- `pagos/PagosClient.tsx`: tabla con `dense`, Concepto `max-w-120`, Proveedor `max-w-110`, botón de fila solo-ojo. Header de columna sigue diciendo "Acción".
+- Columnas de texto (Concepto/Proveedor) con `max-w` + `truncate` + `title`.
+- El header de la columna sigue diciendo "Acción" (el usuario quiere el texto en el header, NO en el botón).
+
+### Dashboard ejecutivo refinado (2026-06-05, commit 3e45c28)
+- Card duplicada de uplift eliminada (queda "Uplift informado" en fila Financieros, ojo → modal por proveedor).
+- Tipografía de cards ~20% más chica (un escalón Tailwind) — look minimalista.
+- "Financiación pendiente": lista cada tercero con su importe **incluso $0** (page.tsx completa los financiadores activos sin movimientos, ya que `v_saldos_financiadores` solo trae los que tienen) + fila **Total en negrita** por moneda.
+- Grid resumen a 4 columnas (`xl:grid-cols-4`); card "Aportes por aportante" → **"Aportes por socio"**.
+- Modal "Detalle de aportes" agrupado por socio (subtotal en negrita; columnas Fecha/Código/Moneda/Monto).
+- **Deep-link de aporte**: el código APO-### en el modal linkea a `/fondos?aporte=APO-###`, que abre el modal de detalle (nuevo: `fondos/page.tsx` acepta `searchParams.aporte` → prop `aporteInicial` de `FondosClient`).
 
 ## Decisión de modelo financiero (vigente)
 

@@ -2,11 +2,13 @@
 
 Tarea actual. Solo la activa. Cuando se cierre, reemplazar contenido.
 
-## Sin tarea activa — 2026-06-03 (cierre)
+## Sin tarea activa — 2026-06-05 (cierre)
 
-No hay tarea en curso. `main` en `HEAD a306e4a`, working tree limpio, sincronizado con `origin/main`, **producción Vercel verificada en `a306e4a`**.
+No hay tarea en curso. `main` en `HEAD 3e45c28`, working tree limpio, sincronizado con `origin/main`, **producción Vercel verificada en `3e45c28`**.
 
-Último trabajo de la sesión: compactar la tabla "Pagos registrados" para que entre sin scroll horizontal (props `dense`/`rowActionsLabel` en DataTable, botón de fila solo-ojo vía `buttonLabel=''` en RowActionMenu, Concepto/Proveedor más angostos). Ver `CONTEXT.md`. Incidente menor resuelto: el dev server llevaba ~5 días arriba con HMR muerto → reinicio limpio (kill node + rm .next + npm run dev).
+Último trabajo: (1) tabla Gastos compactada sin scroll + botón solo-ojo (`8610908`); (2) dashboard refinado: card uplift duplicada eliminada, tipografía -20%, Financiación pendiente con terceros a $0 y Total en negrita, grid 4 columnas, "Aportes por socio", detalle de aportes agrupado por socio con deep-link APO → `/fondos?aporte=` (`3e45c28`). Ver `CONTEXT.md`.
+
+Recordatorio operativo: si "no se ven los cambios" en localhost, primero revisar la antigüedad del dev server (HMR muere tras días/suspensión) — reinicio limpio antes de tocar código.
 
 > Nota de reconciliación: el contenido anterior de este archivo describía la
 > **Etapa 4 Pagos RISA vs Tercero (P4b/P4c/P4d)** como en curso. Esa etapa ya
