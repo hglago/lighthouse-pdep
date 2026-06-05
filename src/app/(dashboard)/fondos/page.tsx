@@ -8,7 +8,13 @@ import {
   anularAporteSocio,
 } from './actions'
 
-export default async function FondosPage() {
+export default async function FondosPage({
+  searchParams,
+}: {
+  // Deep-link (2026-06-05): /fondos?aporte=APO-### abre el modal de detalle
+  // de ese aporte al cargar (usado desde el dashboard).
+  searchParams?: { aporte?: string }
+}) {
   const supabase = createClient()
 
   const authResult = await supabase.auth.getUser()
@@ -255,6 +261,7 @@ export default async function FondosPage() {
         posicionGlobal={posicionGlobal}
         imputaciones={imputaciones}
         movimientosFinanciacion={movimientosFinanciacion}
+        aporteInicial={searchParams?.aporte ?? null}
         role={role}
         onCreateFondo={createFondo}
         onUpdateFondo={updateFondo}

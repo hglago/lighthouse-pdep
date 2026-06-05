@@ -79,6 +79,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
     saldosTercerosResult,
     gastosEnPeriodoResult,
     upliftItemsResult,
+    financiadoresResult,
   ] = await Promise.all([
     // 1. Aportes en período (con detalle para modal)
     supabase
@@ -140,6 +141,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
     supabase
       .from('reportes_dypsa')
       .select('id, estado, fecha_generacion'),
+
+    // 10. Terceros activos (para mostrarlos en la card de financiación
+    // aunque tengan saldo $0 — la view solo trae los que tienen movimientos).
+    supabase
+      .from('financiadores')
+      .select('nombre')
+      .is('deleted_at', null),
   ])
 
   // ── Agregar datos ──
@@ -215,14 +223,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
     saldoMPAgg.set(moneda, (saldoMPAgg.get(moneda) ?? 0) + (Number(f.saldo_actual) || 0))
   }
 
-  // KPI: Saldo terceros
-  const saldoTerceros = (saldosTercerosResult.data ?? [])
-    .filter(t => Number(t.saldo_pendiente) !== 0)
-    .map(t => ({
-      nombre: t.financiador_nombre as string,
-      moneda: t.moneda as string,
-      saldo: Number(t.saldo_pendiente) || 0,
-    }))
+  // KPI: Saldo terceros — incluye TODOS los terceros activos, también los de
+  // saldo $0 (pedido 2026-06-05). La view solo trae terceros con movimientos,
+  // así que los que no figuran en ella se agregan con saldo 0 en ARS.
+  const saldosView = (saldosTercerosResult.data ?? []).map(t => ({
+    nombre: t.financiador_nombre as string,
+    moneda: t.moneda as string,
+    saldo: Number(t.saldo_pendiente) || 0,
+  }))
+  const tercerosConMovimientos = new Set(saldosView.map(t => t.nombre))
+  const saldoTerceros = [
+    ...saldosView,
+    ...(financiadoresResult.data ?? [])
+      .filter(f => !tercerosConMovimientos.has(f.nombre as string))
+      .map(f => ({ nombre: f.nombre as string, moneda: 'ARS', saldo: 0 })),
+  ].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
 
   // Secciones: gastos en período
   const gastosData = gastosEnPeriodoResult.data ?? []

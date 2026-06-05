@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useRef, useMemo } from 'react'
+import { useState, useTransition, useRef, useMemo, useEffect } from 'react'
 import type { Fondo, UserRole, TipoAporte, FondoEstado, AporteFondo, Socio, Financiador, SaldoFinanciadorRow, MovimientoTipo, DestinoAporte, PosicionGlobalRisaRow, AporteImputacionDetalleRow, MovimientoFinanciacion } from '@/types'
 import type {
   AportePayload, FondoActionResult, FondoDepsResult,
@@ -173,6 +173,9 @@ interface Props {
   // UX-DETAILS (2026-05-25): movimientos_financiacion para "Ver detalle" de
   // tercero. Volumen bajo: el cliente filtra por financiador_id al abrir modal.
   movimientosFinanciacion: MovimientoFinanciacion[]
+  // Deep-link (2026-06-05): codigo APO-### para abrir el modal de detalle de
+  // ese aporte al montar (viene de /fondos?aporte=...). null = sin deep-link.
+  aporteInicial?: string | null
   role: UserRole
   onCreateFondo: (data: { nombre: string; moneda: string; monto_inicial: number; descripcion: string | null }) => Promise<void>
   onUpdateFondo: (id: string, data: { nombre: string; descripcion: string | null; estado: FondoEstado }) => Promise<void>
@@ -201,6 +204,7 @@ export default function FondosClient({
   posicionGlobal,
   imputaciones,
   movimientosFinanciacion,
+  aporteInicial = null,
   role,
   onCreateFondo,
   onUpdateFondo,
@@ -237,6 +241,15 @@ export default function FondosClient({
   const [aportesCollapsed, setAportesCollapsed] = useState(true)
   const [terceroDetalleId, setTerceroDetalleId] = useState<string | null>(null)
   const [aporteDetalleId, setAporteDetalleId] = useState<string | null>(null)
+
+  // Deep-link (2026-06-05): /fondos?aporte=APO-### abre el detalle al montar.
+  // Solo al primer render; después el modal se maneja con estado local.
+  useEffect(() => {
+    if (!aporteInicial) return
+    const found = aportes.find(a => a.codigo === aporteInicial)
+    if (found) setAporteDetalleId(found.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const canWrite = role === 'admin' || role === 'contador'
   const canDelete = role === 'admin'

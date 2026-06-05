@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState, useEffect, useCallback } from 'react'
 
@@ -123,10 +124,24 @@ export default function DashboardClient({ data }: Props) {
 
   const pendN = kpis.gastosPendientes.reduce((s, g) => s + g.cantidad, 0)
   const needN = kpis.necesidadSemanal.reduce((s, n) => s + n.cantidad, 0)
+  // Total de financiación pendiente por moneda (fila "Total" de la card).
+  const totalTerceros = Array.from(
+    kpis.saldoTerceros.reduce((m, t) => m.set(t.moneda, (m.get(t.moneda) ?? 0) + t.saldo), new Map<string, number>())
+  )
   const totalAportMon = new Map(kpis.totalAportado.map(a => [a.moneda, a.total]))
   const perLabel = per.preset === 'custom' ? `${fmtD(per.desde)} — ${fmtD(per.hasta)}` : PL_LONG[per.preset] ?? per.preset
   const topTipo = sec.gastosPorTipo.slice(0, TOP_N)
   const topProv = sec.gastosPorProveedor.slice(0, TOP_N)
+  // Detalle de aportes agrupado por socio (modal). Mantiene el orden
+  // fecha desc dentro de cada grupo; grupos ordenados alfabéticamente.
+  const aportesPorSocio = Array.from(
+    det.aportes.reduce((m, a) => {
+      const k = a.aportante || '—'
+      if (!m.has(k)) m.set(k, [] as typeof det.aportes)
+      m.get(k)!.push(a)
+      return m
+    }, new Map<string, typeof det.aportes>())
+  ).sort((x, y) => x[0].localeCompare(y[0], 'es'))
 
   return (
     <div className="relative mx-auto max-w-[1440px] space-y-4 px-2 py-2 sm:space-y-5 sm:px-3">
@@ -140,8 +155,8 @@ export default function DashboardClient({ data }: Props) {
         <img src="/brand/lighthouse-logo-horizontal.png" alt="" className="pointer-events-none absolute right-3 top-1/2 h-10 -translate-y-1/2 select-none opacity-[0.06] sm:h-14 sm:right-4" aria-hidden="true" />
         <div className="relative flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-xl font-bold tracking-tight sm:text-2xl" style={{ color: C.blueDeep }}>Dashboard</h1>
-            <p className="text-xs text-gray-500 sm:text-sm">Vista operativa del proyecto</p>
+            <h1 className="text-lg font-bold tracking-tight sm:text-xl" style={{ color: C.blueDeep }}>Dashboard</h1>
+            <p className="text-[11px] text-gray-500 sm:text-xs">Vista operativa del proyecto</p>
           </div>
           <span className="self-start rounded-full px-3 py-1 text-[11px] font-semibold text-white shadow-sm sm:self-auto sm:text-xs" style={{ backgroundColor: C.teal }}>{perLabel}</span>
         </div>
@@ -194,41 +209,49 @@ export default function DashboardClient({ data }: Props) {
         <Fin c={C.teal} label="Posición global RISA">
           {kpis.posicionGlobal.length > 0 ? kpis.posicionGlobal.map(pg => (
             <div key={pg.moneda}>
-              <p className={`text-xl font-bold tabular-nums sm:text-2xl ${tone(pg.pg)}`}>{fmt(pg.pg, pg.moneda)}</p>
-              <p className="text-xs text-gray-500 sm:text-sm">MP <span className={tone(pg.mp)}>{fmt(pg.mp, pg.moneda)}</span> · MT <span className={tone(pg.mt)}>{fmt(pg.mt, pg.moneda)}</span></p>
+              <p className={`text-base font-bold tabular-nums sm:text-xl ${tone(pg.pg)}`}>{fmt(pg.pg, pg.moneda)}</p>
+              <p className="text-[10px] text-gray-500 sm:text-xs">MP <span className={tone(pg.mp)}>{fmt(pg.mp, pg.moneda)}</span> · MT <span className={tone(pg.mt)}>{fmt(pg.mt, pg.moneda)}</span></p>
             </div>
           )) : <Nil />}
         </Fin>
         <Fin c={C.blueDeep} label="Saldo medios propios">
-          {kpis.saldoMP.map(s => <p key={s.moneda} className={`text-xl font-bold tabular-nums sm:text-2xl ${tone(s.total)}`}>{fmt(s.total, s.moneda)}</p>)}
+          {kpis.saldoMP.map(s => <p key={s.moneda} className={`text-base font-bold tabular-nums sm:text-xl ${tone(s.total)}`}>{fmt(s.total, s.moneda)}</p>)}
           {kpis.saldoMP.length === 0 && <Nil />}
         </Fin>
         <Fin c={C.violet} label="Financiación pendiente">
           {kpis.saldoTerceros.length > 0 ? (
-            <div className="space-y-1.5">{kpis.saldoTerceros.map((t, i) => (
-              <div key={i} className="flex justify-between items-baseline gap-2">
-                <span className="text-xs text-gray-500 truncate sm:text-sm">{t.nombre}</span>
-                <span className={`text-sm font-bold tabular-nums whitespace-nowrap sm:text-base ${t.saldo > 0 ? 'text-[#C32421]' : tone(t.saldo)}`}>{fmt(t.saldo, t.moneda)}</span>
-              </div>
-            ))}</div>
+            <div className="space-y-1.5">
+              {kpis.saldoTerceros.map((t, i) => (
+                <div key={i} className="flex justify-between items-baseline gap-2">
+                  <span className="text-[10px] text-gray-500 truncate sm:text-xs">{t.nombre}</span>
+                  <span className={`text-xs tabular-nums whitespace-nowrap sm:text-sm ${t.saldo > 0 ? 'text-[#C32421]' : tone(t.saldo)}`}>{fmt(t.saldo, t.moneda)}</span>
+                </div>
+              ))}
+              {totalTerceros.map(([m, total]) => (
+                <div key={m} className="flex justify-between items-baseline gap-2 border-t border-gray-100 pt-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-gray-600 sm:text-xs">Total</span>
+                  <span className={`text-sm font-bold tabular-nums whitespace-nowrap sm:text-base ${total > 0 ? 'text-[#C32421]' : tone(total)}`}>{fmt(total, m)}</span>
+                </div>
+              ))}
+            </div>
           ) : <Ok>Sin deuda</Ok>}
         </Fin>
         <div className="relative rounded-xl bg-white/95 p-4 shadow-sm backdrop-blur-sm sm:p-5" style={{ borderTop: `3px solid ${C.amber}` }}>
           {kpis.upliftInformado.total > 0 && <div className="absolute right-2 top-2"><EyeBtn onClick={() => setModal('upliftProv')} preview={[fmt(kpis.upliftInformado.total, 'ARS'), `${kpis.upliftInformado.proveedores} proveedores · ${kpis.upliftInformado.gastos} gastos`, ...(kpis.upliftPorProveedor[0] ? [`1° ${kpis.upliftPorProveedor[0].proveedor}`] : []), 'Click para ver detalle']} /></div>}
-          <p className="text-xs font-bold uppercase tracking-wide sm:text-sm" style={{ color: C.amber }}>Uplift informado</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide sm:text-xs" style={{ color: C.amber }}>Uplift informado</p>
           <div className="mt-3 space-y-2">
             {kpis.upliftInformado.total > 0 ? (
               <>
-                <p className={`text-xl font-bold tabular-nums sm:text-2xl ${tone(kpis.upliftInformado.total)}`}>{fmt(kpis.upliftInformado.total, 'ARS')}</p>
-                <p className="text-xs text-gray-500 sm:text-sm">{kpis.upliftInformado.gastos} gasto{kpis.upliftInformado.gastos !== 1 ? 's' : ''} · {kpis.upliftInformado.proveedores} proveedor{kpis.upliftInformado.proveedores !== 1 ? 'es' : ''}</p>
+                <p className={`text-base font-bold tabular-nums sm:text-xl ${tone(kpis.upliftInformado.total)}`}>{fmt(kpis.upliftInformado.total, 'ARS')}</p>
+                <p className="text-[10px] text-gray-500 sm:text-xs">{kpis.upliftInformado.gastos} gasto{kpis.upliftInformado.gastos !== 1 ? 's' : ''} · {kpis.upliftInformado.proveedores} proveedor{kpis.upliftInformado.proveedores !== 1 ? 'es' : ''}</p>
               </>
-            ) : <p className="text-base text-gray-400 sm:text-lg">Sin uplift informado</p>}
+            ) : <p className="text-sm text-gray-400 sm:text-base">Sin uplift informado</p>}
           </div>
         </div>
       </div>
 
-      {/* Secciones resumen (cards con ojo → modal) */}
-      <div className="relative z-10 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-3">
+      {/* Secciones resumen (cards con ojo → modal) — 4 por fila en desktop */}
+      <div className="relative z-10 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
         <SummaryCard c={C.blueDeep} label="Ranking por tipo de gasto"
           totals={sec.gastosPorTipo} sub={`${sec.gastosPorTipo.length} tipo${sec.gastosPorTipo.length !== 1 ? 's' : ''}`}
           onDetail={() => setModal('tipo')}
@@ -237,21 +260,14 @@ export default function DashboardClient({ data }: Props) {
           totals={sec.gastosPorProveedor} sub={`${sec.gastosPorProveedor.length} proveedor${sec.gastosPorProveedor.length !== 1 ? 'es' : ''}`}
           onDetail={() => setModal('proveedor')}
           preview={[`${sec.gastosPorProveedor.length} proveedores`, ...(topProv[0] ? [`1° ${topProv[0].proveedor}: ${fmt(topProv[0].total, topProv[0].moneda)}`] : []), 'Click para ver detalle']} />
-        <SummaryCard c={C.teal} label="Aportes por aportante"
-          totals={sec.aportesPorAportante} sub={`${sec.aportesPorAportante.length} aportante${sec.aportesPorAportante.length !== 1 ? 's' : ''}`}
+        <SummaryCard c={C.teal} label="Aportes por socio"
+          totals={sec.aportesPorAportante} sub={`${sec.aportesPorAportante.length} socio${sec.aportesPorAportante.length !== 1 ? 's' : ''}`}
           onDetail={() => setModal('aportes')}
-          preview={[`${sec.aportesPorAportante.length} aportantes`, ...(sec.aportesPorAportante[0] ? [`1° ${sec.aportesPorAportante[0].aportante}: ${fmt(sec.aportesPorAportante[0].total, sec.aportesPorAportante[0].moneda)}`] : []), 'Click para ver detalle']} />
+          preview={[`${sec.aportesPorAportante.length} socios`, ...(sec.aportesPorAportante[0] ? [`1° ${sec.aportesPorAportante[0].aportante}: ${fmt(sec.aportesPorAportante[0].total, sec.aportesPorAportante[0].moneda)}`] : []), 'Click para ver detalle']} />
         <SummaryCard c={C.blueMid} label="Gastos por estado"
           totals={sec.gastosPorEstado} sub={`${sec.gastosPorEstado.length} estado${sec.gastosPorEstado.length !== 1 ? 's' : ''}`}
           onDetail={() => setModal('estado')}
           preview={[`${sec.gastosPorEstado.length} estados`, ...(sec.gastosPorEstado[0] ? [`Mayor: ${sec.gastosPorEstado[0].estado} (${fmt(sec.gastosPorEstado[0].total, sec.gastosPorEstado[0].moneda)})`] : []), 'Click para ver detalle']} />
-        {kpis.upliftDetalle.length > 0 && (
-          <SummaryCard c={C.amber} label="Gastos con uplift informado"
-            totals={[{ moneda: 'ARS', total: kpis.upliftInformado.total }]}
-            sub={`${kpis.upliftInformado.gastos} gasto${kpis.upliftInformado.gastos !== 1 ? 's' : ''} · ${kpis.upliftInformado.proveedores} proveedor${kpis.upliftInformado.proveedores !== 1 ? 'es' : ''}`}
-            onDetail={() => setModal('uplift')}
-            preview={[`${kpis.upliftInformado.gastos} gastos con uplift`, `${kpis.upliftInformado.proveedores} proveedores`, 'Click para ver detalle']} />
-        )}
       </div>
 
       {/* ── Modales ── */}
@@ -271,8 +287,32 @@ export default function DashboardClient({ data }: Props) {
 
       <Modal open={modal === 'aportes'} onClose={() => setModal(null)} title="Detalle de aportes">
         {det.aportes.length === 0 ? <Empty /> : (
-          <ModalTable cols={['Código', 'Aportante', 'Fecha', 'Moneda', 'Monto']} rightFrom={4}
-            rows={det.aportes.map(a => [a.codigo || '—', a.aportante, fmtD(a.fecha), a.moneda, fmt(a.monto, a.moneda)])} />
+          <div className="space-y-5">
+            {aportesPorSocio.map(([socio, aportes]) => {
+              const sub = new Map<string, number>()
+              for (const a of aportes) sub.set(a.moneda, (sub.get(a.moneda) ?? 0) + a.monto)
+              return (
+                <div key={socio}>
+                  <div className="mb-1 flex items-baseline justify-between gap-2 border-b border-gray-200 pb-1">
+                    <h4 className="text-xs font-bold uppercase tracking-wide" style={{ color: C.teal }}>{socio}</h4>
+                    <span className="text-sm font-bold tabular-nums whitespace-nowrap text-gray-900">
+                      {Array.from(sub.entries()).map(([m, t]) => fmt(t, m)).join(' · ')}
+                    </span>
+                  </div>
+                  <ModalTable cols={['Fecha', 'Código', 'Moneda', 'Monto']} rightFrom={3}
+                    rows={aportes.map(a => [
+                      fmtD(a.fecha),
+                      // Deep-link al detalle del aporte en /fondos.
+                      a.codigo
+                        ? <Link key="c" href={`/fondos?aporte=${encodeURIComponent(a.codigo)}`} className="font-mono text-xs text-[#079783] underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Ver detalle del aporte">{a.codigo}</Link>
+                        : '—',
+                      a.moneda,
+                      fmt(a.monto, a.moneda),
+                    ])} />
+                </div>
+              )
+            })}
+          </div>
         )}
       </Modal>
 
@@ -280,13 +320,6 @@ export default function DashboardClient({ data }: Props) {
         {sec.gastosPorEstado.length === 0 ? <Empty /> : (
           <ModalTable cols={['Estado', 'Moneda', 'Cant.', 'Total']} rightFrom={2}
             rows={sec.gastosPorEstado.map(e => [e.estado, e.moneda, String(e.cantidad), fmt(e.total, e.moneda)])} />
-        )}
-      </Modal>
-
-      <Modal open={modal === 'uplift'} onClose={() => setModal(null)} title="Gastos con uplift informado">
-        {kpis.upliftDetalle.length === 0 ? <Empty /> : (
-          <ModalTable cols={['Informe', 'Proveedor', 'Tipo', 'Monto base', '% uplift', '$ uplift', 'Informado']} rightFrom={3}
-            rows={kpis.upliftDetalle.map(u => [u.informeCodigo, u.proveedor, u.tipoGasto, fmt(u.montoBase, u.moneda), <Chip key="p">{u.pctUplift.toFixed(1)}%</Chip>, <span key="u" className="font-bold" style={{ color: C.amber }}>{fmt(u.montoUplift, u.moneda)}</span>, fmt(u.montoInformado, u.moneda)])} />
         )}
       </Modal>
 
@@ -311,17 +344,19 @@ export default function DashboardClient({ data }: Props) {
 
 // ── Sub-components ──
 
-function Money({ v, m }: { v: number; m: string }) { return <p className={`text-2xl font-bold tabular-nums sm:text-3xl ${tone(v)}`}>{fmt(v, m)}</p> }
-function Nil() { return <p className="text-2xl font-bold text-gray-300 sm:text-3xl">—</p> }
-function Ok({ children }: { children: string }) { return <p className="text-xl font-bold sm:text-2xl" style={{ color: C.green }}>{children}</p> }
+// TIPO-20 (2026-06-05): tipografía del dashboard reducida ~20% (un escalón
+// de Tailwind) para un look más profesional y minimalista.
+function Money({ v, m }: { v: number; m: string }) { return <p className={`text-xl font-bold tabular-nums sm:text-2xl ${tone(v)}`}>{fmt(v, m)}</p> }
+function Nil() { return <p className="text-xl font-bold text-gray-300 sm:text-2xl">—</p> }
+function Ok({ children }: { children: string }) { return <p className="text-base font-bold sm:text-xl" style={{ color: C.green }}>{children}</p> }
 
 function Kpi({ c, label, sub, children }: { c: string; label: string; sub: string; children: React.ReactNode }) {
   return (
     <div className="relative overflow-hidden rounded-xl bg-white/95 p-4 shadow-sm backdrop-blur-sm sm:p-5">
       <div className="absolute left-0 top-0 h-full w-1.5 rounded-l-xl" style={{ backgroundColor: c }} />
-      <p className="pl-3 text-xs font-bold uppercase tracking-wide sm:text-sm" style={{ color: c }}>{label}</p>
+      <p className="pl-3 text-[10px] font-bold uppercase tracking-wide sm:text-xs" style={{ color: c }}>{label}</p>
       <div className="mt-2 pl-3 space-y-0.5 sm:mt-3">{children}</div>
-      <p className="mt-2 pl-3 text-xs text-gray-500 sm:mt-3 sm:text-sm">{sub}</p>
+      <p className="mt-2 pl-3 text-[10px] text-gray-500 sm:mt-3 sm:text-xs">{sub}</p>
     </div>
   )
 }
@@ -329,7 +364,7 @@ function Kpi({ c, label, sub, children }: { c: string; label: string; sub: strin
 function Fin({ c, label, children }: { c: string; label: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl bg-white/95 p-4 shadow-sm backdrop-blur-sm sm:p-5" style={{ borderTop: `3px solid ${c}` }}>
-      <p className="text-xs font-bold uppercase tracking-wide sm:text-sm" style={{ color: c }}>{label}</p>
+      <p className="text-[10px] font-bold uppercase tracking-wide sm:text-xs" style={{ color: c }}>{label}</p>
       <div className="mt-3 space-y-2">{children}</div>
     </div>
   )
@@ -344,14 +379,14 @@ function SummaryCard({ c, label, totals, sub, onDetail, preview }: {
     <div className="relative overflow-hidden rounded-xl bg-white/95 p-4 shadow-sm backdrop-blur-sm sm:p-5">
       <div className="absolute left-0 top-0 h-full w-1.5 rounded-l-xl" style={{ backgroundColor: c }} />
       <div className="flex items-start justify-between pl-3">
-        <p className="text-xs font-bold uppercase tracking-wide sm:text-sm" style={{ color: c }}>{label}</p>
+        <p className="text-[10px] font-bold uppercase tracking-wide sm:text-xs" style={{ color: c }}>{label}</p>
         <EyeBtn onClick={onDetail} preview={preview} />
       </div>
       <div className="mt-2 pl-3 space-y-0.5 sm:mt-3">
-        {Array.from(grandTotal.entries()).map(([m, t]) => <p key={m} className={`text-xl font-bold tabular-nums sm:text-2xl ${tone(t)}`}>{fmt(t, m)}</p>)}
-        {grandTotal.size === 0 && <p className="text-xl font-bold text-gray-300">—</p>}
+        {Array.from(grandTotal.entries()).map(([m, t]) => <p key={m} className={`text-base font-bold tabular-nums sm:text-xl ${tone(t)}`}>{fmt(t, m)}</p>)}
+        {grandTotal.size === 0 && <p className="text-base font-bold text-gray-300">—</p>}
       </div>
-      <p className="mt-2 pl-3 text-xs text-gray-500 sm:mt-3 sm:text-sm">{sub}</p>
+      <p className="mt-2 pl-3 text-[10px] text-gray-500 sm:mt-3 sm:text-xs">{sub}</p>
     </div>
   )
 }
