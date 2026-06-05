@@ -513,8 +513,8 @@ export default function GastosClient({
       accessor: g => g.descripcion,
       render: g => (
         <div>
-          <div className="flex items-center gap-1.5 max-w-xs">
-            <span className="text-sm font-medium text-gray-900 truncate min-w-0">{g.descripcion}</span>
+          <div className="flex items-center gap-1.5 max-w-[160px]">
+            <span className="text-sm font-medium text-gray-900 truncate min-w-0" title={g.descripcion}>{g.descripcion}</span>
             {g.comprobante_path && (
               <button
                 type="button"
@@ -572,7 +572,11 @@ export default function GastosClient({
       key: 'proveedor',
       label: 'Proveedor',
       accessor: g => g.proveedores?.nombre ?? '',
-      render: g => g.proveedores?.nombre ?? <span className="text-gray-300">—</span>,
+      render: g => {
+        const nombre = g.proveedores?.nombre
+        if (!nombre) return <span className="text-gray-300">—</span>
+        return <span className="block max-w-[110px] truncate" title={nombre}>{nombre}</span>
+      },
       type: 'text',
       className: 'hidden md:table-cell',
     },
@@ -1541,6 +1545,7 @@ export default function GastosClient({
             rows={filteredGastosBase}
             getRowId={g => g.id}
             selectable={canWrite}
+            dense
             initialSort={{ key: 'fecha', dir: 'desc' }}
             emptyMessage={searchGastos ? 'Sin resultados para esa búsqueda.' : 'No hay gastos registrados.'}
             onVisibleRowsChange={setVisibleGastos}
@@ -1606,7 +1611,7 @@ export default function GastosClient({
                 }
               }
               // rechazado: sin items ni tooltip
-              return <RowActionMenu items={items} emptyTooltip={tooltipBloqueo} />
+              return <RowActionMenu items={items} emptyTooltip={tooltipBloqueo} buttonLabel="" />
             } : undefined}
             bulkActions={canWrite ? (selectedIds, clear) => {
               const ids = Array.from(selectedIds)
