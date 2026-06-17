@@ -236,6 +236,11 @@ export async function updateGasto(id: string, data: GastoPayload) {
   if (!guard.ok) throw new Error(guard.error)
 
   const supabase = createClient()
+  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir, si no
+  // el UPDATE sale sin auth → auth.uid() NULL → RLS rechaza.
+  const { data: { user: _u } } = await supabase.auth.getUser()
+  if (!_u) throw new Error('No autenticado')
+
   const normalized = normalizeGasto(data)
   if ('error' in normalized) {
     throw new Error(normalized.error)
@@ -307,6 +312,10 @@ export async function deleteGasto(id: string) {
   if (!guard.ok) throw new Error(guard.error)
 
   const supabase = createClient()
+  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir, si no
+  // el UPDATE sale sin auth → auth.uid() NULL → RLS rechaza.
+  const { data: { user: _u } } = await supabase.auth.getUser()
+  if (!_u) throw new Error('No autenticado')
 
   // GASTOS-UX: bloquear si el gasto tiene cualquier pago asociado (vivo o anulado),
   // para no dejar pagos huérfanos apuntando a un gasto borrado.
@@ -402,6 +411,12 @@ export async function updateGastoRecurrente(id: string, data: GastoRecurrentePay
     if (!guard.ok) return guard
 
     const supabase = createClient()
+    // @supabase/ssr no adjunta el access token a las queries hasta que la sesión
+    // se hidrata con getUser(). Sin esto, el UPDATE sale sin auth → auth.uid() NULL
+    // → get_my_role() NULL → el WITH CHECK de la RLS rechaza ("new row violates...").
+    const authResult = await supabase.auth.getUser()
+    if (!authResult.data?.user) return { ok: false, error: 'No autenticado' }
+
     // G1: el fondo no es editable. Quitar del update para conservar el existente.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { fondo_id: _ignoredFondoId, ...rest } = data
@@ -439,6 +454,12 @@ export async function deleteGastoRecurrente(id: string): Promise<RecurrenteActio
     if (!guard.ok) return guard
 
     const supabase = createClient()
+    // @supabase/ssr no adjunta el access token a las queries hasta que la sesión
+    // se hidrata con getUser(). Sin esto, el UPDATE sale sin auth → auth.uid() NULL
+    // → get_my_role() NULL → el WITH CHECK de la RLS rechaza ("new row violates...").
+    const authResult = await supabase.auth.getUser()
+    if (!authResult.data?.user) return { ok: false, error: 'No autenticado' }
+
     const { data: rows, error } = await supabase
       .from('gastos_recurrentes')
       .update({ deleted_at: new Date().toISOString() })
@@ -495,6 +516,10 @@ export async function cambiarEstadoGasto(
   if (!guard.ok) throw new Error(guard.error)
 
   const supabase = createClient()
+  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir, si no
+  // el UPDATE sale sin auth → auth.uid() NULL → RLS rechaza.
+  const { data: { user: _u } } = await supabase.auth.getUser()
+  if (!_u) throw new Error('No autenticado')
 
   // GASTOS-UX: salir de 'aprobado' (volver a pendiente o rechazar) requiere
   // que no haya pagos activos. Aprobar/enviar desde otros estados no necesita
@@ -537,6 +562,9 @@ export async function bulkAprobarGastos(ids: string[]): Promise<BulkGastoResult>
   }
 
   const supabase = createClient()
+  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir.
+  const { data: { user: _u } } = await supabase.auth.getUser()
+  if (!_u) return { procesados: [], errores: ids.map(id => ({ id, error: 'No autenticado' })) }
   const procesados: string[] = []
   const errores: BulkGastoResult['errores'] = []
 
@@ -580,6 +608,9 @@ export async function bulkRechazarGastos(ids: string[]): Promise<BulkGastoResult
   }
 
   const supabase = createClient()
+  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir.
+  const { data: { user: _u } } = await supabase.auth.getUser()
+  if (!_u) return { procesados: [], errores: ids.map(id => ({ id, error: 'No autenticado' })) }
   const procesados: string[] = []
   const errores: BulkGastoResult['errores'] = []
 
@@ -637,6 +668,9 @@ export async function bulkDeleteGastos(ids: string[]): Promise<BulkGastoResult> 
   }
 
   const supabase = createClient()
+  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir.
+  const { data: { user: _u } } = await supabase.auth.getUser()
+  if (!_u) return { procesados: [], errores: ids.map(id => ({ id, error: 'No autenticado' })) }
   const procesados: string[] = []
   const errores: BulkGastoResult['errores'] = []
 
@@ -740,6 +774,10 @@ export async function removeComprobanteGasto(
   if (!guard.ok) return { ok: false, error: guard.error }
 
   const supabase = createClient()
+  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir, si no
+  // el UPDATE sale sin auth → auth.uid() NULL → RLS rechaza.
+  const { data: { user: _u } } = await supabase.auth.getUser()
+  if (!_u) return { ok: false, error: 'No autenticado' }
 
   // Fase 2D: ownership USER también en el SELECT inicial (no leer path
   // de gastos ajenos) y en el UPDATE final.

@@ -101,9 +101,22 @@ Aplicadas y validadas según handoffs (hasta 2026-05-29). Última en disco: `202
 | `9872748` códigos G/P | secuencias `gastos_codigo_seq`/`pagos_codigo_seq` | ⏸ aplicar si se quieren ver códigos G######/P######. |
 | `f66325b` cuenta corriente entre fondos | — | ❌ **NO APLICAR** (deprecado, D14). |
 
+## Fix sesión SSR en escrituras (2026-06-17) — pendiente de deploy
+
+`@supabase/ssr` no adjunta el access token a una query hasta que la sesión se
+hidrata con `getUser()`/`getSession()`. Las server actions que escribían sin esa
+llamada mandaban el UPDATE sin auth → `auth.uid()` NULL → `get_my_role()` NULL →
+RLS `WITH CHECK` rechaza (`new row violates RLS policy`), aun siendo admin.
+**Regla**: toda action de escritura debe llamar `getUser()` sobre su cliente antes
+de mutar. Arregladas: `updateGasto`, `deleteGasto`, `cambiarEstadoGasto`,
+`bulk*Gastos`, `removeComprobanteGasto`, `update/deleteGastoRecurrente` (en
+`gastos/actions.ts` y la copia standalone). Migración aplicada
+`20260617000000_recurrentes_rls_rbac_align.sql` (alinea policies al guard, no era
+la cura pero hacía falta). **Falta**: commit + redeploy Vercel.
+
 ## Riesgos / deuda técnica vigente
 
-- **Server actions con `throw` en `gastos/actions.ts`** (`createGasto`, `updateGasto`, `deleteGasto`, `cambiarEstadoGasto`, etc.) siguen sin migrar a `ActionResult` — mismo bug latente que tenían los comprobantes antes del fix. Migrar cuando aparezca caso visible. Ver `feedback_server_actions_action_result`.
+- **Server actions con `throw` en `gastos/actions.ts`** (`createGasto`, `updateGasto`, `deleteGasto`, `cambiarEstadoGasto`, etc.) siguen sin migrar a `ActionResult` — mismo bug latente que tenían los comprobantes antes del fix. Migrar cuando aparezca caso visible. Ver `feedback_server_actions_action_result`. (El fix de sesión SSR de 2026-06-17 respetó el estilo `throw` existente; la migración a ActionResult sigue pendiente.)
 - **`@types/jspdf` desactualizado** (`^1.3.3` para `jspdf@^4.x`). El cast `getNumberOfPages` es workaround en `InformeDypsaClient.tsx:239` y `InformeDypsaCongelado.tsx:251`.
 - **`pagado_parcial`** no existe en el enum SQL `gasto_estado`. Queda código muerto inerte en `GastosClient.tsx` y un fallback `22P02` en `pagos/page.tsx:65` que ensucia el log.
 - `fn_pagos_hardening` bloquea UPDATE sobre pagos confirmados (relevante si se vuelve a tocar pagos).

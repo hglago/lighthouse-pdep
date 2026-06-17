@@ -71,6 +71,11 @@ export async function updateGastoRecurrente(id: string, data: GastoRecurrentePay
   if (!guard.ok) throw new Error(guard.error)
 
   const supabase = createClient()
+  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir, si no
+  // el UPDATE sale sin auth → auth.uid() NULL → RLS rechaza.
+  const { data: { user: _u } } = await supabase.auth.getUser()
+  if (!_u) throw new Error('No autenticado')
+
   const payload = { ...data, proveedor_id: data.proveedor_id || null }
   const { data: rows, error } = await supabase
     .from('gastos_recurrentes')
@@ -104,6 +109,11 @@ export async function deleteGastoRecurrente(id: string) {
   if (!guard.ok) throw new Error(guard.error)
 
   const supabase = createClient()
+  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir, si no
+  // el UPDATE sale sin auth → auth.uid() NULL → RLS rechaza.
+  const { data: { user: _u } } = await supabase.auth.getUser()
+  if (!_u) throw new Error('No autenticado')
+
   const { data: rows, error } = await supabase
     .from('gastos_recurrentes')
     .update({ deleted_at: new Date().toISOString() })

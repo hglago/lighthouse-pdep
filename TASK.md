@@ -2,9 +2,37 @@
 
 Tarea actual. Solo la activa. Cuando se cierre, reemplazar contenido.
 
-## Sin tarea activa — 2026-06-05 (cierre)
+## Fix sesión SSR en server actions de escritura — 2026-06-17
 
-No hay tarea en curso. `main` en `HEAD 3e45c28`, working tree limpio, sincronizado con `origin/main`, **producción Vercel verificada en `3e45c28`**.
+**Síntoma**: en producción (Vercel), Eliminar/Editar/Desactivar un gasto recurrente
+fallaba con `new row violates row-level security policy for table gastos_recurrentes`,
+incluso siendo `admin`. Crear (INSERT) funcionaba.
+
+**Causa raíz**: con `@supabase/ssr`, el cliente de servidor no adjunta el access
+token a las queries hasta que la sesión se hidrata con `getUser()`/`getSession()`.
+Las actions que escribían **sin** llamar `getUser()` primero mandaban el UPDATE/DELETE
+sin auth → `auth.uid()` NULL → `get_my_role()` NULL → el `WITH CHECK` de la RLS
+rechaza. Las que sí llamaban `getUser()` (createGasto, createGastoRecurrente,
+setComprobanteGasto, crearTipoGasto) andaban — ese fue el indicio.
+
+**Fix (código, pendiente de deploy)**: agregado `getUser()` + guard "No autenticado"
+antes de escribir, respetando el contrato de cada función (throw / ActionResult /
+BulkGastoResult), en `gastos/actions.ts`:
+`updateGasto`, `deleteGasto`, `cambiarEstadoGasto`, `bulkAprobarGastos`,
+`bulkRechazarGastos`, `bulkDeleteGastos`, `removeComprobanteGasto`,
+`updateGastoRecurrente`, `deleteGastoRecurrente`; y en la copia standalone
+`gastos-recurrentes/actions.ts` (update/delete).
+
+**Migración aplicada** (no era la cura, pero alinea roles): `20260617000000_recurrentes_rls_rbac_align.sql`
+realinea las policies de `gastos_recurrentes` al set del guard (`admin,supervisor,revisor`),
+que estaban con el legacy `contador`.
+
+**Pendiente**: commitear + redeploy en Vercel; smoke test (eliminar un recurrente
+real desde la UI). `tsc --noEmit` OK.
+
+## Sin tarea activa — 2026-06-05 (cierre anterior)
+
+`main` en `HEAD 3e45c28`, working tree limpio, sincronizado con `origin/main`, **producción Vercel verificada en `3e45c28`**.
 
 Último trabajo: (1) tabla Gastos compactada sin scroll + botón solo-ojo (`8610908`); (2) dashboard refinado: card uplift duplicada eliminada, tipografía -20%, Financiación pendiente con terceros a $0 y Total en negrita, grid 4 columnas, "Aportes por socio", detalle de aportes agrupado por socio con deep-link APO → `/fondos?aporte=` (`3e45c28`). Ver `CONTEXT.md`.
 
