@@ -454,26 +454,20 @@ export async function deleteGastoRecurrente(id: string): Promise<RecurrenteActio
     if (!guard.ok) return guard
 
     const supabase = createClient()
-    // @supabase/ssr no adjunta el access token a las queries hasta que la sesión
-    // se hidrata con getUser(). Sin esto, el UPDATE sale sin auth → auth.uid() NULL
-    // → get_my_role() NULL → el WITH CHECK de la RLS rechaza ("new row violates...").
+    // @supabase/ssr: hidratar la sesión con getUser() para que auth.uid() esté
+    // disponible dentro del RPC.
     const authResult = await supabase.auth.getUser()
     if (!authResult.data?.user) return { ok: false, error: 'No autenticado' }
 
-    const { data: rows, error } = await supabase
-      .from('gastos_recurrentes')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', id)
-      .is('deleted_at', null)
-      .select('id')
+    // Baja lógica vía RPC SECURITY DEFINER: el UPDATE directo de deleted_at lo
+    // rechaza un trigger/policy de hardening (falso "new row violates RLS"),
+    // igual que Proveedores/Fondos. El RPC corre como owner y valida auth.uid().
+    const { error } = await supabase.rpc('soft_delete_gasto_recurrente', { recurrente_id: id })
     if (error) {
-      console.error('[deleteGastoRecurrente] supabase error:', {
+      console.error('[deleteGastoRecurrente] RPC error:', {
         code: error.code, message: error.message, details: error.details, hint: error.hint,
       })
       return { ok: false, error: error.message }
-    }
-    if (!rows || rows.length === 0) {
-      return { ok: false, error: 'Sin permiso para eliminar este gasto recurrente.' }
     }
     revalidatePath('/gastos')
     return { ok: true }

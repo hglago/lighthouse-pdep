@@ -109,19 +109,14 @@ export async function deleteGastoRecurrente(id: string) {
   if (!guard.ok) throw new Error(guard.error)
 
   const supabase = createClient()
-  // @supabase/ssr: hidratar la sesión con getUser() antes de escribir, si no
-  // el UPDATE sale sin auth → auth.uid() NULL → RLS rechaza.
+  // @supabase/ssr: hidratar la sesión con getUser() para que auth.uid() esté
+  // disponible dentro del RPC.
   const { data: { user: _u } } = await supabase.auth.getUser()
   if (!_u) throw new Error('No autenticado')
 
-  const { data: rows, error } = await supabase
-    .from('gastos_recurrentes')
-    .update({ deleted_at: new Date().toISOString() })
-    .eq('id', id)
-    .is('deleted_at', null)
-    .select('id')
+  // Baja lógica vía RPC SECURITY DEFINER (el UPDATE directo de deleted_at lo
+  // rechaza el hardening, igual que Proveedores/Fondos).
+  const { error } = await supabase.rpc('soft_delete_gasto_recurrente', { recurrente_id: id })
   if (error) throw new Error(error.message)
-  if (!rows || rows.length === 0)
-    throw new Error('Sin permiso para eliminar este gasto recurrente.')
   revalidatePath('/gastos-recurrentes')
 }

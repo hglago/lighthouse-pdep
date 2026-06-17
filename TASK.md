@@ -23,12 +23,23 @@ BulkGastoResult), en `gastos/actions.ts`:
 `updateGastoRecurrente`, `deleteGastoRecurrente`; y en la copia standalone
 `gastos-recurrentes/actions.ts` (update/delete).
 
-**Migración aplicada** (no era la cura, pero alinea roles): `20260617000000_recurrentes_rls_rbac_align.sql`
-realinea las policies de `gastos_recurrentes` al set del guard (`admin,supervisor,revisor`),
-que estaban con el legacy `contador`.
+**Hallazgo posterior**: con el fix de `getUser()` deployado, Desactivar/Editar
+(UPDATE de columnas comunes) pasaron a andar, pero **Eliminar** seguía fallando.
+Causa: el UPDATE directo de `deleted_at` lo rechaza un trigger/policy de hardening
+(falso "new row violates RLS"), igual que en Proveedores/Fondos. El delete de
+recurrentes era el único soft-delete que quedaba por UPDATE directo.
 
-**Pendiente**: commitear + redeploy en Vercel; smoke test (eliminar un recurrente
-real desde la UI). `tsc --noEmit` OK.
+**Cura del delete**: RPC `SECURITY DEFINER` `soft_delete_gasto_recurrente(uuid)`
+(migración `20260617000001_soft_delete_gasto_recurrente.sql`, APLICADA), invocado
+desde `deleteGastoRecurrente` (mismo patrón que `soft_delete_proveedor`).
+
+**Migraciones aplicadas**:
+- `20260617000000_recurrentes_rls_rbac_align.sql` — alinea policies al guard (no era la cura, pero hacía falta).
+- `20260617000001_soft_delete_gasto_recurrente.sql` — RPC de baja lógica.
+
+**Pendiente de verificar**: `deleteGasto` / `bulkDeleteGastos` hacen el mismo UPDATE
+directo de `deleted_at` sobre `gastos`. Si esa tabla tiene el mismo hardening, fallan
+igual y necesitan su propio RPC. Probar eliminando un gasto suelto.
 
 ## Sin tarea activa — 2026-06-05 (cierre anterior)
 
