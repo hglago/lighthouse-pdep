@@ -37,9 +37,19 @@ desde `deleteGastoRecurrente` (mismo patrón que `soft_delete_proveedor`).
 - `20260617000000_recurrentes_rls_rbac_align.sql` — alinea policies al guard (no era la cura, pero hacía falta).
 - `20260617000001_soft_delete_gasto_recurrente.sql` — RPC de baja lógica.
 
-**Pendiente de verificar**: `deleteGasto` / `bulkDeleteGastos` hacen el mismo UPDATE
-directo de `deleted_at` sobre `gastos`. Si esa tabla tiene el mismo hardening, fallan
-igual y necesitan su propio RPC. Probar eliminando un gasto suelto.
+**`gastos` tenía el mismo hardening** (confirmado: eliminar un gasto borrador daba
+el overlay genérico de Next, porque `deleteGasto` hace `throw`). Cura: RPC
+`SECURITY DEFINER` `soft_delete_gasto(uuid)` (migración `20260617000002_soft_delete_gasto.sql`,
+APLICADA), invocado desde `deleteGasto` y `bulkDeleteGastos`.
+
+**Migraciones aplicadas (tanda 2026-06-17)**:
+- `20260617000000_recurrentes_rls_rbac_align.sql`
+- `20260617000001_soft_delete_gasto_recurrente.sql`
+- `20260617000002_soft_delete_gasto.sql`
+
+**Deuda restante**: `deleteGasto` sigue con `throw` (estilo mínimo elegido). Con el
+RPC el happy-path ya no lanza, pero para eliminar el overlay en casos borde habría
+que migrarlo a `ActionResult` (toca el call site en `GastosClient`). Pendiente.
 
 ## Sin tarea activa — 2026-06-05 (cierre anterior)
 

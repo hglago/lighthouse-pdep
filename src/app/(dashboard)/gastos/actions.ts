@@ -324,16 +324,10 @@ export async function deleteGasto(id: string) {
     throw new Error(`Este gasto tiene ${total} pago${total !== 1 ? 's' : ''} asociado${total !== 1 ? 's' : ''}. Anulalos primero.`)
   }
 
-  const result = await supabase
-    .from('gastos')
-    .update({ deleted_at: new Date().toISOString() })
-    .eq('id', id)
-    .is('deleted_at', null)
-    .select('id')
-
-  if (result.error) throw new Error(result.error.message)
-  if (!result.data || result.data.length === 0)
-    throw new Error('Sin permiso para eliminar este gasto.')
+  // Baja lógica vía RPC SECURITY DEFINER: el UPDATE directo de deleted_at lo
+  // rechaza el hardening, igual que recurrentes/proveedores/fondos.
+  const { error } = await supabase.rpc('soft_delete_gasto', { gasto_id: id })
+  if (error) throw new Error(error.message)
   revalidatePath('/gastos')
 }
 
@@ -688,16 +682,10 @@ export async function bulkDeleteGastos(ids: string[]): Promise<BulkGastoResult> 
       continue
     }
 
-    const { data: rows, error } = await supabase
-      .from('gastos')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', id)
-      .is('deleted_at', null)
-      .select('id')
+    // Baja lógica vía RPC SECURITY DEFINER (bypassea el hardening del deleted_at).
+    const { error } = await supabase.rpc('soft_delete_gasto', { gasto_id: id })
     if (error) {
       errores.push({ id, error: error.message })
-    } else if (!rows || rows.length === 0) {
-      errores.push({ id, error: 'Sin permiso o gasto no encontrado.' })
     } else {
       procesados.push(id)
     }
