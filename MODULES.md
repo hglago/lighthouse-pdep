@@ -96,6 +96,18 @@ Subruta de gastos. Listado de definiciones de recurrentes. CRUD básico.
 
 ---
 
+### `reportes/`
+Índice de informes (`page.tsx`), gateado a roles `admin`/`supervisor`/`socio`. Cards que linkean a cada informe.
+
+- **Informe Dypsa** (`reportes/dypsa/`): informe ejecutivo de gastos pagados. Vista dinámica (pagos confirmados → gastos) + "Generar informe" numerado con snapshot (`reportes_dypsa` + `fn_generar_reporte_dypsa` + `reportes/dypsa/[id]`). `InformeDypsaClient.tsx` (vivo) + `InformeDypsaCongelado.tsx` (snapshot). Export Excel + PDF.
+- **Informe de Aportes** (`reportes/aportes/`): **vivo** (sin SQL nuevo). `page.tsx` trae `aportes_fondo` activos (`deleted_at IS NULL`) con join `socios`/`financiadores` + `aporte_imputaciones` para derivar destino (RISA/Tercero/Mixto). `AportesReportClient.tsx` agrupa por socio con subtotal por moneda + total general. Filtros fecha/socio/moneda. Export Excel (Resumen + Detalle) + PDF (una sección por socio). SELECTs tolerantes: degrada si falta `socios.codigo` o `aporte_imputaciones`.
+
+**Notas**:
+- Aportes informa solo activos (los anulados quedan fuera, decisión de diseño 2026-07-06).
+- La card "Cancelación de gastos" sigue como placeholder "Próximamente".
+
+---
+
 ### `usuarios/`
 Admin de usuarios. CRUD `profiles` + activar/desactivar.
 

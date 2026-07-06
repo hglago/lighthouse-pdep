@@ -2,6 +2,25 @@
 
 Tarea actual. Solo la activa. Cuando se cierre, reemplazar contenido.
 
+## Informe de Aportes por socio — 2026-07-06 (COMPLETADO, verificado en localhost)
+
+**Pedido**: nuevo informe en el módulo Reportes con el detalle completo de los
+aportes realizados por cada socio.
+
+**Decisiones (confirmadas con el usuario)**:
+- Informe **vivo** (lee `aportes_fondo` al abrir; sin SQL nuevo, sin snapshot numerado).
+- **Solo aportes activos** (`deleted_at IS NULL`), detalle completo por socio.
+
+**Entregado (3 archivos, sin migración)**:
+- `reportes/page.tsx` — card nueva "Informe de Aportes" → `/reportes/aportes`. La card placeholder "Cancelación de gastos" ("Próximamente") se mantiene.
+- `reportes/aportes/page.tsx` — server: guard roles `admin/supervisor/socio`, trae aportes activos + join `socios`/`financiadores` + `aporte_imputaciones` para derivar destino (RISA/Tercero/Mixto). SELECTs tolerantes.
+- `reportes/aportes/AportesReportClient.tsx` — client: agrupa por socio, subtotal por moneda por socio + total general. Filtros fecha/socio/moneda. KPIs. Export Excel (Resumen+Detalle) y PDF (sección por socio).
+
+**Validación**: `npx tsc --noEmit` limpio. Rutas compilan (307→login). **Probado en
+localhost por el usuario: funcionó OK.**
+
+**Pendiente**: commit + push (no pedido aún). Docs CONTEXT/MODULES actualizados.
+
 ## Fix sesión SSR en server actions de escritura — 2026-06-17
 
 **Síntoma**: en producción (Vercel), Eliminar/Editar/Desactivar un gasto recurrente

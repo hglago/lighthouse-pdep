@@ -35,6 +35,16 @@ Patrón aplicado en **Pagos registrados** y **Gastos**. Piezas reutilizables:
 - Modal "Detalle de aportes" agrupado por socio (subtotal en negrita; columnas Fecha/Código/Moneda/Monto).
 - **Deep-link de aporte**: el código APO-### en el modal linkea a `/fondos?aporte=APO-###`, que abre el modal de detalle (nuevo: `fondos/page.tsx` acepta `searchParams.aporte` → prop `aporteInicial` de `FondosClient`).
 
+## Informe de Aportes por socio (2026-07-06)
+
+Nuevo informe **vivo** en `/reportes/aportes` (sin SQL nuevo). Detalle completo de
+aportes activos (`deleted_at IS NULL`) agrupado por socio, con subtotal por moneda +
+total general, filtros fecha/socio/moneda y export Excel/PDF. Destino (RISA/Tercero/
+Mixto) derivado de `aporte_imputaciones` con SELECTs tolerantes. Archivos:
+`reportes/page.tsx` (card), `reportes/aportes/page.tsx` (server),
+`reportes/aportes/AportesReportClient.tsx` (client). Verificado en localhost.
+Pendiente: commit + push. Ver `MODULES.md` › `reportes/`.
+
 ## Decisión de modelo financiero (vigente)
 
 **Un solo fondo operativo: RISA** (`FON-001`). Puede tener saldo negativo. Los gastos se

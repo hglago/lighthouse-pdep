@@ -41,6 +41,16 @@ export default async function ReportesPage() {
           </span>
         </Link>
 
+        <Link href="/reportes/aportes" className="block rounded-lg border border-gray-200 bg-white p-6 hover:border-slate-300 hover:shadow-sm transition-all">
+          <h2 className="text-lg font-medium text-gray-900">Informe de Aportes</h2>
+          <p className="mt-2 text-sm text-gray-500">
+            Detalle completo de los aportes realizados por cada socio.
+          </p>
+          <span className="mt-4 inline-block rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
+            Ver informe
+          </span>
+        </Link>
+
         <div className="rounded-lg border border-gray-200 bg-white p-6">
           <h2 className="text-lg font-medium text-gray-900">Cancelación de gastos</h2>
           <p className="mt-2 text-sm text-gray-500">
