@@ -41,11 +41,13 @@ Home post-login. Muestra widgets de fondos / gastos pendientes. Cambios mínimos
   - `createGastoRecurrente`, `updateGastoRecurrente`, `deleteGastoRecurrente`
   - `setComprobanteGasto`, `removeComprobanteGasto` (Storage)
   - `generarGastosRecurrentes` (invoca RPC)
+- `[id]/orden/` (2026-07-06): vista **imprimible** de la Orden de Gasto (server `page.tsx` + `PrintButton.tsx`). Detalle completo de solo lectura, incluidas observaciones (`notas`) y condiciones de pago. Print vía `.print-document` en `globals.css`. Se abre desde el ítem "Ver orden del gasto" del menú del ojo (todos los estados, pestaña nueva). No es snapshot: refleja el gasto en vivo.
 
 **Comportamiento**:
 - Nuevo gasto → `enviado` → admin/revisor lo aprueba → aparece en `/pagos` como obligación pendiente
 - Comprobante editable mientras estado != pagado/rechazado
 - Bulk: validations por estado de origen, retorna `{procesados, errores}`
+- "Ver orden del gasto": disponible siempre (solo lectura); las acciones de escritura del menú siguen gateadas por rol.
 
 **Notas**:
 - "Eliminar" (label legacy) → debería ser "Anular" (Etapa B pendiente)

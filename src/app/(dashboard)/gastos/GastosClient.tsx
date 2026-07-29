@@ -1550,7 +1550,7 @@ export default function GastosClient({
             emptyMessage={searchGastos ? 'Sin resultados para esa búsqueda.' : 'No hay gastos registrados.'}
             onVisibleRowsChange={setVisibleGastos}
             columns={gastosColumns}
-            rowActions={(canWrite || canApprove) ? (g) => {
+            rowActions={(g) => {
               // GASTOS-UX-2: dropdown único con acciones aplicables según
               // estado, rol y pagos asociados. Reglas server-side intactas.
               const pagosDelGasto = pagosPorGastoId.get(g.id) ?? []
@@ -1560,6 +1560,14 @@ export default function GastosClient({
               const sinPagosAlguna  = pagosTotal === 0
               const items: RowActionItem[] = []
               let tooltipBloqueo: string | undefined
+
+              // Ver orden del gasto: disponible en todos los estados y roles
+              // (solo lectura). Abre la vista imprimible en pestaña nueva para
+              // no perder el listado filtrado.
+              items.push({
+                label: 'Ver orden del gasto',
+                onClick: () => window.open(`/gastos/${g.id}/orden`, '_blank', 'noopener,noreferrer'),
+              })
 
               if (g.estado === 'borrador' || g.estado === 'enviado') {
                 if (canApprove && g.estado === 'enviado') {
@@ -1610,9 +1618,9 @@ export default function GastosClient({
                   tooltipBloqueo = 'Anulá el pago desde /pagos.'
                 }
               }
-              // rechazado: sin items ni tooltip
+              // rechazado: solo "Ver orden del gasto" (ya agregado arriba)
               return <RowActionMenu items={items} emptyTooltip={tooltipBloqueo} buttonLabel="" />
-            } : undefined}
+            }}
             bulkActions={canWrite ? (selectedIds, clear) => {
               const ids = Array.from(selectedIds)
               return (

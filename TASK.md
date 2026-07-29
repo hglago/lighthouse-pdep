@@ -2,6 +2,29 @@
 
 Tarea actual. Solo la activa. Cuando se cierre, reemplazar contenido.
 
+## Orden de Gasto imprimible — 2026-07-06 (COMPLETADO, verificado en localhost)
+
+**Pedido**: ver toda la "orden del gasto" con las observaciones, para gastos
+aprobados (antes no había vista de detalle de solo lectura; `notas` no se veía
+una vez aprobado porque el modal de edición se bloquea con pagos).
+
+**Decisiones (confirmadas)**: documento **imprimible tipo "Orden"** (detalle en
+pantalla + print/PDF), disponible en **todos los estados**.
+
+**Entregado (4 archivos, sin SQL)**:
+- `gastos/[id]/orden/page.tsx` — server: detalle completo del gasto (proveedor,
+  tipo, fondo, canal, importe, fechas, anticipo, servicio por horas, comprobante y
+  **observaciones=`notas`**), SELECT tolerante + ownership rol `user`. Vive, no snapshot.
+- `gastos/[id]/orden/PrintButton.tsx` — toolbar Imprimir + Volver.
+- `globals.css` — `@media print` patrón `.print-document` (oculta el chrome del
+  dashboard; aislado, no afecta la Orden de Pago existente).
+- `GastosClient.tsx` — ítem "Ver orden del gasto" en el menú del ojo (todos los
+  estados/roles; abre en pestaña nueva con `window.open`). El menú ahora se renderiza
+  siempre (las acciones de escritura siguen gateadas por rol individualmente).
+
+**Validación**: `tsc --noEmit` limpio, rutas compilan (307→login). **Probado en
+localhost por el usuario: funcionó.**
+
 ## Informe de Aportes por socio — 2026-07-06 (COMPLETADO, verificado en localhost)
 
 **Pedido**: nuevo informe en el módulo Reportes con el detalle completo de los

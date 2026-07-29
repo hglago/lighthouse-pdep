@@ -1,3 +1,41 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Impresión de documentos (Orden de Gasto, etc.)
+   Patrón "ocultar todo salvo el documento": al imprimir, se oculta todo el
+   chrome del dashboard (sidebar, header, toolbars) y solo se muestra el
+   contenedor marcado con .print-document, posicionado desde el borde de la
+   hoja. Aislado: solo afecta a páginas que usan .print-document; la vista de
+   Orden de Pago (que no usa esta clase) conserva su comportamiento previo.
+   ────────────────────────────────────────────────────────────────────────── */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  /* Si hay un documento imprimible en la página, ocultar todo lo demás. */
+  body:has(.print-document) * {
+    visibility: hidden !important;
+  }
+
+  body:has(.print-document) .print-document,
+  body:has(.print-document) .print-document * {
+    visibility: visible !important;
+  }
+
+  .print-document {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+  }
+}
