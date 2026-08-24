@@ -15,6 +15,7 @@ import SortableHeader from '@/components/SortableHeader'
 import DataTable, { type Column } from '@/components/DataTable'
 import RowActionMenu, { type RowActionItem } from '@/components/RowActionMenu'
 import { exportToExcel, exportWorkbookToExcel, todayForFile } from '@/lib/excel'
+import { buildPagoTransaccionRows, type PagoExportInput, type OrdenPagoLite } from '@/lib/pagosExport'
 
 export interface AporteFondoRow extends AporteFondo {
   fondos: { nombre: string } | null
@@ -173,6 +174,10 @@ interface Props {
   // UX-DETAILS (2026-05-25): movimientos_financiacion para "Ver detalle" de
   // tercero. Volumen bajo: el cliente filtra por financiador_id al abrir modal.
   movimientosFinanciacion: MovimientoFinanciacion[]
+  // TRANSACCIONES-EXPORT (2026-06-17): pagos registrados + OPs para la solapa
+  // "Transacciones" del export de Fondos. Solo se usan en el export.
+  pagos: PagoExportInput[]
+  ordenesPago: OrdenPagoLite[]
   // Deep-link (2026-06-05): codigo APO-### para abrir el modal de detalle de
   // ese aporte al montar (viene de /fondos?aporte=...). null = sin deep-link.
   aporteInicial?: string | null
@@ -204,6 +209,8 @@ export default function FondosClient({
   posicionGlobal,
   imputaciones,
   movimientosFinanciacion,
+  pagos,
+  ordenesPago,
   aporteInicial = null,
   role,
   onCreateFondo,
@@ -1190,10 +1197,16 @@ export default function FondosClient({
       moneda: i.moneda,
     }))
 
+    // Hoja 6 — Transacciones: pagos registrados (pagado + anulado) con N°, OP,
+    // proveedor, tipo, concepto, canal, tercero, fecha, modalidad, monto, estado.
+    const transaccionesRows = buildPagoTransaccionRows(pagos, ordenesPago)
+
     exportWorkbookToExcel(
       [
         { name: 'Cuenta_RISA',          rows: cuentaRisa,
           headers: ['fecha', 'nro_transaccion', 'tipo', 'concepto', 'ingreso', 'egreso', 'saldo_resultante', 'moneda'] },
+        { name: 'Transacciones',        rows: transaccionesRows,
+          headers: ['nro_pago', 'nro_op', 'proveedor', 'tipo', 'concepto', 'canal', 'tercero', 'fecha', 'pago', 'monto', 'moneda', 'estado'] },
         { name: 'Terceros_Resumen',     rows: tercerosResumen,
           headers: ['codigo', 'tercero', 'moneda', 'deuda_generada', 'cancelado_con_aportes', 'saldo_pendiente'] },
         { name: 'Terceros_Movimientos', rows: tercerosMovs,

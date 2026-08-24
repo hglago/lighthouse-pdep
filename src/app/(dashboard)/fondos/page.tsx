@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import FondosClient, { type AporteFondoRow, type MovimientoFondoRow } from './FondosClient'
 import type { Fondo, Socio, Financiador, SaldoFinanciadorRow, UserRole, PosicionGlobalRisaRow, AporteImputacionDetalleRow, MovimientoFinanciacion } from '@/types'
+import type { PagoExportInput, OrdenPagoLite } from '@/lib/pagosExport'
 import {
   createFondo, updateFondo, deleteFondo, registrarAporte, getFondoDependencies,
   crearSocio, crearFinanciador, registrarAporteSocio, registrarAporteSocioV2,
@@ -37,6 +38,8 @@ export default async function FondosPage({
     posicionGlobalResult,
     imputacionesResult,
     movFinanciacionResult,
+    pagosResult,
+    ordenesPagoResult,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -124,6 +127,20 @@ export default async function FondosPage({
       `)
       .order('fecha', { ascending: false })
       .order('created_at', { ascending: false }),
+
+    // TRANSACCIONES-EXPORT (2026-06-17): pagos registrados para la solapa
+    // "Transacciones" del export de Fondos. Mismo origen que /pagos (excluye
+    // borradores). El join gastos aporta canal (RISA/Tercero) y monto original.
+    supabase
+      .from('pagos')
+      .select('id, nro_pago, gasto_id, tipo, concepto, monto, moneda, fecha_pago, estado, created_at, proveedores(nombre), gastos(monto, forma_cancelacion, financiadores:financiador_id(codigo, nombre))')
+      .neq('estado', 'borrador')
+      .order('fecha_pago', { ascending: false }),
+
+    // OP: número de orden de pago por pago. Tolerante si la tabla no existe.
+    supabase
+      .from('ordenes_pago')
+      .select('id, codigo, pago_id'),
   ])
 
   // Tolerancia: si socios.codigo aún no existe (Etapa 2B SQL pendiente), retry
@@ -230,6 +247,28 @@ export default async function FondosPage({
   }
   const movimientosFinanciacion = (movFinanciacionData ?? []) as unknown as MovimientoFinanciacion[]
 
+  // TRANSACCIONES-EXPORT: tolerancia. Si el join gastos (forma_cancelacion /
+  // financiadores) falla por FK/columna ausente, retry base sin el join —
+  // Canal cae a "Medios propios RISA" y Modalidad a "—", pero el export sigue.
+  let pagosExportData = pagosResult.data
+  if (pagosResult.error) {
+    const c = pagosResult.error.code ?? ''
+    const m = pagosResult.error.message ?? ''
+    console.warn('[fondos] pagos para export: join gastos no disponible; retry base.', c, m)
+    const fb = await supabase
+      .from('pagos')
+      .select('id, nro_pago, gasto_id, tipo, concepto, monto, moneda, fecha_pago, estado, created_at, proveedores(nombre)')
+      .neq('estado', 'borrador')
+      .order('fecha_pago', { ascending: false })
+    pagosExportData = (fb.data ?? []).map(p => ({ ...p, gastos: null })) as unknown as typeof pagosResult.data
+  }
+  if (ordenesPagoResult.error) {
+    console.warn('[fondos] ordenes_pago no disponible; N° OP vacío en export.',
+      ordenesPagoResult.error.code, ordenesPagoResult.error.message)
+  }
+  const pagosExport = (pagosExportData ?? []) as unknown as PagoExportInput[]
+  const ordenesPago = (ordenesPagoResult.data ?? []) as unknown as OrdenPagoLite[]
+
   return (
     <div className="space-y-6">
       <div
@@ -261,6 +300,8 @@ export default async function FondosPage({
         posicionGlobal={posicionGlobal}
         imputaciones={imputaciones}
         movimientosFinanciacion={movimientosFinanciacion}
+        pagos={pagosExport}
+        ordenesPago={ordenesPago}
         aporteInicial={searchParams?.aporte ?? null}
         role={role}
         onCreateFondo={createFondo}

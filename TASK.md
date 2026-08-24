@@ -2,6 +2,25 @@
 
 Tarea actual. Solo la activa. Cuando se cierre, reemplazar contenido.
 
+## Export Fondos: solapa "Transacciones" — 2026-06-17
+
+Se agregó al Excel de "Exportar Fondos" una solapa nueva **Transacciones** con
+los pagos registrados (pagado + anulado): nro_pago, nro_op, proveedor, tipo,
+concepto, canal (RISA/Tercero), tercero, fecha, pago (modalidad Total/Parcial),
+monto, moneda, estado. Mismo origen que /pagos.
+
+- `fondos/page.tsx`: carga `pagos` (join gastos→canal/monto) + `ordenes_pago`,
+  con tolerancia SELECT (retry sin join; OP vacío si no existe la tabla).
+- Nuevo `lib/pagosExport.ts`: helper puro con la lógica de modalidad/canal/labels
+  portada FIEL de PagosClient (para no duplicar frágilmente ni tocar /pagos).
+- `FondosClient.tsx`: nueva hoja en `exportWorkbookToExcel`.
+
+Puro código (lee tablas existentes, sin SQL). `tsc --noEmit` OK. Pendiente: deploy.
+Deuda menor: migrar PagosClient a usar `lib/pagosExport.ts` para eliminar la
+duplicación de la lógica de modalidad (hoy vive inline en PagosClient también).
+
+
+
 ## Orden de Gasto imprimible — 2026-07-06 (COMPLETADO, verificado en localhost)
 
 **Pedido**: ver toda la "orden del gasto" con las observaciones, para gastos
